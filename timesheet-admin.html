@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GS Timesheet — Admin</title>
+<style>
+  :root { --bg:#0f172a; --card:#1e293b; --accent:#22c55e; --danger:#ef4444; --text:#f1f5f9; --muted:#94a3b8; --border:#334155; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; padding:16px; }
+  .wrap { max-width:900px; margin:0 auto; }
+  h1 { font-size:20px; margin:0 0 16px; }
+  .tabs { display:flex; gap:6px; margin-bottom:16px; overflow-x:auto; }
+  .tab { padding:10px 14px; border-radius:10px; background:var(--card); color:var(--muted); cursor:pointer; white-space:nowrap; font-size:14px; }
+  .tab.active { background:var(--accent); color:#052e16; font-weight:600; }
+  .panel { display:none; }
+  .panel.active { display:block; }
+  .card { background:var(--card); border-radius:14px; padding:18px; margin-bottom:14px; }
+  .card h2 { font-size:15px; margin:0 0 12px; color:var(--muted); text-transform:uppercase; letter-spacing:0.03em; }
+  label { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; margin-top:10px; }
+  input, select, textarea { width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); background:#0f172a; color:var(--text); font-size:14px; }
+  textarea { resize:vertical; min-height:50px; }
+  .row { display:flex; gap:10px; }
+  .row > * { flex:1; }
+  button { margin-top:14px; padding:12px 16px; border-radius:10px; border:none; background:var(--accent); color:#052e16; font-weight:600; font-size:14px; cursor:pointer; }
+  button.secondary { background:#334155; color:var(--text); }
+  button.danger { background:var(--danger); color:#450a0a; }
+  table { width:100%; border-collapse:collapse; margin-top:10px; font-size:13px; }
+  th, td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--border); }
+  th { color:var(--muted); font-weight:500; }
+  .badge { display:inline-block; padding:2px 8px; border-radius:6px; font-size:11px; }
+  .badge.late { background:#f59e0b33; color:#f59e0b; }
+  .badge.ot { background:#3b82f633; color:#60a5fa; }
+  .badge.holiday { background:#a855f733; color:#c084fc; }
+  .msg { font-size:13px; margin-top:10px; min-height:16px; }
+  .msg.ok { color:var(--accent); }
+  .msg.err { color:var(--danger); }
+  .checks { display:flex; gap:16px; flex-wrap:wrap; margin-top:10px; }
+  .checks label { display:flex; align-items:center; gap:6px; font-size:13px; color:var(--text); }
+  .checks input[type=checkbox] { width:auto; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>GS Timesheet — Admin</h1>
+  <div class="tabs">
+    <div class="tab active" data-tab="shifts">Shifts</div>
+    <div class="tab" data-tab="entries">Timesheet Entries</div>
+    <div class="tab" data-tab="payroll">Payroll</div>
+    <div class="tab" data-tab="rules">Wage Rules</div>
+    <div class="tab" data-tab="adjustments">Adjustments</div>
+  </div>
+
+  <!-- SHIFTS -->
+  <div class="panel active" id="panel-shifts">
+    <div class="card">
+      <h2>Create Shift</h2>
+      <div class="row">
+        <div><label>Branch</label><select id="shiftBranch"></select></div>
+        <div><label>Date</label><input type="date" id="shiftDate"></div>
+      </div>
+      <div class="row">
+        <div><label>Scheduled Time In</label><input type="time" id="schedIn"></div>
+        <div><label>Scheduled Time Out</label><input type="time" id="schedOut"></div>
+      </div>
+      <label>Pump Assignment</label>
+      <input type="text" id="pumpAssignment" placeholder="e.g. Pump 1-2">
+      <div class="checks">
+        <label><input type="checkbox" id="doublePump"> Double Pump</label>
+        <label><input type="checkbox" id="emergencyRoster"> Emergency Roster</label>
+      </div>
+      <button onclick="createShift()">Create Shift</button>
+      <div class="msg" id="shiftMsg"></div>
+    </div>
+    <div class="card">
+      <h2>Recent Shifts</h2>
+      <table id="shiftsTable"><thead><tr><th>Date</th><th>Branch</th><th>Sched In/Out</th><th>Flags</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+
+  <!-- TIMESHEET ENTRIES -->
+  <div class="panel" id="panel-entries">
+    <div class="card">
+      <h2>Filter</h2>
+      <div class="row">
+        <div><label>Branch</label><select id="filterBranch"><option value="">All</option></select></div>
+        <div><label>From</label><input type="date" id="filterFrom"></div>
+        <div><label>To</label><input type="date" id="filterTo"></div>
+      </div>
+      <button onclick="loadEntries()">Load</button>
+    </div>
+    <div class="card">
+      <h2>Entries — tap a row's flags to toggle Late/OT/Holiday, then save</h2>
+      <table id="entriesTable">
+        <thead><tr><th>Employee</th><th>In/Out</th><th>Hrs</th><th>Flags</th><th>Total ₱</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="msg" id="entriesMsg"></div>
+    </div>
+  </div>
+
+  <!-- PAYROLL -->
+  <div class="panel" id="panel-payroll">
+    <div class="card">
+      <h2>Run Payroll Rollup</h2>
+      <div class="row">
+        <div><label>Branch</label><select id="payrollBranch"></select></div>
+        <div><label>Employee (optional — blank = all)</label><select id="payrollEmployee"><option value="">All employees</option></select></div>
+      </div>
+      <div class="row">
+        <div><label>Period Start</label><input type="date" id="payrollStart"></div>
+        <div><label>Period End</label><input type="date" id="payrollEnd"></div>
+      </div>
+      <button onclick="runPayrollRollup()">Compute Payroll for Period</button>
+      <div class="msg" id="payrollMsg"></div>
+    </div>
+    <div class="card">
+      <h2>Recent Payroll Runs</h2>
+      <table id="payrollTable"><thead><tr><th>Employee</th><th>Period</th><th>Hrs</th><th>Wages</th><th>Adj</th><th>Gross</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+
+  <!-- WAGE RULES -->
+  <div class="panel" id="panel-rules">
+    <div class="card">
+      <h2>Current Wage Rule (org-wide default)</h2>
+      <div id="currentRuleDisplay" class="msg"></div>
+    </div>
+    <div class="card">
+      <h2>Set New Wage Rule</h2>
+      <label>Scope (leave blank for org-wide)</label>
+      <select id="ruleBranch"><option value="">Org-wide (all branches)</option></select>
+      <div class="row">
+        <div><label>Overtime Multiplier</label><input type="number" step="0.01" id="ruleOT" value="1.25"></div>
+        <div><label>Late Deduction Multiplier</label><input type="number" step="0.01" id="ruleLate" value="1.00"></div>
+      </div>
+      <div class="row">
+        <div><label>Holiday % Add</label><input type="number" step="0.01" id="ruleHoliday" value="30"></div>
+        <div><label>Effective From</label><input type="date" id="ruleEffFrom"></div>
+      </div>
+      <div class="row">
+        <div><label>Double Pump Pay (₱ flat)</label><input type="number" step="0.01" id="ruleDoublePump" value="100"></div>
+        <div><label>Emergency Roster Pay (₱ flat)</label><input type="number" step="0.01" id="ruleEmergency" value="150"></div>
+      </div>
+      <label>Notes (why the change)</label>
+      <textarea id="ruleNotes"></textarea>
+      <button onclick="saveWageRule()">Save New Rule</button>
+      <div class="msg" id="ruleMsg"></div>
+    </div>
+  </div>
+
+  <!-- DISCRETIONARY ADJUSTMENTS -->
+  <div class="panel" id="panel-adjustments">
+    <div class="card">
+      <h2>Add Discretionary Adjustment</h2>
+      <p style="color:var(--muted); font-size:13px;">e.g. "not a holiday but pay 30% holiday rate anyway" or "beat last month's target, +30% bonus this period"</p>
+      <div class="row">
+        <div><label>Scope: Employee (blank = all)</label><select id="adjEmployee"><option value="">All employees</option></select></div>
+        <div><label>Scope: Branch (blank = org-wide)</label><select id="adjBranch"><option value="">Org-wide</option></select></div>
+      </div>
+      <div class="row">
+        <div><label>Period Start</label><input type="date" id="adjStart"></div>
+        <div><label>Period End</label><input type="date" id="adjEnd"></div>
+      </div>
+      <label>Type</label>
+      <select id="adjType">
+        <option value="force_holiday">Force Holiday Rate (% add)</option>
+        <option value="bonus_pct">Bonus — % of day wage</option>
+        <option value="bonus_flat">Bonus — flat ₱ amount</option>
+        <option value="waive_late_deduction">Waive Late Deduction</option>
+        <option value="custom">Custom ₱ amount</option>
+      </select>
+      <label>Value (% or ₱, ignored for waive)</label>
+      <input type="number" step="0.01" id="adjValue">
+      <label>Reason (required)</label>
+      <textarea id="adjReason" placeholder="e.g. Sales exceeded June target by 15%"></textarea>
+      <label>Approved By (required)</label>
+      <input type="text" id="adjApprover" placeholder="Your name">
+      <button onclick="saveAdjustment()">Save Adjustment</button>
+      <div class="msg" id="adjMsg"></div>
+    </div>
+    <div class="card">
+      <h2>Recent Adjustments</h2>
+      <table id="adjTable"><thead><tr><th>Scope</th><th>Period</th><th>Type</th><th>Value</th><th>Reason</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+// ============================================================
+// CONFIG — same project as timesheet-clock.html
+// ============================================================
+const SUPABASE_URL = "https://cztkovsjxuaiburaudgk.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_eBOzdnFAdfFavl2QAYY6bA_lfAIJUhh";
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// ---------- Tabs ----------
+document.querySelectorAll(".tab").forEach(tab => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+    document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+    tab.classList.add("active");
+    document.getElementById("panel-" + tab.dataset.tab).classList.add("active");
+  });
+});
+
+// ---------- Shared lookups ----------
+async function loadLookups() {
+  const { data: branches } = await supabase.from("branches").select("id, code, name").order("code");
+  const branchOpts = (branches || []).map(b => `<option value="${b.id}">${b.code} — ${b.name}</option>`).join("");
+  ["shiftBranch", "filterBranch", "payrollBranch", "ruleBranch", "adjBranch"].forEach(id => {
+    const el = document.getElementById(id);
+    const keepBlank = id === "filterBranch" || id === "ruleBranch" || id === "adjBranch";
+    el.innerHTML = (keepBlank ? el.innerHTML : "") + branchOpts;
+  });
+
+  const { data: employees } = await supabase.from("employees").select("id, full_name, tm_number").eq("status", "active").order("full_name");
+  const empOpts = (employees || []).map(e => `<option value="${e.id}">${e.full_name} (${e.tm_number})</option>`).join("");
+  ["payrollEmployee", "adjEmployee"].forEach(id => {
+    document.getElementById(id).innerHTML += empOpts;
+  });
+
+  loadCurrentRule();
+  loadShifts();
+  loadAdjustments();
+}
+
+// ---------- Shifts ----------
+async function createShift() {
+  const msg = document.getElementById("shiftMsg");
+  const payload = {
+    branch_id: document.getElementById("shiftBranch").value,
+    shift_date: document.getElementById("shiftDate").value,
+    scheduled_time_in: document.getElementById("schedIn").value || null,
+    scheduled_time_out: document.getElementById("schedOut").value || null,
+    pump_assignment: document.getElementById("pumpAssignment").value || null,
+    double_pump: document.getElementById("doublePump").checked,
+    emergency_roster: document.getElementById("emergencyRoster").checked
+  };
+  if (!payload.branch_id || !payload.shift_date) {
+    msg.textContent = "Branch and date required."; msg.className = "msg err"; return;
+  }
+  const { error } = await supabase.from("shifts").insert(payload);
+  msg.textContent = error ? error.message : "Shift created.";
+  msg.className = "msg " + (error ? "err" : "ok");
+  if (!error) loadShifts();
+}
+
+async function loadShifts() {
+  const { data } = await supabase.from("shifts").select("shift_date, scheduled_time_in, scheduled_time_out, double_pump, emergency_roster, branches(code)").order("shift_date", { ascending: false }).limit(20);
+  const tbody = document.querySelector("#shiftsTable tbody");
+  tbody.innerHTML = (data || []).map(s => `
+    <tr>
+      <td>${s.shift_date}</td>
+      <td>${s.branches?.code || "—"}</td>
+      <td>${s.scheduled_time_in || "—"} / ${s.scheduled_time_out || "—"}</td>
+      <td>${s.double_pump ? '<span class="badge ot">Double Pump</span>' : ""} ${s.emergency_roster ? '<span class="badge holiday">Emergency</span>' : ""}</td>
+    </tr>`).join("");
+}
+
+// ---------- Timesheet Entries ----------
+async function loadEntries() {
+  const branch = document.getElementById("filterBranch").value;
+  const from = document.getElementById("filterFrom").value;
+  const to = document.getElementById("filterTo").value;
+  let q = supabase.from("timesheet_entries").select("id, time_in, time_out, total_hours, is_late, is_overtime, is_holiday, total_wages, employees(full_name)").order("time_in", { ascending: false }).limit(50);
+  if (branch) q = q.eq("branch_id", branch);
+  if (from) q = q.gte("time_in", from);
+  if (to) q = q.lte("time_in", to + "T23:59:59");
+  const { data, error } = await q;
+  const msg = document.getElementById("entriesMsg");
+  if (error) { msg.textContent = error.message; msg.className = "msg err"; return; }
+  msg.textContent = "";
+  const tbody = document.querySelector("#entriesTable tbody");
+  tbody.innerHTML = (data || []).map(e => `
+    <tr data-id="${e.id}">
+      <td>${e.employees?.full_name || "—"}</td>
+      <td>${fmtTime(e.time_in)} → ${fmtTime(e.time_out)}</td>
+      <td>${e.total_hours ?? "—"}</td>
+      <td>
+        <label><input type="checkbox" class="flag-late" ${e.is_late ? "checked" : ""}> Late</label>
+        <label><input type="checkbox" class="flag-ot" ${e.is_overtime ? "checked" : ""}> OT</label>
+        <label><input type="checkbox" class="flag-holiday" ${e.is_holiday ? "checked" : ""}> Holiday</label>
+      </td>
+      <td>${(e.total_wages ?? 0).toFixed(2)}</td>
+      <td><button class="secondary" onclick="saveEntryFlags('${e.id}', this)">Save</button></td>
+    </tr>`).join("");
+}
+
+async function saveEntryFlags(id, btn) {
+  const row = btn.closest("tr");
+  const payload = {
+    is_late: row.querySelector(".flag-late").checked,
+    is_overtime: row.querySelector(".flag-ot").checked,
+    is_holiday: row.querySelector(".flag-holiday").checked
+  };
+  const { error } = await supabase.from("timesheet_entries").update(payload).eq("id", id);
+  const msg = document.getElementById("entriesMsg");
+  msg.textContent = error ? error.message : "Saved — wages recalculated.";
+  msg.className = "msg " + (error ? "err" : "ok");
+  if (!error) loadEntries();
+}
+
+function fmtTime(ts) {
+  if (!ts) return "—";
+  return new Date(ts).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+// ---------- Payroll rollup ----------
+// NOTE: this aggregates timesheet_entries into one payroll row per employee
+// for the given period. Run this after all entries for the period are
+// finalized (flags checked, adjustments added).
+async function runPayrollRollup() {
+  const msg = document.getElementById("payrollMsg");
+  const branch_id = document.getElementById("payrollBranch").value;
+  const employee_id = document.getElementById("payrollEmployee").value;
+  const period_start = document.getElementById("payrollStart").value;
+  const period_end = document.getElementById("payrollEnd").value;
+  if (!branch_id || !period_start || !period_end) {
+    msg.textContent = "Branch, start, and end date required."; msg.className = "msg err"; return;
+  }
+
+  let q = supabase.from("timesheet_entries")
+    .select("employee_id, total_hours, total_wages, adjustment_amount")
+    .eq("branch_id", branch_id)
+    .gte("time_in", period_start)
+    .lte("time_in", period_end + "T23:59:59");
+  if (employee_id) q = q.eq("employee_id", employee_id);
+  const { data: entries, error } = await q;
+  if (error) { msg.textContent = error.message; msg.className = "msg err"; return; }
+
+  const byEmployee = {};
+  for (const e of entries) {
+    if (!byEmployee[e.employee_id]) byEmployee[e.employee_id] = { hours: 0, wages: 0, adj: 0 };
+    byEmployee[e.employee_id].hours += Number(e.total_hours || 0);
+    byEmployee[e.employee_id].wages += Number(e.total_wages || 0);
+    byEmployee[e.employee_id].adj += Number(e.adjustment_amount || 0);
+  }
+
+  const rows = Object.entries(byEmployee).map(([emp_id, v]) => ({
+    employee_id: emp_id,
+    branch_id,
+    period_start,
+    period_end,
+    week_hours: v.hours,
+    week_wages: v.wages,
+    total_adjustments: v.adj,
+    gross_pay: v.wages // allowances/commission added separately — see Allowances table
+  }));
+
+  if (!rows.length) {
+    msg.textContent = "No timesheet entries found for that period/branch."; msg.className = "msg err"; return;
+  }
+
+  const { error: insErr } = await supabase.from("payroll").insert(rows);
+  msg.textContent = insErr ? insErr.message : `Payroll computed for ${rows.length} employee(s).`;
+  msg.className = "msg " + (insErr ? "err" : "ok");
+  if (!insErr) loadPayroll();
+}
+
+async function loadPayroll() {
+  const { data } = await supabase.from("payroll").select("period_start, period_end, week_hours, week_wages, total_adjustments, gross_pay, employees(full_name)").order("created_at", { ascending: false }).limit(20);
+  const tbody = document.querySelector("#payrollTable tbody");
+  tbody.innerHTML = (data || []).map(p => `
+    <tr>
+      <td>${p.employees?.full_name || "—"}</td>
+      <td>${p.period_start} → ${p.period_end}</td>
+      <td>${p.week_hours}</td>
+      <td>${Number(p.week_wages).toFixed(2)}</td>
+      <td>${Number(p.total_adjustments).toFixed(2)}</td>
+      <td>${Number(p.gross_pay).toFixed(2)}</td>
+    </tr>`).join("");
+}
+
+// ---------- Wage rules ----------
+async function loadCurrentRule() {
+  const { data } = await supabase.from("wage_rules").select("*").is("branch_id", null)
+    .lte("effective_from", new Date().toISOString().slice(0,10))
+    .order("effective_from", { ascending: false }).limit(1);
+  const el = document.getElementById("currentRuleDisplay");
+  if (!data || !data.length) { el.textContent = "No org-wide rule found."; return; }
+  const r = data[0];
+  el.innerHTML = `OT ${r.overtime_multiplier}x · Late deduction ${r.late_deduction_multiplier}x · Holiday +${r.holiday_pct_add}% · Double Pump ₱${r.double_pump_pay} · Emergency ₱${r.emergency_roster_pay} <br><span style="color:var(--muted)">Effective from ${r.effective_from}${r.notes ? " — " + r.notes : ""}</span>`;
+}
+
+async function saveWageRule() {
+  const msg = document.getElementById("ruleMsg");
+  const payload = {
+    branch_id: document.getElementById("ruleBranch").value || null,
+    overtime_multiplier: parseFloat(document.getElementById("ruleOT").value),
+    late_deduction_multiplier: parseFloat(document.getElementById("ruleLate").value),
+    holiday_pct_add: parseFloat(document.getElementById("ruleHoliday").value),
+    double_pump_pay: parseFloat(document.getElementById("ruleDoublePump").value),
+    emergency_roster_pay: parseFloat(document.getElementById("ruleEmergency").value),
+    effective_from: document.getElementById("ruleEffFrom").value || new Date().toISOString().slice(0,10),
+    notes: document.getElementById("ruleNotes").value || null
+  };
+  const { error } = await supabase.from("wage_rules").insert(payload);
+  msg.textContent = error ? error.message : "New wage rule saved — applies from its effective date forward.";
+  msg.className = "msg " + (error ? "err" : "ok");
+  if (!error) loadCurrentRule();
+}
+
+// ---------- Discretionary adjustments ----------
+async function saveAdjustment() {
+  const msg = document.getElementById("adjMsg");
+  const payload = {
+    employee_id: document.getElementById("adjEmployee").value || null,
+    branch_id: document.getElementById("adjBranch").value || null,
+    period_start: document.getElementById("adjStart").value,
+    period_end: document.getElementById("adjEnd").value,
+    adjustment_type: document.getElementById("adjType").value,
+    value: parseFloat(document.getElementById("adjValue").value) || 0,
+    reason: document.getElementById("adjReason").value,
+    approved_by: document.getElementById("adjApprover").value
+  };
+  if (!payload.period_start || !payload.period_end || !payload.reason || !payload.approved_by) {
+    msg.textContent = "Period, reason, and approver are required."; msg.className = "msg err"; return;
+  }
+  const { error } = await supabase.from("discretionary_adjustments").insert(payload);
+  msg.textContent = error ? error.message : "Adjustment saved — applies to matching entries from now on. Re-save affected timesheet entries (or re-run their trigger) to recalculate past ones.";
+  msg.className = "msg " + (error ? "err" : "ok");
+  if (!error) loadAdjustments();
+}
+
+async function loadAdjustments() {
+  const { data } = await supabase.from("discretionary_adjustments").select("*, employees(full_name), branches(code)").order("created_at", { ascending: false }).limit(20);
+  const tbody = document.querySelector("#adjTable tbody");
+  tbody.innerHTML = (data || []).map(a => `
+    <tr>
+      <td>${a.employees?.full_name || "All"} / ${a.branches?.code || "Org-wide"}</td>
+      <td>${a.period_start} → ${a.period_end}</td>
+      <td>${a.adjustment_type}</td>
+      <td>${a.value ?? "—"}</td>
+      <td>${a.reason}</td>
+    </tr>`).join("");
+}
+
+// ---------- Init ----------
+loadLookups();
+</script>
+</body>
+</html>
