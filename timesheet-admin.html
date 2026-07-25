@@ -187,14 +187,24 @@
 
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script>
 // ============================================================
 // CONFIG — same project as timesheet-clock.html
 // ============================================================
 const SUPABASE_URL = "https://cztkovsjxuaiburaudgk.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_eBOzdnFAdfFavl2QAYY6bA_lfAIJUhh";
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let supabase;
+try {
+  if (!window.supabase) {
+    throw new Error("Supabase library failed to load from CDN.");
+  }
+  supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+} catch (initErr) {
+  alert("Setup error: " + initErr.message);
+  console.error(initErr);
+}
 
 // ---------- Tabs ----------
 document.querySelectorAll(".tab").forEach(tab => {

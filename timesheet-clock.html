@@ -58,14 +58,25 @@
   <div class="log" id="log"></div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script>
 // ============================================================
 // CONFIG — replace with your real Supabase project values
 // ============================================================
 const SUPABASE_URL = "https://cztkovsjxuaiburaudgk.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_eBOzdnFAdfFavl2QAYY6bA_lfAIJUhh";
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let supabase;
+try {
+  if (!window.supabase) {
+    throw new Error("Supabase library failed to load from CDN — check internet connection or ad-blocker.");
+  }
+  supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+} catch (initErr) {
+  document.getElementById("netStatus").textContent = "Setup error: " + initErr.message;
+  document.getElementById("netStatus").className = "status offline";
+  console.error(initErr);
+}
 
 const QUEUE_KEY = "gs_timesheet_offline_queue";
 let capturedPhotoBlob = null;
@@ -108,7 +119,8 @@ async function loadDropdowns() {
       empSelect.innerHTML = c.employees;
       branchSelect.innerHTML = c.branches;
     } else {
-      logMsg("Could not load employee/branch list — connect once online first.", "queued");
+      logMsg("Could not load employee/branch list: " + (err.message || err), "queued");
+      console.error(err);
     }
     return;
   }
