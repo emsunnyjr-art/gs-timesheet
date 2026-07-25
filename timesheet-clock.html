@@ -36,29 +36,49 @@
   <h1>Clock In / Out</h1>
   <div id="netStatus" class="status offline">Checking connection…</div>
 
-  <label for="employeeSelect">Employee</label>
-  <select id="employeeSelect"></select>
-
   <label for="branchSelect">Branch</label>
   <select id="branchSelect"></select>
 
-  <div class="camera-wrap">
-    <label>Photo (optional)</label>
-    <video id="video" autoplay playsinline></video>
-    <canvas id="canvas"></canvas>
-    <img id="preview" class="preview">
-    <button class="camera-btn" id="camBtn" type="button">Open Camera</button>
+  <div style="display:flex; gap:8px; margin:14px 0;">
+    <button type="button" id="scanModeBtn" style="flex:1; padding:10px; border-radius:8px; border:none; background:var(--accent); color:#052e16; font-weight:600;">Scan ID</button>
+    <button type="button" id="manualModeBtn" style="flex:1; padding:10px; border-radius:8px; border:1px solid #334155; background:#0f172a; color:var(--text);">Manual Select</button>
+  </div>
+
+  <div id="scanPanel">
+    <video id="qrVideo" autoplay playsinline muted style="width:100%; border-radius:10px; display:block;"></video>
+    <canvas id="qrCanvas" style="display:none;"></canvas>
+    <div id="scanStatus" style="text-align:center; margin-top:8px; color:var(--muted); font-size:13px;">Point camera at employee ID QR code</div>
+  </div>
+
+  <div id="manualPanel" style="display:none;">
+    <label for="employeeSelect">Employee</label>
+    <select id="employeeSelect"></select>
+    <label style="display:flex; align-items:center; gap:6px; margin-top:6px; font-size:13px; color:var(--muted);">
+      <input type="checkbox" id="showAllEmployees" style="width:auto;"> Show all employees (cross-branch shift today)
+    </label>
+    <button type="button" id="manualUsePhotoBtn" style="margin-top:10px; width:100%; padding:10px; border-radius:8px; border:1px solid #334155; background:#0f172a; color:var(--text);">Take Photo & Continue</button>
+  </div>
+
+  <div id="confirmPanel" style="display:none; margin-top:14px; padding:12px; border:1px solid #334155; border-radius:10px;">
+    <div style="font-weight:600; margin-bottom:6px;">Confirm identity</div>
+    <div id="confirmName" style="color:var(--accent); font-size:15px; margin-bottom:8px;"></div>
+    <img id="confirmPhoto" style="width:100%; border-radius:8px; display:block;">
+    <div style="display:flex; gap:8px; margin-top:10px;">
+      <button type="button" id="retakeBtn" style="flex:1; padding:10px; border-radius:8px; border:1px solid #334155; background:#0f172a; color:var(--text);">Retake Photo</button>
+      <button type="button" id="confirmBtn" style="flex:1; padding:10px; border-radius:8px; border:none; background:var(--accent); color:#052e16; font-weight:600;">Confirm — This Is Me</button>
+    </div>
   </div>
 
   <div class="btn-row" style="margin-top:16px;">
-    <button class="btn-in" id="clockInBtn">Time In</button>
-    <button class="btn-out" id="clockOutBtn">Time Out</button>
+    <button class="btn-in" id="clockInBtn" disabled>Time In</button>
+    <button class="btn-out" id="clockOutBtn" disabled>Time Out</button>
   </div>
 
   <div class="log" id="log"></div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <script>
 // ============================================================
 // CONFIG — replace with your real Supabase project values
@@ -79,8 +99,6 @@ try {
 }
 
 const QUEUE_KEY = "gs_timesheet_offline_queue";
-let capturedPhotoBlob = null;
-let stream = null;
 
 // ---------- Network status ----------
 function updateNetStatus() {
@@ -98,61 +116,201 @@ window.addEventListener("online", updateNetStatus);
 window.addEventListener("offline", updateNetStatus);
 
 // ---------- Load employees & branches ----------
+let allEmployees = [];
+
 async function loadDropdowns() {
   const empSelect = document.getElementById("employeeSelect");
   const branchSelect = document.getElementById("branchSelect");
   try {
     const { data: employees, error: empErr } = await supabase
-      .from("employees").select("id, full_name, tm_number").eq("status", "active").order("full_name");
+      .from("employees").select("id, full_name, tm_number, home_branch_id").eq("status", "active").order("full_name");
     if (empErr) throw empErr;
-    empSelect.innerHTML = employees.map(e => `<option value="${e.id}">${e.full_name} (${e.tm_number})</option>`).join("");
+    allEmployees = employees;
 
     const { data: branches, error: brErr } = await supabase
       .from("branches").select("id, code, name").order("code");
     if (brErr) throw brErr;
     branchSelect.innerHTML = branches.map(b => `<option value="${b.id}">${b.code} — ${b.name}</option>`).join("");
+
+    localStorage.setItem("gs_dropdown_cache", JSON.stringify({ employees, branches: branchSelect.innerHTML }));
+    renderEmployeeOptions();
+    branchSelect.addEventListener("change", renderEmployeeOptions);
+    document.getElementById("showAllEmployees").addEventListener("change", renderEmployeeOptions);
   } catch (err) {
-    // offline or first load — fall back to cached dropdown data if present
     const cached = localStorage.getItem("gs_dropdown_cache");
     if (cached) {
       const c = JSON.parse(cached);
-      empSelect.innerHTML = c.employees;
+      allEmployees = c.employees;
       branchSelect.innerHTML = c.branches;
+      renderEmployeeOptions();
+      branchSelect.addEventListener("change", renderEmployeeOptions);
+      document.getElementById("showAllEmployees").addEventListener("change", renderEmployeeOptions);
     } else {
       logMsg("Could not load employee/branch list: " + (err.message || err), "queued");
       console.error(err);
     }
-    return;
   }
-  localStorage.setItem("gs_dropdown_cache", JSON.stringify({
-    employees: empSelect.innerHTML, branches: branchSelect.innerHTML
-  }));
 }
 
-// ---------- Camera ----------
-document.getElementById("camBtn").addEventListener("click", async () => {
-  const video = document.getElementById("video");
-  if (!stream) {
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-    video.srcObject = stream;
-    video.style.display = "block";
-    document.getElementById("camBtn").textContent = "Capture";
-  } else {
-    const canvas = document.getElementById("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext("2d").drawImage(video, 0, 0);
-    canvas.toBlob(blob => {
-      capturedPhotoBlob = blob;
-      const preview = document.getElementById("preview");
-      preview.src = URL.createObjectURL(blob);
-      preview.style.display = "block";
-    }, "image/jpeg", 0.85);
-    stream.getTracks().forEach(t => t.stop());
-    stream = null;
-    video.style.display = "none";
-    document.getElementById("camBtn").textContent = "Retake Photo";
+function renderEmployeeOptions() {
+  const empSelect = document.getElementById("employeeSelect");
+  const branchId = document.getElementById("branchSelect").value;
+  const showAll = document.getElementById("showAllEmployees").checked;
+  const list = showAll ? allEmployees : allEmployees.filter(e => e.home_branch_id === branchId);
+  const source = list.length ? list : allEmployees; // fall back to full list if branch has nobody assigned
+  empSelect.innerHTML = source.map(e => `<option value="${e.id}">${e.full_name} (${e.tm_number})</option>`).join("");
+}
+
+// ---------- Mode toggle ----------
+let mode = "scan"; // "scan" | "manual"
+let qrLoopActive = false;
+let sharedStream = null;
+let selectedEmployeeId = null;
+let selectedEmployeeName = null;
+let capturedPhotoBlob = null;
+
+const scanModeBtn = document.getElementById("scanModeBtn");
+const manualModeBtn = document.getElementById("manualModeBtn");
+const scanPanel = document.getElementById("scanPanel");
+const manualPanel = document.getElementById("manualPanel");
+const confirmPanel = document.getElementById("confirmPanel");
+const qrVideo = document.getElementById("qrVideo");
+const qrCanvas = document.getElementById("qrCanvas");
+const scanStatus = document.getElementById("scanStatus");
+
+scanModeBtn.addEventListener("click", () => setMode("scan"));
+manualModeBtn.addEventListener("click", () => setMode("manual"));
+
+function setMode(m) {
+  mode = m;
+  scanModeBtn.style.background = m === "scan" ? "var(--accent)" : "#0f172a";
+  scanModeBtn.style.color = m === "scan" ? "#052e16" : "var(--text)";
+  scanModeBtn.style.border = m === "scan" ? "none" : "1px solid #334155";
+  manualModeBtn.style.background = m === "manual" ? "var(--accent)" : "#0f172a";
+  manualModeBtn.style.color = m === "manual" ? "#052e16" : "var(--text)";
+  manualModeBtn.style.border = m === "manual" ? "none" : "1px solid #334155";
+  scanPanel.style.display = m === "scan" ? "block" : "none";
+  manualPanel.style.display = m === "manual" ? "block" : "none";
+  confirmPanel.style.display = "none";
+  resetSelection();
+  if (m === "scan") startQrScan(); else stopCamera();
+}
+
+function resetSelection() {
+  selectedEmployeeId = null;
+  selectedEmployeeName = null;
+  capturedPhotoBlob = null;
+  document.getElementById("clockInBtn").disabled = true;
+  document.getElementById("clockOutBtn").disabled = true;
+}
+
+// ---------- Camera (shared by scan + manual capture) ----------
+async function openCamera() {
+  if (sharedStream) return;
+  sharedStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+  qrVideo.srcObject = sharedStream;
+  qrVideo.style.display = "block";
+}
+
+function stopCamera() {
+  qrLoopActive = false;
+  if (sharedStream) {
+    sharedStream.getTracks().forEach(t => t.stop());
+    sharedStream = null;
   }
+}
+
+function captureFrame() {
+  qrCanvas.width = qrVideo.videoWidth;
+  qrCanvas.height = qrVideo.videoHeight;
+  qrCanvas.getContext("2d").drawImage(qrVideo, 0, 0);
+  return new Promise(resolve => qrCanvas.toBlob(blob => resolve(blob), "image/jpeg", 0.85));
+}
+
+// ---------- QR scan loop ----------
+async function startQrScan() {
+  scanStatus.textContent = "Starting camera…";
+  try {
+    await openCamera();
+  } catch (err) {
+    scanStatus.textContent = "Camera error: " + err.message;
+    return;
+  }
+  scanStatus.textContent = "Point camera at employee ID QR code";
+  qrLoopActive = true;
+  requestAnimationFrame(qrTick);
+}
+
+function qrTick() {
+  if (!qrLoopActive) return;
+  if (qrVideo.readyState === qrVideo.HAVE_ENOUGH_DATA) {
+    qrCanvas.width = qrVideo.videoWidth;
+    qrCanvas.height = qrVideo.videoHeight;
+    const ctx = qrCanvas.getContext("2d");
+    ctx.drawImage(qrVideo, 0, 0, qrCanvas.width, qrCanvas.height);
+    const imageData = ctx.getImageData(0, 0, qrCanvas.width, qrCanvas.height);
+    const code = jsQR(imageData.data, imageData.width, imageData.height);
+    if (code && code.data && code.data.startsWith("EMP:")) {
+      const tmNumber = code.data.slice(4).trim();
+      const emp = allEmployees.find(e => e.tm_number === tmNumber);
+      if (emp) {
+        onEmployeeIdentified(emp.id, emp.full_name);
+        return; // stop the loop, don't schedule another frame
+      } else {
+        scanStatus.textContent = `QR read but no active employee matches TM ${tmNumber}`;
+      }
+    }
+  }
+  requestAnimationFrame(qrTick);
+}
+
+async function onEmployeeIdentified(id, name) {
+  qrLoopActive = false;
+  selectedEmployeeId = id;
+  selectedEmployeeName = name;
+  const blob = await captureFrame();
+  showConfirm(blob);
+}
+
+// ---------- Manual mode: pick employee, then capture photo ----------
+document.getElementById("manualUsePhotoBtn").addEventListener("click", async () => {
+  const empSelect = document.getElementById("employeeSelect");
+  if (!empSelect.value) { logMsg("Select an employee first.", "queued"); return; }
+  selectedEmployeeId = empSelect.value;
+  selectedEmployeeName = empSelect.options[empSelect.selectedIndex].text;
+  try {
+    await openCamera();
+    // give the camera a moment to focus before capturing
+    setTimeout(async () => {
+      const blob = await captureFrame();
+      showConfirm(blob);
+    }, 400);
+  } catch (err) {
+    logMsg("Camera error: " + err.message, "queued");
+  }
+});
+
+// ---------- Confirm panel ----------
+function showConfirm(blob) {
+  capturedPhotoBlob = blob;
+  document.getElementById("confirmName").textContent = selectedEmployeeName;
+  document.getElementById("confirmPhoto").src = URL.createObjectURL(blob);
+  scanPanel.style.display = "none";
+  manualPanel.style.display = "none";
+  confirmPanel.style.display = "block";
+}
+
+document.getElementById("retakeBtn").addEventListener("click", async () => {
+  const blob = await captureFrame();
+  capturedPhotoBlob = blob;
+  document.getElementById("confirmPhoto").src = URL.createObjectURL(blob);
+});
+
+document.getElementById("confirmBtn").addEventListener("click", () => {
+  confirmPanel.style.display = "none";
+  document.getElementById("clockInBtn").disabled = false;
+  document.getElementById("clockOutBtn").disabled = false;
+  logMsg(`Identity confirmed: ${selectedEmployeeName}`, "synced");
 });
 
 // ---------- Clock in/out ----------
@@ -160,10 +318,10 @@ document.getElementById("clockInBtn").addEventListener("click", () => submitEntr
 document.getElementById("clockOutBtn").addEventListener("click", () => submitEntry("out"));
 
 async function submitEntry(type) {
-  const employee_id = document.getElementById("employeeSelect").value;
+  const employee_id = selectedEmployeeId;
   const branch_id = document.getElementById("branchSelect").value;
   if (!employee_id || !branch_id) {
-    logMsg("Select employee and branch first.", "queued");
+    logMsg("Confirm identity and select branch first.", "queued");
     return;
   }
   const entry = {
@@ -175,13 +333,14 @@ async function submitEntry(type) {
 
   if (navigator.onLine) {
     const ok = await pushEntry(entry, capturedPhotoBlob);
-    logMsg(`${type === "in" ? "Timed in" : "Timed out"} — synced`, ok ? "synced" : "queued");
+    logMsg(`${type === "in" ? "Timed in" : "Timed out"} — ${selectedEmployeeName} — synced`, ok ? "synced" : "queued");
     if (!ok) queueEntry(entry, capturedPhotoBlob);
   } else {
     queueEntry(entry, capturedPhotoBlob);
-    logMsg(`${type === "in" ? "Timed in" : "Timed out"} — queued offline, will sync automatically`, "queued");
+    logMsg(`${type === "in" ? "Timed in" : "Timed out"} — ${selectedEmployeeName} — queued offline`, "queued");
   }
-  resetPhoto();
+  resetSelection();
+  setMode(mode); // restart scan loop / reset manual panel for the next person
 }
 
 async function pushEntry(entry, photoBlob) {
@@ -266,12 +425,6 @@ async function syncQueue() {
   }
 }
 
-function resetPhoto() {
-  capturedPhotoBlob = null;
-  document.getElementById("preview").style.display = "none";
-  document.getElementById("camBtn").textContent = "Open Camera";
-}
-
 function logMsg(msg, cls) {
   const log = document.getElementById("log");
   const div = document.createElement("div");
@@ -282,7 +435,7 @@ function logMsg(msg, cls) {
 
 // ---------- Init ----------
 updateNetStatus();
-loadDropdowns();
+loadDropdowns().then(() => setMode("scan"));
 setInterval(syncQueue, 30000); // retry queue every 30s while app is open
 </script>
 </body>

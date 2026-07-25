@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Employee ID Cards</title>
+<style>
+  :root { --bg:#0f172a; --card:#1e293b; --accent:#22c55e; --text:#f1f5f9; --muted:#94a3b8; --border:#334155; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--text); padding:16px; }
+  .toolbar { max-width:900px; margin:0 auto 20px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  select, button { padding:10px 14px; border-radius:8px; border:1px solid var(--border); background:var(--card); color:var(--text); font-size:14px; }
+  button.primary { background:var(--accent); color:#052e16; border:none; font-weight:600; cursor:pointer; }
+  .status { color:var(--muted); font-size:13px; }
+
+  .card-grid { display:flex; flex-wrap:wrap; gap:16px; justify-content:center; }
+
+  /* CR80 card size ratio (3.375in x 2.125in), scaled for screen */
+  .id-card {
+    width: 337.5px; height: 212.5px;
+    background: linear-gradient(135deg, #1e293b, #0f172a);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    display: flex;
+    gap: 12px;
+    color: white;
+    position: relative;
+    overflow: hidden;
+  }
+  .id-card::before {
+    content: "";
+    position: absolute; top:0; left:0; right:0; height: 6px;
+    background: var(--accent);
+  }
+  .id-photo {
+    width: 70px; height: 85px;
+    background: #334155;
+    border-radius: 6px;
+    flex-shrink: 0;
+    display: flex; align-items:center; justify-content:center;
+    font-size: 11px; color: var(--muted); text-align:center;
+    margin-top: 10px;
+  }
+  .id-info { flex: 1; margin-top: 10px; min-width:0; }
+  .id-info .company { font-size: 10px; color: var(--accent); font-weight:700; letter-spacing:0.05em; text-transform:uppercase; }
+  .id-info .name { font-size: 15px; font-weight:700; margin-top:4px; line-height:1.2; }
+  .id-info .role { font-size: 11px; color: var(--muted); margin-top:2px; }
+  .id-info .branch { font-size: 11px; color: var(--muted); }
+  .id-info .tm { font-size: 10px; color: var(--muted); margin-top:6px; font-family:monospace; }
+  .id-qr { width: 70px; height: 70px; background:white; border-radius:6px; padding:4px; margin-top:10px; flex-shrink:0; }
+  .id-qr canvas { width:100% !important; height:100% !important; }
+
+  @media print {
+    body { background: white; padding: 0; }
+    .toolbar { display: none; }
+    .card-grid { gap: 8px; }
+    .id-card { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <label style="color:var(--muted); font-size:13px;">Filter by branch:</label>
+  <select id="branchFilter"><option value="">All branches</option></select>
+  <button onclick="loadEmployees()">Load / Refresh</button>
+  <button class="primary" onclick="window.print()">Print Cards</button>
+  <span class="status" id="statusMsg"></span>
+</div>
+
+<div class="card-grid" id="cardGrid"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<script>
+const SUPABASE_URL = "https://cztkovsjxuaiburaudgk.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_eBOzdnFAdfFavl2QAYY6bA_lfAIJUhh";
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+async function loadBranches() {
+  const { data } = await supabase.from("branches").select("id, code, name").order("code");
+  document.getElementById("branchFilter").innerHTML =
+    '<option value="">All branches</option>' +
+    (data || []).map(b => `<option value="${b.id}">${b.code} — ${b.name}</option>`).join("");
+}
+
+async function loadEmployees() {
+  const status = document.getElementById("statusMsg");
+  status.textContent = "Loading...";
+  const branchId = document.getElementById("branchFilter").value;
+
+  let q = supabase.from("employees")
+    .select("id, tm_number, full_name, status, home_branch_id, branches(code,name), posts(name)")
+    .eq("status", "active")
+    .order("full_name");
+  if (branchId) q = q.eq("home_branch_id", branchId);
+
+  const { data, error } = await q;
+  if (error) { status.textContent = error.message; return; }
+
+  const grid = document.getElementById("cardGrid");
+  grid.innerHTML = "";
+  for (const emp of data) {
+    const card = document.createElement("div");
+    card.className = "id-card";
+    card.innerHTML = `
+      <div class="id-photo">No Photo</div>
+      <div class="id-info">
+        <div class="company">A's Fuel / Adie and Ace's</div>
+        <div class="name">${emp.full_name}</div>
+        <div class="role">${emp.posts?.name || "—"}</div>
+        <div class="branch">${emp.branches?.code || "—"} — ${emp.branches?.name || ""}</div>
+        <div class="tm">TM #${emp.tm_number}</div>
+      </div>
+      <div class="id-qr"><canvas id="qr-${emp.tm_number}"></canvas></div>
+    `;
+    grid.appendChild(card);
+    // QR content: EMP:<tm_number> — scanned by the clock-in app to identify the employee
+    QRCode.toCanvas(document.getElementById(`qr-${emp.tm_number}`), `EMP:${emp.tm_number}`, { width: 62, margin: 0 });
+  }
+  status.textContent = `${data.length} card(s) ready.`;
+}
+
+loadBranches();
+loadEmployees();
+</script>
+</body>
+</html>
