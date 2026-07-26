@@ -59,13 +59,14 @@
     <label style="display:flex; align-items:center; gap:6px; margin-top:6px; font-size:13px; color:var(--muted);">
       <input type="checkbox" id="showAllEmployees" style="width:auto;"> Show all employees (cross-branch shift today)
     </label>
-    <button type="button" id="manualUsePhotoBtn" style="margin-top:10px; width:100%; padding:10px; border-radius:8px; border:1px solid #334155; background:#0f172a; color:var(--text);">Take Photo & Continue</button>
+    <button type="button" id="manualUsePhotoBtn" style="margin-top:10px; width:100%; padding:10px; border-radius:8px; border:1px solid #334155; background:#0f172a; color:var(--text);">Take Attendance Photo & Continue</button>
   </div>
 
   <div id="confirmPanel" style="display:none; margin-top:14px; padding:12px; border:1px solid #334155; border-radius:10px;">
     <div style="font-weight:600; margin-bottom:6px;">Confirm identity</div>
     <div id="confirmName" style="color:var(--accent); font-size:15px; margin-bottom:8px;"></div>
     <img id="confirmPhoto" style="width:100%; border-radius:8px; display:block;">
+    <div style="font-size:11px; color:var(--muted); margin-top:6px;">Attendance photo for this time in/out only — it does not change your profile photo. Profile photos can only be replaced by an admin.</div>
     <div style="display:flex; gap:8px; margin-top:10px;">
       <button type="button" id="retakeBtn" style="flex:1; padding:10px; border-radius:8px; border:1px solid #334155; background:#0f172a; color:var(--text);">Retake Photo</button>
       <button type="button" id="confirmBtn" style="flex:1; padding:10px; border-radius:8px; border:none; background:var(--accent); color:#052e16; font-weight:600;">Confirm — This Is Me</button>
@@ -88,6 +89,16 @@
 // ============================================================
 const SUPABASE_URL = "https://cztkovsjxuaiburaudgk.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_eBOzdnFAdfFavl2QAYY6bA_lfAIJUhh";
+
+// ------------------------------------------------------------
+// INVARIANT: this page NEVER writes to employees.photo_url.
+// The photo captured during clock in/out is attendance evidence
+// only and is stored on timesheet_entries.photo_url (per entry).
+// The employee's reference/ID photo (employees.photo_url, shown
+// below and used on printed ID cards) can only be replaced from
+// timesheet-admin.html, which requires the admin PIN. Do not add
+// any code here that updates employees.photo_url.
+// ------------------------------------------------------------
 
 let supabase;
 try {
@@ -463,9 +474,51 @@ function logMsg(msg, cls) {
   log.prepend(div);
 }
 
+// ------------------------------------------------------------
+// Auto-repopulate today's shift from the admin-set default.
+// This NEVER changes the default schedule itself — it only reads
+// shift_templates (branch-specific, falling back to the org-wide
+// row where branch_id is null) and creates today's row if one
+// doesn't already exist. Changing the default requires the admin
+// PIN in timesheet-admin.html; this function has no such gate
+// because it can't alter the template, only apply it.
+// ------------------------------------------------------------
+async function ensureTodayShift(branchId) {
+  if (!branchId) return;
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    const { data: existing } = await supabase.from("shifts")
+      .select("id").eq("branch_id", branchId).eq("shift_date", today).limit(1);
+    if (existing && existing.length) return; // already exists — leave it alone
+
+    const { data: templates } = await supabase.from("shift_templates").select("*");
+    const tmpl = (templates || []).find(t => t.branch_id === branchId)
+      || (templates || []).find(t => t.branch_id === null);
+    if (!tmpl) return; // no default configured yet — nothing to auto-fill
+
+    await supabase.from("shifts").upsert({
+      branch_id: branchId,
+      shift_date: today,
+      scheduled_time_in: tmpl.scheduled_time_in,
+      scheduled_time_out: tmpl.scheduled_time_out,
+      pump_assignment: tmpl.pump_assignment,
+      double_pump: tmpl.double_pump,
+      emergency_roster: tmpl.emergency_roster
+    }, { onConflict: "branch_id,shift_date" });
+  } catch (err) {
+    console.error("ensureTodayShift failed:", err);
+  }
+}
+
 // ---------- Init ----------
 updateNetStatus();
-loadDropdowns().then(() => setMode("scan"));
+loadDropdowns().then(() => {
+  setMode("scan");
+  ensureTodayShift(document.getElementById("branchSelect").value);
+});
+document.getElementById("branchSelect").addEventListener("change", () => {
+  ensureTodayShift(document.getElementById("branchSelect").value);
+});
 setInterval(syncQueue, 30000); // retry queue every 30s while app is open
 </script>
 </body>

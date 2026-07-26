@@ -49,12 +49,38 @@
     <div class="tab" data-tab="payroll">Payroll</div>
     <div class="tab" data-tab="rules">Wage Rules</div>
     <div class="tab" data-tab="adjustments">Adjustments</div>
+    <div class="tab" data-tab="employees">Employees</div>
   </div>
 
   <!-- SHIFTS -->
   <div class="panel active" id="panel-shifts">
     <div class="card">
-      <h2>Create Shift</h2>
+      <h2>Default Shift Schedule</h2>
+      <p style="color:var(--muted); font-size:13px;">This is the shift that auto-fills every day for each branch — nobody has to create it by hand daily. Changing a default here requires the admin PIN and is logged; it only affects shifts auto-created from this point forward, not days already generated.</p>
+      <div class="row">
+        <div><label>Branch</label><select id="tmplBranch"><option value="">Org-wide default</option></select></div>
+        <div></div>
+      </div>
+      <div class="row">
+        <div><label>Time In</label><input type="time" id="tmplIn"></div>
+        <div><label>Time Out</label><input type="time" id="tmplOut"></div>
+      </div>
+      <label>Pump Assignment (optional)</label>
+      <input type="text" id="tmplPump" placeholder="e.g. Pump 1-2">
+      <div class="checks">
+        <label><input type="checkbox" id="tmplDouble"> Double Pump</label>
+        <label><input type="checkbox" id="tmplEmergency"> Emergency Roster</label>
+      </div>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <button class="secondary" onclick="loadTemplateForBranch()">Load Current Setting</button>
+        <button onclick="saveShiftTemplate()">Save Default (Admin PIN)</button>
+      </div>
+      <div class="msg" id="tmplMsg"></div>
+      <table id="templatesTable" style="margin-top:14px;"><thead><tr><th>Branch</th><th>Time In/Out</th><th>Flags</th><th>Last Changed</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="card">
+      <h2>Create / Override a Specific Day</h2>
+      <p style="color:var(--muted); font-size:13px;">Only needed for one-off changes (e.g. a holiday with shorter hours). Saving here for a branch/date that already has a shift updates it instead of duplicating it.</p>
       <div class="row">
         <div><label>Branch</label><select id="shiftBranch"></select></div>
         <div><label>Date</label><input type="date" id="shiftDate"></div>
@@ -185,6 +211,57 @@
     </div>
   </div>
 
+  <!-- EMPLOYEES -->
+  <div class="panel" id="panel-employees">
+    <div class="card">
+      <h2 id="employeeFormTitle">Add New Employee</h2>
+      <p style="color:var(--muted); font-size:13px;">Fields marked * are required before this employee can appear for timesheet clock-in. Everything under "Additional info" can be left blank and filled in later — for new hires who don't have their government IDs yet.</p>
+      <input type="hidden" id="empFormId">
+      <div class="row">
+        <div><label>Full Name *</label><input type="text" id="empFullName"></div>
+        <div><label>TM Number *</label><input type="text" id="empTmNumber"></div>
+      </div>
+      <div class="row">
+        <div><label>Home Branch *</label><select id="empBranch"></select></div>
+        <div><label>Post / Position *</label><select id="empPost"></select></div>
+      </div>
+      <label>Daily Rate (₱) *</label>
+      <input type="number" step="0.01" id="empDailyRate">
+
+      <h2 style="margin-top:20px;">Additional Info (fill in when available)</h2>
+      <div class="row">
+        <div><label>Hire Date</label><input type="date" id="empHireDate"></div>
+        <div><label>Valid ID Type</label><input type="text" id="empIdType" placeholder="e.g. UMID, Driver's License, Passport"></div>
+      </div>
+      <label>Valid ID Number</label>
+      <input type="text" id="empIdNumber">
+      <div class="row">
+        <div><label>SSS Number</label><input type="text" id="empSss"></div>
+        <div><label>PhilHealth Number</label><input type="text" id="empPhilhealth"></div>
+      </div>
+      <div class="row">
+        <div><label>Pag-IBIG Number</label><input type="text" id="empPagibig"></div>
+        <div><label>TIN</label><input type="text" id="empTin"></div>
+      </div>
+      <div class="row">
+        <div><label>Emergency Contact Name</label><input type="text" id="empEcName"></div>
+        <div><label>Emergency Contact Phone</label><input type="text" id="empEcPhone"></div>
+      </div>
+
+      <div style="display:flex; gap:10px; align-items:center;">
+        <button onclick="saveEmployee()">Save Employee</button>
+        <button class="secondary" id="empCancelEditBtn" style="display:none;" onclick="resetEmployeeForm()">Cancel Edit</button>
+      </div>
+      <div class="msg" id="empFormMsg"></div>
+    </div>
+    <div class="card">
+      <h2>Employee Profile Photos</h2>
+      <p style="color:var(--muted); font-size:13px;">The photo below is each employee's reference/ID photo — used on printed ID cards and shown for identity confirmation on the clock-in screen. The photo captured every time someone clocks in/out is separate attendance evidence and never changes this photo. Replacing a profile photo requires the admin PIN and is logged.</p>
+      <table id="employeesTable"><thead><tr><th>Photo</th><th>Employee</th><th>Branch</th><th>Post</th><th>Rate</th><th>HR Info</th><th></th></tr></thead><tbody></tbody></table>
+      <div class="msg" id="employeesMsg"></div>
+    </div>
+  </div>
+
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
@@ -217,12 +294,15 @@ document.querySelectorAll(".tab").forEach(tab => {
 });
 
 // ---------- Shared lookups ----------
+let branchesCache = [];
+
 async function loadLookups() {
   const { data: branches } = await supabase.from("branches").select("id, code, name").order("code");
+  branchesCache = branches || [];
   const branchOpts = (branches || []).map(b => `<option value="${b.id}">${b.code} — ${b.name}</option>`).join("");
-  ["shiftBranch", "filterBranch", "payrollBranch", "ruleBranch", "adjBranch"].forEach(id => {
+  ["shiftBranch", "filterBranch", "payrollBranch", "ruleBranch", "adjBranch", "tmplBranch"].forEach(id => {
     const el = document.getElementById(id);
-    const keepBlank = id === "filterBranch" || id === "ruleBranch" || id === "adjBranch";
+    const keepBlank = id === "filterBranch" || id === "ruleBranch" || id === "adjBranch" || id === "tmplBranch";
     el.innerHTML = (keepBlank ? el.innerHTML : "") + branchOpts;
   });
 
@@ -234,7 +314,9 @@ async function loadLookups() {
 
   loadCurrentRule();
   loadShifts();
+  loadShiftTemplates();
   loadAdjustments();
+  loadEmployees();
 }
 
 // ---------- Shifts ----------
@@ -252,8 +334,8 @@ async function createShift() {
   if (!payload.branch_id || !payload.shift_date) {
     msg.textContent = "Branch and date required."; msg.className = "msg err"; return;
   }
-  const { error } = await supabase.from("shifts").insert(payload);
-  msg.textContent = error ? error.message : "Shift created.";
+  const { error } = await supabase.from("shifts").upsert(payload, { onConflict: "branch_id,shift_date" });
+  msg.textContent = error ? error.message : "Shift saved.";
   msg.className = "msg " + (error ? "err" : "ok");
   if (!error) loadShifts();
 }
@@ -446,6 +528,258 @@ async function loadAdjustments() {
       <td>${a.value ?? "—"}</td>
       <td>${a.reason}</td>
     </tr>`).join("");
+}
+
+// ---------- Default shift schedule (auto-repopulation template) ----------
+// INVARIANT: changing a default here requires the admin PIN. The
+// actual daily repopulation (reading this template and creating
+// today's shift row) happens client-side in timesheet-clock.html and
+// needs no PIN — it only ever applies whatever default is already
+// saved here, never changes it.
+let templatesCache = [];
+
+async function loadShiftTemplates() {
+  const { data } = await supabase.from("shift_templates").select("*, branches:branch_id(code)");
+  templatesCache = data || [];
+  renderTemplatesTable();
+}
+
+function renderTemplatesTable() {
+  const tbody = document.querySelector("#templatesTable tbody");
+  tbody.innerHTML = templatesCache.map(t => `
+    <tr>
+      <td>${t.branches?.code || "Org-wide default"}</td>
+      <td>${(t.scheduled_time_in || "").slice(0,5)} → ${(t.scheduled_time_out || "").slice(0,5)}</td>
+      <td>${t.double_pump ? '<span class="badge ot">Double Pump</span>' : ""} ${t.emergency_roster ? '<span class="badge holiday">Emergency</span>' : ""}</td>
+      <td style="font-size:12px;color:var(--muted);">${t.updated_at ? new Date(t.updated_at).toLocaleDateString() + (t.updated_by ? " · " + t.updated_by : "") : "—"}</td>
+    </tr>`).join("");
+}
+
+function loadTemplateForBranch() {
+  const branchId = document.getElementById("tmplBranch").value || null;
+  const t = templatesCache.find(x => (x.branch_id || null) === branchId);
+  document.getElementById("tmplIn").value = t ? (t.scheduled_time_in || "").slice(0,5) : "";
+  document.getElementById("tmplOut").value = t ? (t.scheduled_time_out || "").slice(0,5) : "";
+  document.getElementById("tmplPump").value = t ? (t.pump_assignment || "") : "";
+  document.getElementById("tmplDouble").checked = t ? !!t.double_pump : false;
+  document.getElementById("tmplEmergency").checked = t ? !!t.emergency_roster : false;
+}
+
+async function saveShiftTemplate() {
+  const msg = document.getElementById("tmplMsg");
+  const branchId = document.getElementById("tmplBranch").value || null;
+  const timeIn = document.getElementById("tmplIn").value;
+  const timeOut = document.getElementById("tmplOut").value;
+  if (!timeIn || !timeOut) {
+    msg.textContent = "Time In and Time Out are required.";
+    msg.className = "msg err";
+    return;
+  }
+
+  const pin = prompt("Enter Admin PIN to change this default shift schedule:");
+  if (pin === null) return; // cancelled — no change made
+
+  const { data: setting, error: pinErr } = await supabase
+    .from("app_settings").select("value").eq("key", "admin_pin").single();
+  if (pinErr || !setting || pin !== setting.value) {
+    msg.textContent = "Incorrect admin PIN — schedule not changed.";
+    msg.className = "msg err";
+    return;
+  }
+
+  const adminName = (prompt("Your name (for the log):") || "").trim() || "Unknown admin";
+  const existing = templatesCache.find(x => (x.branch_id || null) === branchId);
+  const payload = {
+    branch_id: branchId,
+    scheduled_time_in: timeIn,
+    scheduled_time_out: timeOut,
+    pump_assignment: document.getElementById("tmplPump").value.trim() || null,
+    double_pump: document.getElementById("tmplDouble").checked,
+    emergency_roster: document.getElementById("tmplEmergency").checked,
+    updated_at: new Date().toISOString(),
+    updated_by: adminName
+  };
+
+  let error;
+  if (existing) {
+    ({ error } = await supabase.from("shift_templates").update(payload).eq("id", existing.id));
+  } else {
+    ({ error } = await supabase.from("shift_templates").insert(payload));
+  }
+  msg.textContent = error ? error.message : "Default shift schedule saved by " + adminName + " — applies to shifts auto-created from now on.";
+  msg.className = "msg " + (error ? "err" : "ok");
+  if (!error) loadShiftTemplates();
+}
+
+// ---------- Employees: add/edit + HR completeness ----------
+// INVARIANT: this is the ONLY place in the app that may write to
+// employees.photo_url. timesheet-clock.html only ever writes
+// timesheet_entries.photo_url (per-visit attendance evidence).
+let employeesCache = [];
+let postsCache = [];
+
+async function loadEmployees() {
+  const [empRes, postRes] = await Promise.all([
+    supabase.from("employees")
+      .select("id, full_name, tm_number, photo_url, photo_updated_at, photo_updated_by, home_branch_id, post_id, daily_rate, hire_date, sss_number, philhealth_number, pagibig_number, tin_number, valid_id_type, valid_id_number, emergency_contact_name, emergency_contact_phone, branches:home_branch_id(code), posts:post_id(name)")
+      .eq("status", "active").order("full_name"),
+    supabase.from("posts").select("id, name").order("name")
+  ]);
+  if (empRes.error) { console.error(empRes.error); return; }
+  employeesCache = empRes.data || [];
+  postsCache = postRes.data || [];
+  populateEmployeeFormDropdowns();
+  renderEmployeesTable();
+}
+
+function populateEmployeeFormDropdowns() {
+  document.getElementById("empBranch").innerHTML =
+    '<option value="">Select branch…</option>' + branchesCache.map(b => `<option value="${b.id}">${b.code} — ${b.name}</option>`).join("");
+  document.getElementById("empPost").innerHTML =
+    '<option value="">Select post…</option>' + postsCache.map(p => `<option value="${p.id}">${p.name}</option>`).join("");
+}
+
+function renderEmployeesTable() {
+  const tbody = document.querySelector("#employeesTable tbody");
+  tbody.innerHTML = employeesCache.map(e => {
+    const missingGovIds = !e.sss_number && !e.philhealth_number && !e.pagibig_number && !e.tin_number;
+    return `
+    <tr data-id="${e.id}">
+      <td>${e.photo_url ? `<img src="${e.photo_url}" style="width:44px;height:44px;border-radius:8px;object-fit:cover;">` : "—"}</td>
+      <td>${e.full_name}<br><span style="font-size:11px;color:var(--muted);">${e.tm_number}</span></td>
+      <td>${e.branches?.code || "—"}</td>
+      <td>${e.posts?.name || "—"}</td>
+      <td>${e.daily_rate != null ? "₱" + Number(e.daily_rate).toFixed(2) : "—"}</td>
+      <td>${missingGovIds ? '<span class="badge late">Needs govt IDs</span>' : '<span class="badge ot">Complete</span>'}</td>
+      <td>
+        <input type="file" accept="image/*" style="display:none;" class="photoInput">
+        <button class="secondary" onclick="editEmployee('${e.id}')">Edit</button>
+        <button class="secondary" onclick="triggerPhotoReplace('${e.id}', this)">Photo</button>
+      </td>
+    </tr>`;
+  }).join("");
+}
+
+async function saveEmployee() {
+  const msg = document.getElementById("empFormMsg");
+  const id = document.getElementById("empFormId").value || null;
+  const payload = {
+    full_name: document.getElementById("empFullName").value.trim(),
+    tm_number: document.getElementById("empTmNumber").value.trim(),
+    home_branch_id: document.getElementById("empBranch").value,
+    post_id: document.getElementById("empPost").value,
+    daily_rate: parseFloat(document.getElementById("empDailyRate").value),
+    hire_date: document.getElementById("empHireDate").value || null,
+    valid_id_type: document.getElementById("empIdType").value.trim() || null,
+    valid_id_number: document.getElementById("empIdNumber").value.trim() || null,
+    sss_number: document.getElementById("empSss").value.trim() || null,
+    philhealth_number: document.getElementById("empPhilhealth").value.trim() || null,
+    pagibig_number: document.getElementById("empPagibig").value.trim() || null,
+    tin_number: document.getElementById("empTin").value.trim() || null,
+    emergency_contact_name: document.getElementById("empEcName").value.trim() || null,
+    emergency_contact_phone: document.getElementById("empEcPhone").value.trim() || null
+  };
+
+  if (!payload.full_name || !payload.tm_number || !payload.home_branch_id || !payload.post_id || !payload.daily_rate) {
+    msg.textContent = "Full name, TM number, branch, post, and daily rate are required before this employee can be used on the timesheet.";
+    msg.className = "msg err";
+    return;
+  }
+
+  let error;
+  if (id) {
+    ({ error } = await supabase.from("employees").update(payload).eq("id", id));
+  } else {
+    payload.status = "active";
+    ({ error } = await supabase.from("employees").insert(payload));
+  }
+  if (error) { msg.textContent = error.message; msg.className = "msg err"; return; }
+  msg.textContent = id ? "Employee updated." : `${payload.full_name} added — ready for timesheet clock-in.`;
+  msg.className = "msg ok";
+  resetEmployeeForm();
+  loadEmployees();
+}
+
+function resetEmployeeForm() {
+  document.getElementById("empFormId").value = "";
+  ["empFullName","empTmNumber","empDailyRate","empHireDate","empIdType","empIdNumber","empSss","empPhilhealth","empPagibig","empTin","empEcName","empEcPhone"]
+    .forEach(id => document.getElementById(id).value = "");
+  document.getElementById("empBranch").value = "";
+  document.getElementById("empPost").value = "";
+  document.getElementById("employeeFormTitle").textContent = "Add New Employee";
+  document.getElementById("empCancelEditBtn").style.display = "none";
+  document.getElementById("empFormMsg").textContent = "";
+}
+
+function editEmployee(employeeId) {
+  const e = employeesCache.find(x => x.id === employeeId);
+  if (!e) return;
+  document.getElementById("empFormId").value = e.id;
+  document.getElementById("empFullName").value = e.full_name || "";
+  document.getElementById("empTmNumber").value = e.tm_number || "";
+  document.getElementById("empBranch").value = e.home_branch_id || "";
+  document.getElementById("empPost").value = e.post_id || "";
+  document.getElementById("empDailyRate").value = e.daily_rate ?? "";
+  document.getElementById("empHireDate").value = e.hire_date || "";
+  document.getElementById("empIdType").value = e.valid_id_type || "";
+  document.getElementById("empIdNumber").value = e.valid_id_number || "";
+  document.getElementById("empSss").value = e.sss_number || "";
+  document.getElementById("empPhilhealth").value = e.philhealth_number || "";
+  document.getElementById("empPagibig").value = e.pagibig_number || "";
+  document.getElementById("empTin").value = e.tin_number || "";
+  document.getElementById("empEcName").value = e.emergency_contact_name || "";
+  document.getElementById("empEcPhone").value = e.emergency_contact_phone || "";
+  document.getElementById("employeeFormTitle").textContent = "Edit Employee — " + e.full_name;
+  document.getElementById("empCancelEditBtn").style.display = "inline-block";
+  document.getElementById("empFormMsg").textContent = "";
+  document.getElementById("panel-employees").scrollIntoView({ behavior: "smooth" });
+}
+
+function triggerPhotoReplace(employeeId, btn) {
+  const input = btn.parentElement.querySelector(".photoInput");
+  input.value = "";
+  input.onchange = () => handlePhotoReplace(employeeId, input.files[0]);
+  input.click();
+}
+
+async function handlePhotoReplace(employeeId, file) {
+  const msg = document.getElementById("employeesMsg");
+  if (!file) return;
+
+  const pin = prompt("Enter Admin PIN to replace this employee's profile photo:");
+  if (pin === null) return; // cancelled — no change made
+
+  const { data: setting, error: pinErr } = await supabase
+    .from("app_settings").select("value").eq("key", "admin_pin").single();
+  if (pinErr || !setting || pin !== setting.value) {
+    msg.textContent = "Incorrect admin PIN — photo not changed.";
+    msg.className = "msg err";
+    return;
+  }
+
+  const adminName = (prompt("Your name (for the audit log):") || "").trim() || "Unknown admin";
+  const emp = employeesCache.find(e => e.id === employeeId);
+  const oldUrl = emp ? emp.photo_url : null;
+
+  const path = `employees/${employeeId}.jpg`;
+  const { error: upErr } = await supabase.storage.from("photos").upload(path, file, { upsert: true });
+  if (upErr) { msg.textContent = "Upload failed: " + upErr.message; msg.className = "msg err"; return; }
+  const newUrl = supabase.storage.from("photos").getPublicUrl(path).data.publicUrl + `?t=${Date.now()}`;
+
+  const { error: updErr } = await supabase.from("employees").update({
+    photo_url: newUrl,
+    photo_updated_at: new Date().toISOString(),
+    photo_updated_by: adminName
+  }).eq("id", employeeId);
+  if (updErr) { msg.textContent = "Photo uploaded but employee record update failed: " + updErr.message; msg.className = "msg err"; return; }
+
+  await supabase.from("employee_photo_audit").insert({
+    employee_id: employeeId, old_photo_url: oldUrl, new_photo_url: newUrl, changed_by: adminName
+  });
+
+  msg.textContent = `Profile photo updated for ${emp?.full_name || "employee"} by ${adminName}.`;
+  msg.className = "msg ok";
+  loadEmployees();
 }
 
 // ---------- Init ----------
