@@ -55,11 +55,12 @@
   <!-- SHIFTS -->
   <div class="panel active" id="panel-shifts">
     <div class="card">
-      <h2>Default Shift Schedule</h2>
-      <p style="color:var(--muted); font-size:13px;">This is the shift that auto-fills every day for each branch — nobody has to create it by hand daily. Changing a default here requires the admin PIN and is logged; it only affects shifts auto-created from this point forward, not days already generated.</p>
+      <h2 id="tmplFormTitle">Add Shift Schedule</h2>
+      <p style="color:var(--muted); font-size:13px;">Add one row per shift a branch runs each day — e.g. "Morning" 4am–12pm and "Afternoon" 12pm–8pm for the same branch. Every labeled shift here repopulates automatically every day, no daily re-entry. Adding or changing one requires the admin PIN and is logged.</p>
+      <input type="hidden" id="tmplFormId">
       <div class="row">
         <div><label>Branch</label><select id="tmplBranch"><option value="">Org-wide default</option></select></div>
-        <div></div>
+        <div><label>Shift Label</label><input type="text" id="tmplLabel" placeholder="e.g. Morning, Afternoon, Night"></div>
       </div>
       <div class="row">
         <div><label>Time In</label><input type="time" id="tmplIn"></div>
@@ -72,19 +73,21 @@
         <label><input type="checkbox" id="tmplEmergency"> Emergency Roster</label>
       </div>
       <div style="display:flex; gap:10px; align-items:center;">
-        <button class="secondary" onclick="loadTemplateForBranch()">Load Current Setting</button>
-        <button onclick="saveShiftTemplate()">Save Default (Admin PIN)</button>
+        <button onclick="saveShiftTemplate()">Save Shift Schedule (Admin PIN)</button>
+        <button class="secondary" id="tmplCancelEditBtn" style="display:none;" onclick="resetTemplateForm()">Cancel Edit</button>
       </div>
       <div class="msg" id="tmplMsg"></div>
-      <table id="templatesTable" style="margin-top:14px;"><thead><tr><th>Branch</th><th>Time In/Out</th><th>Flags</th><th>Last Changed</th></tr></thead><tbody></tbody></table>
+      <table id="templatesTable" style="margin-top:14px;"><thead><tr><th>Branch</th><th>Label</th><th>Time In/Out</th><th>Flags</th><th>Last Changed</th><th></th></tr></thead><tbody></tbody></table>
     </div>
     <div class="card">
       <h2>Create / Override a Specific Day</h2>
-      <p style="color:var(--muted); font-size:13px;">Only needed for one-off changes (e.g. a holiday with shorter hours). Saving here for a branch/date that already has a shift updates it instead of duplicating it.</p>
+      <p style="color:var(--muted); font-size:13px;">Only needed for one-off changes to a single labeled shift on a single date (e.g. a holiday with shorter hours). Saving here for a branch/date/label that already has a shift updates it instead of duplicating it.</p>
       <div class="row">
         <div><label>Branch</label><select id="shiftBranch"></select></div>
         <div><label>Date</label><input type="date" id="shiftDate"></div>
       </div>
+      <label>Shift Label</label>
+      <input type="text" id="shiftLabel" placeholder="e.g. Morning, Afternoon, Night" value="Default">
       <div class="row">
         <div><label>Scheduled Time In</label><input type="time" id="schedIn"></div>
         <div><label>Scheduled Time Out</label><input type="time" id="schedOut"></div>
@@ -100,7 +103,7 @@
     </div>
     <div class="card">
       <h2>Recent Shifts</h2>
-      <table id="shiftsTable"><thead><tr><th>Date</th><th>Branch</th><th>Sched In/Out</th><th>Flags</th></tr></thead><tbody></tbody></table>
+      <table id="shiftsTable"><thead><tr><th>Date</th><th>Branch</th><th>Label</th><th>Sched In/Out</th><th>Flags</th></tr></thead><tbody></tbody></table>
     </div>
   </div>
 
@@ -325,6 +328,7 @@ async function createShift() {
   const payload = {
     branch_id: document.getElementById("shiftBranch").value,
     shift_date: document.getElementById("shiftDate").value,
+    shift_label: document.getElementById("shiftLabel").value.trim() || "Default",
     scheduled_time_in: document.getElementById("schedIn").value || null,
     scheduled_time_out: document.getElementById("schedOut").value || null,
     pump_assignment: document.getElementById("pumpAssignment").value || null,
@@ -334,19 +338,20 @@ async function createShift() {
   if (!payload.branch_id || !payload.shift_date) {
     msg.textContent = "Branch and date required."; msg.className = "msg err"; return;
   }
-  const { error } = await supabase.from("shifts").upsert(payload, { onConflict: "branch_id,shift_date" });
+  const { error } = await supabase.from("shifts").upsert(payload, { onConflict: "branch_id,shift_date,shift_label" });
   msg.textContent = error ? error.message : "Shift saved.";
   msg.className = "msg " + (error ? "err" : "ok");
   if (!error) loadShifts();
 }
 
 async function loadShifts() {
-  const { data } = await supabase.from("shifts").select("shift_date, scheduled_time_in, scheduled_time_out, double_pump, emergency_roster, branches(code)").order("shift_date", { ascending: false }).limit(20);
+  const { data } = await supabase.from("shifts").select("shift_date, shift_label, scheduled_time_in, scheduled_time_out, double_pump, emergency_roster, branches(code)").order("shift_date", { ascending: false }).limit(20);
   const tbody = document.querySelector("#shiftsTable tbody");
   tbody.innerHTML = (data || []).map(s => `
     <tr>
       <td>${s.shift_date}</td>
       <td>${s.branches?.code || "—"}</td>
+      <td>${s.shift_label || "—"}</td>
       <td>${s.scheduled_time_in || "—"} / ${s.scheduled_time_out || "—"}</td>
       <td>${s.double_pump ? '<span class="badge ot">Double Pump</span>' : ""} ${s.emergency_roster ? '<span class="badge holiday">Emergency</span>' : ""}</td>
     </tr>`).join("");
@@ -530,12 +535,11 @@ async function loadAdjustments() {
     </tr>`).join("");
 }
 
-// ---------- Default shift schedule (auto-repopulation template) ----------
-// INVARIANT: changing a default here requires the admin PIN. The
-// actual daily repopulation (reading this template and creating
-// today's shift row) happens client-side in timesheet-clock.html and
-// needs no PIN — it only ever applies whatever default is already
-// saved here, never changes it.
+// ---------- Default shift schedules (auto-repopulation templates) ----------
+// INVARIANT: adding/changing a shift schedule here requires the admin
+// PIN. The actual daily repopulation (reading these and creating
+// today's shift rows) happens client-side in timesheet-clock.html and
+// needs no PIN — it only ever applies whatever is already saved here.
 let templatesCache = [];
 
 async function loadShiftTemplates() {
@@ -549,48 +553,73 @@ function renderTemplatesTable() {
   tbody.innerHTML = templatesCache.map(t => `
     <tr>
       <td>${t.branches?.code || "Org-wide default"}</td>
+      <td>${t.shift_label}</td>
       <td>${(t.scheduled_time_in || "").slice(0,5)} → ${(t.scheduled_time_out || "").slice(0,5)}</td>
       <td>${t.double_pump ? '<span class="badge ot">Double Pump</span>' : ""} ${t.emergency_roster ? '<span class="badge holiday">Emergency</span>' : ""}</td>
       <td style="font-size:12px;color:var(--muted);">${t.updated_at ? new Date(t.updated_at).toLocaleDateString() + (t.updated_by ? " · " + t.updated_by : "") : "—"}</td>
+      <td><button class="secondary" onclick="editShiftTemplate('${t.id}')">Edit</button></td>
     </tr>`).join("");
 }
 
-function loadTemplateForBranch() {
-  const branchId = document.getElementById("tmplBranch").value || null;
-  const t = templatesCache.find(x => (x.branch_id || null) === branchId);
-  document.getElementById("tmplIn").value = t ? (t.scheduled_time_in || "").slice(0,5) : "";
-  document.getElementById("tmplOut").value = t ? (t.scheduled_time_out || "").slice(0,5) : "";
-  document.getElementById("tmplPump").value = t ? (t.pump_assignment || "") : "";
-  document.getElementById("tmplDouble").checked = t ? !!t.double_pump : false;
-  document.getElementById("tmplEmergency").checked = t ? !!t.emergency_roster : false;
+function editShiftTemplate(id) {
+  const t = templatesCache.find(x => x.id === id);
+  if (!t) return;
+  document.getElementById("tmplFormId").value = t.id;
+  document.getElementById("tmplBranch").value = t.branch_id || "";
+  document.getElementById("tmplLabel").value = t.shift_label;
+  document.getElementById("tmplIn").value = (t.scheduled_time_in || "").slice(0,5);
+  document.getElementById("tmplOut").value = (t.scheduled_time_out || "").slice(0,5);
+  document.getElementById("tmplPump").value = t.pump_assignment || "";
+  document.getElementById("tmplDouble").checked = !!t.double_pump;
+  document.getElementById("tmplEmergency").checked = !!t.emergency_roster;
+  document.getElementById("tmplFormTitle").textContent = "Edit Shift Schedule — " + (t.branches?.code || "Org-wide") + " / " + t.shift_label;
+  document.getElementById("tmplCancelEditBtn").style.display = "inline-block";
+  document.getElementById("tmplMsg").textContent = "";
+  document.getElementById("panel-shifts").scrollIntoView({ behavior: "smooth" });
+}
+
+function resetTemplateForm() {
+  document.getElementById("tmplFormId").value = "";
+  document.getElementById("tmplBranch").value = "";
+  document.getElementById("tmplLabel").value = "";
+  document.getElementById("tmplIn").value = "";
+  document.getElementById("tmplOut").value = "";
+  document.getElementById("tmplPump").value = "";
+  document.getElementById("tmplDouble").checked = false;
+  document.getElementById("tmplEmergency").checked = false;
+  document.getElementById("tmplFormTitle").textContent = "Add Shift Schedule";
+  document.getElementById("tmplCancelEditBtn").style.display = "none";
+  document.getElementById("tmplMsg").textContent = "";
 }
 
 async function saveShiftTemplate() {
   const msg = document.getElementById("tmplMsg");
+  const id = document.getElementById("tmplFormId").value || null;
   const branchId = document.getElementById("tmplBranch").value || null;
+  const label = document.getElementById("tmplLabel").value.trim();
   const timeIn = document.getElementById("tmplIn").value;
   const timeOut = document.getElementById("tmplOut").value;
-  if (!timeIn || !timeOut) {
-    msg.textContent = "Time In and Time Out are required.";
+  if (!label || !timeIn || !timeOut) {
+    msg.textContent = "Shift Label, Time In, and Time Out are required.";
     msg.className = "msg err";
     return;
   }
 
-  const pin = prompt("Enter Admin PIN to change this default shift schedule:");
+  const pin = prompt("Enter Admin PIN to save this shift schedule:");
   if (pin === null) return; // cancelled — no change made
 
   const { data: setting, error: pinErr } = await supabase
     .from("app_settings").select("value").eq("key", "admin_pin").single();
   if (pinErr || !setting || pin !== setting.value) {
-    msg.textContent = "Incorrect admin PIN — schedule not changed.";
+    msg.textContent = "Incorrect admin PIN — not saved.";
     msg.className = "msg err";
     return;
   }
 
   const adminName = (prompt("Your name (for the log):") || "").trim() || "Unknown admin";
-  const existing = templatesCache.find(x => (x.branch_id || null) === branchId);
   const payload = {
     branch_id: branchId,
+    shift_label: label,
     scheduled_time_in: timeIn,
     scheduled_time_out: timeOut,
     pump_assignment: document.getElementById("tmplPump").value.trim() || null,
@@ -601,14 +630,14 @@ async function saveShiftTemplate() {
   };
 
   let error;
-  if (existing) {
-    ({ error } = await supabase.from("shift_templates").update(payload).eq("id", existing.id));
+  if (id) {
+    ({ error } = await supabase.from("shift_templates").update(payload).eq("id", id));
   } else {
     ({ error } = await supabase.from("shift_templates").insert(payload));
   }
-  msg.textContent = error ? error.message : "Default shift schedule saved by " + adminName + " — applies to shifts auto-created from now on.";
+  msg.textContent = error ? error.message : `Shift schedule saved by ${adminName} — applies to shifts auto-created from now on.`;
   msg.className = "msg " + (error ? "err" : "ok");
-  if (!error) loadShiftTemplates();
+  if (!error) { resetTemplateForm(); loadShiftTemplates(); }
 }
 
 // ---------- Employees: add/edit + HR completeness ----------

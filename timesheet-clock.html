@@ -487,24 +487,37 @@ async function ensureTodayShift(branchId) {
   if (!branchId) return;
   const today = new Date().toISOString().slice(0, 10);
   try {
-    const { data: existing } = await supabase.from("shifts")
-      .select("id").eq("branch_id", branchId).eq("shift_date", today).limit(1);
-    if (existing && existing.length) return; // already exists — leave it alone
-
     const { data: templates } = await supabase.from("shift_templates").select("*");
-    const tmpl = (templates || []).find(t => t.branch_id === branchId)
-      || (templates || []).find(t => t.branch_id === null);
-    if (!tmpl) return; // no default configured yet — nothing to auto-fill
+    if (!templates || !templates.length) return; // nothing configured yet
 
-    await supabase.from("shifts").upsert({
-      branch_id: branchId,
-      shift_date: today,
-      scheduled_time_in: tmpl.scheduled_time_in,
-      scheduled_time_out: tmpl.scheduled_time_out,
-      pump_assignment: tmpl.pump_assignment,
-      double_pump: tmpl.double_pump,
-      emergency_roster: tmpl.emergency_roster
-    }, { onConflict: "branch_id,shift_date" });
+    // A branch's own labeled shifts (Morning/Afternoon/Night, etc.) take
+    // priority; only fall back to the org-wide default if this branch
+    // has none of its own.
+    const branchTemplates = templates.filter(t => t.branch_id === branchId);
+    const applicable = branchTemplates.length ? branchTemplates : templates.filter(t => t.branch_id === null);
+    if (!applicable.length) return;
+
+    const { data: existingRows } = await supabase.from("shifts")
+      .select("shift_label").eq("branch_id", branchId).eq("shift_date", today);
+    const existingLabels = new Set((existingRows || []).map(r => r.shift_label));
+
+    // Only fill in labels that don't already have a row today — this
+    // never overwrites a shift an admin deliberately overrode for today.
+    const toInsert = applicable
+      .filter(t => !existingLabels.has(t.shift_label))
+      .map(t => ({
+        branch_id: branchId,
+        shift_date: today,
+        shift_label: t.shift_label,
+        scheduled_time_in: t.scheduled_time_in,
+        scheduled_time_out: t.scheduled_time_out,
+        pump_assignment: t.pump_assignment,
+        double_pump: t.double_pump,
+        emergency_roster: t.emergency_roster
+      }));
+    if (toInsert.length) {
+      await supabase.from("shifts").insert(toInsert);
+    }
   } catch (err) {
     console.error("ensureTodayShift failed:", err);
   }
