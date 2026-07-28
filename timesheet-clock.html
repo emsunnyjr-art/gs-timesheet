@@ -65,6 +65,7 @@
   <div id="confirmPanel" style="display:none; margin-top:14px; padding:12px; border:1px solid #334155; border-radius:10px;">
     <div style="font-weight:600; margin-bottom:6px;">Confirm identity</div>
     <div id="confirmName" style="color:var(--accent); font-size:15px; margin-bottom:8px;"></div>
+    <div id="rosterWarning" style="display:none; color:#f59e0b; font-size:12px; margin-bottom:8px; padding:6px 8px; background:#f59e0b1a; border-radius:6px;"></div>
     <img id="confirmPhoto" style="width:100%; border-radius:8px; display:block;">
     <div style="font-size:11px; color:var(--muted); margin-top:6px;">Attendance photo for this time in/out only — it does not change your profile photo. Profile photos can only be replaced by an admin.</div>
     <div style="display:flex; gap:8px; margin-top:10px;">
@@ -305,6 +306,14 @@ function qrTick() {
   requestAnimationFrame(qrTick);
 }
 
+function checkRosterMatch(employeeId) {
+  const branchId = document.getElementById("branchSelect").value;
+  const emp = allEmployees.find(e => e.id === employeeId);
+  if (!emp) return true; // unknown, nothing to warn about here
+  const assigned = activeAssignments.some(a => a.branch_id === branchId && a.employee_id === employeeId);
+  return emp.home_branch_id === branchId || assigned;
+}
+
 async function onEmployeeIdentified(id, name) {
   qrLoopActive = false;
   selectedEmployeeId = id;
@@ -336,6 +345,14 @@ function showConfirm(blob) {
   capturedPhotoBlob = blob;
   document.getElementById("confirmName").textContent = selectedEmployeeName;
   document.getElementById("confirmPhoto").src = URL.createObjectURL(blob);
+  const warnEl = document.getElementById("rosterWarning");
+  const onRoster = checkRosterMatch(selectedEmployeeId);
+  if (!onRoster) {
+    warnEl.textContent = "⚠ Not on today's roster for this branch (not home branch or an active assignment). You can still continue.";
+    warnEl.style.display = "block";
+  } else {
+    warnEl.style.display = "none";
+  }
   scanPanel.style.display = "none";
   manualPanel.style.display = "none";
   confirmPanel.style.display = "block";
@@ -351,7 +368,8 @@ document.getElementById("confirmBtn").addEventListener("click", () => {
   confirmPanel.style.display = "none";
   document.getElementById("clockInBtn").disabled = false;
   document.getElementById("clockOutBtn").disabled = false;
-  logMsg(`Identity confirmed: ${selectedEmployeeName}`, "synced");
+  const onRoster = checkRosterMatch(selectedEmployeeId);
+  logMsg(`Identity confirmed: ${selectedEmployeeName}${onRoster ? "" : " (not on roster for this branch)"}`, onRoster ? "synced" : "queued");
 });
 
 // ---------- Clock in/out ----------

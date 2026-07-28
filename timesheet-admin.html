@@ -49,6 +49,7 @@
     <div class="tab" data-tab="payroll">Payroll</div>
     <div class="tab" data-tab="rules">Wage Rules</div>
     <div class="tab" data-tab="adjustments">Adjustments</div>
+    <div class="tab" data-tab="allowances">Allowances</div>
     <div class="tab" data-tab="employees">Employees</div>
   </div>
 
@@ -121,7 +122,7 @@
     <div class="card">
       <h2>Entries — tap a row's flags to toggle Late/OT/Holiday, then save</h2>
       <table id="entriesTable">
-        <thead><tr><th>Employee</th><th>In/Out</th><th>Hrs</th><th>Flags</th><th>Total ₱</th><th></th></tr></thead>
+        <thead><tr><th>Employee</th><th>In/Out</th><th>Hrs</th><th>Late (min)</th><th>Flags</th><th>Total ₱</th><th></th></tr></thead>
         <tbody></tbody>
       </table>
       <div class="msg" id="entriesMsg"></div>
@@ -145,7 +146,7 @@
     </div>
     <div class="card">
       <h2>Recent Payroll Runs</h2>
-      <table id="payrollTable"><thead><tr><th>Employee</th><th>Period</th><th>Hrs</th><th>Wages</th><th>Adj</th><th>Gross</th></tr></thead><tbody></tbody></table>
+      <table id="payrollTable"><thead><tr><th>Employee</th><th>Period</th><th>Hrs</th><th>Wages</th><th>Adj</th><th>Allow.</th><th>Gross</th></tr></thead><tbody></tbody></table>
     </div>
   </div>
 
@@ -211,6 +212,42 @@
     <div class="card">
       <h2>Recent Adjustments</h2>
       <table id="adjTable"><thead><tr><th>Scope</th><th>Period</th><th>Type</th><th>Value</th><th>Reason</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+
+  <!-- ALLOWANCES -->
+  <div class="panel" id="panel-allowances">
+    <div class="card">
+      <h2>Add Allowance</h2>
+      <p style="color:var(--muted); font-size:13px;">Transportation, meal, training, or other flat allowances — added on top of wages when payroll is computed for a period that overlaps its dates.</p>
+      <div class="row">
+        <div><label>Employee</label><select id="allowEmployee"></select></div>
+        <div><label>Type</label>
+          <select id="allowType">
+            <option value="transportation">Transportation</option>
+            <option value="meal">Meal</option>
+            <option value="training">Training</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+      </div>
+      <label>Amount (₱)</label>
+      <input type="number" step="0.01" id="allowAmount">
+      <div class="row">
+        <div><label>Period Start</label><input type="date" id="allowStart"></div>
+        <div><label>Period End (blank = ongoing)</label><input type="date" id="allowEnd"></div>
+      </div>
+      <label style="display:flex; align-items:center; gap:6px; margin-top:10px;">
+        <input type="checkbox" id="allowRecurring" style="width:auto;"> Recurring every payroll period (leave Period End blank)
+      </label>
+      <label>Notes</label>
+      <textarea id="allowNotes"></textarea>
+      <button onclick="saveAllowance()">Save Allowance</button>
+      <div class="msg" id="allowMsg"></div>
+    </div>
+    <div class="card">
+      <h2>Recent Allowances</h2>
+      <table id="allowTable"><thead><tr><th>Employee</th><th>Type</th><th>Amount</th><th>Period</th><th>Notes</th></tr></thead><tbody></tbody></table>
     </div>
   </div>
 
@@ -314,11 +351,13 @@ async function loadLookups() {
   ["payrollEmployee", "adjEmployee"].forEach(id => {
     document.getElementById(id).innerHTML += empOpts;
   });
+  document.getElementById("allowEmployee").innerHTML = empOpts;
 
   loadCurrentRule();
   loadShifts();
   loadShiftTemplates();
   loadAdjustments();
+  loadAllowances();
   loadEmployees();
 }
 
@@ -362,7 +401,7 @@ async function loadEntries() {
   const branch = document.getElementById("filterBranch").value;
   const from = document.getElementById("filterFrom").value;
   const to = document.getElementById("filterTo").value;
-  let q = supabase.from("timesheet_entries").select("id, time_in, time_out, total_hours, is_late, is_overtime, is_holiday, total_wages, employees(full_name)").order("time_in", { ascending: false }).limit(50);
+  let q = supabase.from("timesheet_entries").select("id, time_in, time_out, total_hours, late_minutes, is_late, is_overtime, is_holiday, is_double_pump, is_emergency_roster, total_wages, employees(full_name)").order("time_in", { ascending: false }).limit(50);
   if (branch) q = q.eq("branch_id", branch);
   if (from) q = q.gte("time_in", from);
   if (to) q = q.lte("time_in", to + "T23:59:59");
@@ -376,10 +415,12 @@ async function loadEntries() {
       <td>${e.employees?.full_name || "—"}</td>
       <td>${fmtTime(e.time_in)} → ${fmtTime(e.time_out)}</td>
       <td>${e.total_hours ?? "—"}</td>
+      <td><input type="number" class="flag-late-min" style="width:70px;" value="${e.late_minutes ?? 0}"></td>
       <td>
-        <label><input type="checkbox" class="flag-late" ${e.is_late ? "checked" : ""}> Late</label>
         <label><input type="checkbox" class="flag-ot" ${e.is_overtime ? "checked" : ""}> OT</label>
         <label><input type="checkbox" class="flag-holiday" ${e.is_holiday ? "checked" : ""}> Holiday</label>
+        <label><input type="checkbox" class="flag-double" ${e.is_double_pump ? "checked" : ""}> Double Pump</label>
+        <label><input type="checkbox" class="flag-emergency" ${e.is_emergency_roster ? "checked" : ""}> Emergency</label>
       </td>
       <td>${(e.total_wages ?? 0).toFixed(2)}</td>
       <td><button class="secondary" onclick="saveEntryFlags('${e.id}', this)">Save</button></td>
@@ -389,9 +430,11 @@ async function loadEntries() {
 async function saveEntryFlags(id, btn) {
   const row = btn.closest("tr");
   const payload = {
-    is_late: row.querySelector(".flag-late").checked,
+    late_minutes: parseFloat(row.querySelector(".flag-late-min").value) || 0,
     is_overtime: row.querySelector(".flag-ot").checked,
-    is_holiday: row.querySelector(".flag-holiday").checked
+    is_holiday: row.querySelector(".flag-holiday").checked,
+    is_double_pump: row.querySelector(".flag-double").checked,
+    is_emergency_roster: row.querySelector(".flag-emergency").checked
   };
   const { error } = await supabase.from("timesheet_entries").update(payload).eq("id", id);
   const msg = document.getElementById("entriesMsg");
@@ -436,16 +479,34 @@ async function runPayrollRollup() {
     byEmployee[e.employee_id].adj += Number(e.adjustment_amount || 0);
   }
 
-  const rows = Object.entries(byEmployee).map(([emp_id, v]) => ({
-    employee_id: emp_id,
-    branch_id,
-    period_start,
-    period_end,
-    week_hours: v.hours,
-    week_wages: v.wages,
-    total_adjustments: v.adj,
-    gross_pay: v.wages // allowances/commission added separately — see Allowances table
-  }));
+  // Allowances overlapping this payroll period, per employee in scope
+  const empIds = Object.keys(byEmployee);
+  let allowByEmployee = {};
+  if (empIds.length) {
+    const { data: allowRows } = await supabase.from("allowances")
+      .select("employee_id, amount, period_start, period_end")
+      .in("employee_id", empIds)
+      .lte("period_start", period_end)
+      .or(`period_end.is.null,period_end.gte.${period_start}`);
+    for (const a of (allowRows || [])) {
+      allowByEmployee[a.employee_id] = (allowByEmployee[a.employee_id] || 0) + Number(a.amount || 0);
+    }
+  }
+
+  const rows = Object.entries(byEmployee).map(([emp_id, v]) => {
+    const allowance_total = allowByEmployee[emp_id] || 0;
+    return {
+      employee_id: emp_id,
+      branch_id,
+      period_start,
+      period_end,
+      week_hours: v.hours,
+      week_wages: v.wages,
+      total_adjustments: v.adj,
+      allowance_total,
+      gross_pay: v.wages + allowance_total // week_wages already includes discretionary adjustments (see trigger)
+    };
+  });
 
   if (!rows.length) {
     msg.textContent = "No timesheet entries found for that period/branch."; msg.className = "msg err"; return;
@@ -458,7 +519,7 @@ async function runPayrollRollup() {
 }
 
 async function loadPayroll() {
-  const { data } = await supabase.from("payroll").select("period_start, period_end, week_hours, week_wages, total_adjustments, gross_pay, employees(full_name)").order("created_at", { ascending: false }).limit(20);
+  const { data } = await supabase.from("payroll").select("period_start, period_end, week_hours, week_wages, total_adjustments, allowance_total, gross_pay, employees(full_name)").order("created_at", { ascending: false }).limit(20);
   const tbody = document.querySelector("#payrollTable tbody");
   tbody.innerHTML = (data || []).map(p => `
     <tr>
@@ -467,7 +528,46 @@ async function loadPayroll() {
       <td>${p.week_hours}</td>
       <td>${Number(p.week_wages).toFixed(2)}</td>
       <td>${Number(p.total_adjustments).toFixed(2)}</td>
+      <td>${Number(p.allowance_total || 0).toFixed(2)}</td>
       <td>${Number(p.gross_pay).toFixed(2)}</td>
+    </tr>`).join("");
+}
+
+// ---------- Allowances ----------
+async function saveAllowance() {
+  const msg = document.getElementById("allowMsg");
+  const payload = {
+    employee_id: document.getElementById("allowEmployee").value,
+    allowance_type: document.getElementById("allowType").value,
+    amount: parseFloat(document.getElementById("allowAmount").value),
+    period_start: document.getElementById("allowStart").value,
+    period_end: document.getElementById("allowEnd").value || null,
+    recurring: document.getElementById("allowRecurring").checked,
+    notes: document.getElementById("allowNotes").value || null
+  };
+  if (!payload.employee_id || !payload.amount || !payload.period_start) {
+    msg.textContent = "Employee, amount, and period start are required."; msg.className = "msg err"; return;
+  }
+  const { error } = await supabase.from("allowances").insert(payload);
+  msg.textContent = error ? error.message : "Allowance saved.";
+  msg.className = "msg " + (error ? "err" : "ok");
+  if (!error) {
+    document.getElementById("allowAmount").value = "";
+    document.getElementById("allowNotes").value = "";
+    loadAllowances();
+  }
+}
+
+async function loadAllowances() {
+  const { data } = await supabase.from("allowances").select("*, employees(full_name)").order("created_at", { ascending: false }).limit(30);
+  const tbody = document.querySelector("#allowTable tbody");
+  tbody.innerHTML = (data || []).map(a => `
+    <tr>
+      <td>${a.employees?.full_name || "—"}</td>
+      <td>${a.allowance_type}</td>
+      <td>₱${Number(a.amount).toFixed(2)}</td>
+      <td>${a.period_start} → ${a.period_end || (a.recurring ? "ongoing" : "—")}</td>
+      <td>${a.notes || ""}</td>
     </tr>`).join("");
 }
 
