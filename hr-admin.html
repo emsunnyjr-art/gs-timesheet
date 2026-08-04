@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>GS HR — Employee Database</title>
+<style>
+:root { --bg:#0f172a; --card:#1e293b; --accent:#22c55e; --danger:#ef4444; --text:#f1f5f9; --muted:#94a3b8; --border:#334155; }
+* { box-sizing: border-box; }
+body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; padding:16px; }
+h1 { font-size:20px; margin:0 0 4px; }
+h2 { font-size:15px; margin:0 0 12px; color:var(--muted); font-weight:600; }
+.wrap { max-width:1100px; margin:0 auto; }
+.card { background:var(--card); border-radius:14px; padding:18px; margin-bottom:16px; }
+label { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; margin-top:10px; }
+input, select, textarea { width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); background:#0f172a; color:var(--text); font-size:14px; }
+button { padding:10px 16px; border-radius:8px; border:none; font-size:14px; font-weight:600; cursor:pointer; background:var(--accent); color:#052e16; }
+button.secondary { background:#0f172a; color:var(--text); border:1px solid var(--border); }
+button.danger { background:transparent; color:var(--danger); border:1px solid var(--danger); }
+button:disabled { opacity:0.4; cursor:not-allowed; }
+.row { display:flex; gap:10px; flex-wrap:wrap; }
+.row > div { flex:1; min-width:160px; }
+table { width:100%; border-collapse:collapse; font-size:13px; }
+th, td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--border); }
+th { color:var(--muted); font-weight:600; }
+tr:hover { background:#25324a; cursor:pointer; }
+.badge { display:inline-block; padding:2px 8px; border-radius:20px; font-size:11px; font-weight:600; }
+.badge.active { background:#052e16; color:var(--accent); }
+.badge.inactive { background:#450a0a; color:var(--danger); }
+.tabs { display:flex; gap:8px; margin-bottom:16px; }
+.tab { padding:8px 14px; border-radius:8px; cursor:pointer; background:var(--card); color:var(--muted); font-size:13px; font-weight:600; }
+.tab.active { background:var(--accent); color:#052e16; }
+.panel { display:none; }
+.panel.active { display:block; }
+.pin-screen { max-width:320px; margin:80px auto; text-align:center; }
+.toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:var(--card); border:1px solid var(--accent); padding:10px 18px; border-radius:10px; font-size:13px; display:none; z-index:99; }
+.search-row { display:flex; gap:10px; margin-bottom:12px; align-items:flex-end; }
+.search-row > div { flex:1; }
+.avatar { width:36px; height:36px; border-radius:50%; object-fit:cover; background:#334155; }
+.modal-bg { display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); align-items:center; justify-content:center; z-index:50; padding:16px; }
+.modal { background:var(--card); border-radius:14px; padding:20px; max-width:560px; width:100%; max-height:85vh; overflow:auto; }
+.small { font-size:12px; color:var(--muted); }
+.close-x { float:right; cursor:pointer; color:var(--muted); font-size:20px; }
+.section-label { font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin-top:20px; border-top:1px solid var(--border); padding-top:14px; }
+.photo-note { display:flex; gap:10px; align-items:center; background:#0f172a; border:1px solid var(--border); border-radius:8px; padding:10px; margin-top:8px; }
+</style>
+</head>
+<body>
+
+<div id="pinScreen" class="pin-screen">
+  <h1>GS HR</h1>
+  <p class="small">Employee Database — Admin access only</p>
+  <input type="password" id="pinInput" placeholder="Enter PIN" style="text-align:center; font-size:18px; letter-spacing:4px;">
+  <button style="width:100%; margin-top:10px;" onclick="checkPin()">Sign in</button>
+  <div id="pinError" class="small" style="color:var(--danger); margin-top:8px;"></div>
+</div>
+
+<div id="app" class="wrap" style="display:none;">
+  <h1>GS HR — Employee Database</h1>
+  <p class="small" style="margin-bottom:16px;">Admin app. Roster, Timesheet, and Products/Selling all read employee data from here. Uses the same admin PIN as Timesheet.</p>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="employees">Employees</div>
+    <div class="tab" data-tab="branches">Branches</div>
+    <div class="tab" data-tab="posts">Posts</div>
+  </div>
+
+  <!-- ===================== EMPLOYEES ===================== -->
+  <div class="panel active" id="panel-employees">
+    <div class="card">
+      <div class="search-row">
+        <div>
+          <label>Search name or TM #</label>
+          <input type="text" id="empSearch" placeholder="Type to search…">
+        </div>
+        <div>
+          <label>Branch</label>
+          <select id="empFilterBranch"><option value="">All branches</option></select>
+        </div>
+        <div>
+          <label>Status</label>
+          <select id="empFilterStatus">
+            <option value="">All</option>
+            <option value="active">Active</option>
+            <option value="inactive">Not Active</option>
+          </select>
+        </div>
+        <div style="flex:0;">
+          <button onclick="openEmployeeModal()">+ Add Employee</button>
+        </div>
+      </div>
+      <table>
+        <thead><tr><th></th><th>TM #</th><th>Name</th><th>Post</th><th>Branch</th><th>Rate</th><th>Status</th></tr></thead>
+        <tbody id="empTableBody"><tr><td colspan="7" class="small">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ===================== BRANCHES ===================== -->
+  <div class="panel" id="panel-branches">
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h2 style="margin:0;">Branches</h2>
+        <button onclick="openBranchModal()">+ Add Branch</button>
+      </div>
+      <table style="margin-top:10px;">
+        <thead><tr><th>Code</th><th>Name</th><th>Company</th><th>Address</th><th>Email</th></tr></thead>
+        <tbody id="branchTableBody"><tr><td colspan="5" class="small">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ===================== POSTS ===================== -->
+  <div class="panel" id="panel-posts">
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h2 style="margin:0;">Posts (job titles)</h2>
+        <button onclick="openPostModal()">+ Add Post</button>
+      </div>
+      <table style="margin-top:10px;">
+        <thead><tr><th>Name</th><th>Active</th></tr></thead>
+        <tbody id="postTableBody"><tr><td colspan="2" class="small">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- ===================== EMPLOYEE MODAL ===================== -->
+<div class="modal-bg" id="empModalBg">
+  <div class="modal">
+    <span class="close-x" onclick="closeModal('empModalBg')">&times;</span>
+    <h2 id="empModalTitle">Add Employee</h2>
+    <input type="hidden" id="empId">
+
+    <div class="photo-note" id="photoNote" style="display:none;">
+      <img id="photoPreview" class="avatar" style="width:48px;height:48px;">
+      <span class="small">Photo is managed in Timesheet Admin (Employees tab → Photo button), not here — keeps one audit trail for photo changes.</span>
+    </div>
+
+    <div class="row">
+      <div><label>TM Number *</label><input id="f_tm_number"></div>
+      <div><label>Status</label>
+        <select id="f_status"><option value="active">Active</option><option value="inactive">Not Active</option></select>
+      </div>
+    </div>
+    <div class="row">
+      <div><label>Salutation</label><input id="f_salutation" placeholder="Mr. / Ms."></div>
+      <div><label>Suffix</label><input id="f_suffix"></div>
+    </div>
+    <div class="row">
+      <div><label>Surname</label><input id="f_surname"></div>
+      <div><label>First Name</label><input id="f_first_name"></div>
+      <div><label>Middle Name</label><input id="f_middle_name"></div>
+    </div>
+    <label>Full Name (auto-filled, editable)</label><input id="f_full_name">
+    <div class="row">
+      <div><label>Date of Birth</label><input type="date" id="f_date_of_birth"></div>
+      <div><label>Marital Status</label>
+        <select id="f_marital_status"><option>Single</option><option>Married</option><option>Widowed</option><option>Separated</option></select>
+      </div>
+    </div>
+    <label>Address</label><textarea id="f_address" rows="2"></textarea>
+    <div class="row">
+      <div><label>Tel Number</label><input id="f_tel_number"></div>
+      <div><label>Date of Hire</label><input type="date" id="f_hire_date"></div>
+    </div>
+    <div class="row">
+      <div><label>Post</label><select id="f_post_id"></select></div>
+      <div><label>Branch</label><select id="f_branch_id"></select></div>
+    </div>
+    <label>Daily Rate (₱)</label>
+    <input type="number" step="0.01" id="f_daily_rate">
+
+    <div class="section-label">Government IDs (optional — fill in when available)</div>
+    <div class="row">
+      <div><label>SSS Number</label><input id="f_sss_number"></div>
+      <div><label>PhilHealth Number</label><input id="f_philhealth_number"></div>
+    </div>
+    <div class="row">
+      <div><label>Pag-IBIG Number</label><input id="f_pagibig_number"></div>
+      <div><label>TIN</label><input id="f_tin_number"></div>
+    </div>
+    <div class="row">
+      <div><label>Valid ID Type</label><input id="f_valid_id_type" placeholder="e.g. UMID, Driver's License"></div>
+      <div><label>Valid ID Number</label><input id="f_valid_id_number"></div>
+    </div>
+
+    <div class="section-label">Emergency Contact</div>
+    <div class="row">
+      <div><label>Name</label><input id="f_emergency_contact_name"></div>
+      <div><label>Phone</label><input id="f_emergency_contact_phone"></div>
+    </div>
+
+    <p class="small" style="margin-top:10px;">Saving a changed rate/post/branch/status also logs a row in rate history automatically.</p>
+    <div class="row" style="margin-top:16px;">
+      <button onclick="saveEmployee()">Save</button>
+      <button class="secondary" onclick="closeModal('empModalBg')">Cancel</button>
+      <button class="secondary" id="viewHistoryBtn" style="display:none;" onclick="viewRateHistory()">Rate History</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== RATE HISTORY MODAL ===================== -->
+<div class="modal-bg" id="historyModalBg">
+  <div class="modal">
+    <span class="close-x" onclick="closeModal('historyModalBg')">&times;</span>
+    <h2>Rate History — <span id="historyEmpName"></span></h2>
+    <table>
+      <thead><tr><th>Date</th><th>Post</th><th>Branch</th><th>Rate</th><th>Status</th><th>Reason</th></tr></thead>
+      <tbody id="historyTableBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ===================== BRANCH MODAL ===================== -->
+<div class="modal-bg" id="branchModalBg">
+  <div class="modal">
+    <span class="close-x" onclick="closeModal('branchModalBg')">&times;</span>
+    <h2>Add Branch</h2>
+    <label>Code (e.g. GS6)</label><input id="b_code">
+    <label>Name</label><input id="b_name">
+    <label>Company Name</label><input id="b_company_name">
+    <label>Address</label><input id="b_address">
+    <label>Email</label><input id="b_email">
+    <div class="row" style="margin-top:16px;">
+      <button onclick="saveBranch()">Save</button>
+      <button class="secondary" onclick="closeModal('branchModalBg')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== POST MODAL ===================== -->
+<div class="modal-bg" id="postModalBg">
+  <div class="modal">
+    <span class="close-x" onclick="closeModal('postModalBg')">&times;</span>
+    <h2>Add Post</h2>
+    <label>Name</label><input id="p_name">
+    <div class="row" style="margin-top:16px;">
+      <button onclick="savePost()">Save</button>
+      <button class="secondary" onclick="closeModal('postModalBg')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+// ============================================================
+// CONFIG — same Supabase project as gs-timesheet
+// ============================================================
+const SUPABASE_URL = "https://cztkovsjxuaiburaudgk.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_eBOzdnFAdfFavl2QAYY6bA_lfAIJUhh";
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let branches = [];
+let posts = [];
+let employees = [];
+
+// ---------- PIN gate (shares the SAME key as timesheet-admin.html: 'admin_pin') ----------
+async function checkPin() {
+  const val = document.getElementById("pinInput").value.trim();
+  const { data, error } = await supabase.from("app_settings").select("value").eq("key", "admin_pin").single();
+  if (error) { document.getElementById("pinError").textContent = "Could not verify PIN: " + error.message; return; }
+  if (data && data.value === val) {
+    sessionStorage.setItem("hr_admin_ok", "1");
+    document.getElementById("pinScreen").style.display = "none";
+    document.getElementById("app").style.display = "block";
+    initApp();
+  } else {
+    document.getElementById("pinError").textContent = "Incorrect PIN.";
+  }
+}
+if (sessionStorage.getItem("hr_admin_ok") === "1") {
+  document.getElementById("pinScreen").style.display = "none";
+  document.getElementById("app").style.display = "block";
+  window.addEventListener("DOMContentLoaded", initApp);
+}
+
+// ---------- Tabs ----------
+document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => {
+  document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+  document.querySelectorAll(".panel").forEach(x => x.classList.remove("active"));
+  t.classList.add("active");
+  document.getElementById("panel-" + t.dataset.tab).classList.add("active");
+}));
+
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.style.display = "block";
+  setTimeout(() => t.style.display = "none", 2500);
+}
+function closeModal(id) { document.getElementById(id).style.display = "none"; }
+
+// ---------- Init ----------
+async function initApp() {
+  await Promise.all([loadBranches(), loadPosts()]);
+  await loadEmployees();
+  document.getElementById("empSearch").addEventListener("input", renderEmployees);
+  document.getElementById("empFilterBranch").addEventListener("change", renderEmployees);
+  document.getElementById("empFilterStatus").addEventListener("change", renderEmployees);
+}
+
+// ---------- Branches ----------
+async function loadBranches() {
+  const { data, error } = await supabase.from("branches").select("*").order("code");
+  if (error) { toast("Error loading branches: " + error.message); return; }
+  branches = data || [];
+  const filterSel = document.getElementById("empFilterBranch");
+  const formSel = document.getElementById("f_branch_id");
+  filterSel.innerHTML = '<option value="">All branches</option>' + branches.map(b => `<option value="${b.id}">${b.code} — ${b.name}</option>`).join("");
+  formSel.innerHTML = '<option value="">—</option>' + branches.map(b => `<option value="${b.id}">${b.code} — ${b.name}</option>`).join("");
+  renderBranchTable();
+}
+function renderBranchTable() {
+  document.getElementById("branchTableBody").innerHTML = branches.map(b =>
+    `<tr><td>${b.code}</td><td>${b.name||""}</td><td>${b.company_name||""}</td><td>${b.address||""}</td><td>${b.email||""}</td></tr>`
+  ).join("") || `<tr><td colspan="5" class="small">No branches yet.</td></tr>`;
+}
+function openBranchModal() {
+  ["b_code","b_name","b_company_name","b_address","b_email"].forEach(id => document.getElementById(id).value = "");
+  document.getElementById("branchModalBg").style.display = "flex";
+}
+async function saveBranch() {
+  const payload = {
+    code: document.getElementById("b_code").value.trim(),
+    name: document.getElementById("b_name").value.trim(),
+    company_name: document.getElementById("b_company_name").value.trim(),
+    address: document.getElementById("b_address").value.trim(),
+    email: document.getElementById("b_email").value.trim(),
+  };
+  if (!payload.code) { toast("Branch code is required."); return; }
+  const { error } = await supabase.from("branches").insert(payload);
+  if (error) { toast("Error: " + error.message); return; }
+  closeModal("branchModalBg");
+  toast("Branch added.");
+  await loadBranches();
+}
+
+// ---------- Posts ----------
+async function loadPosts() {
+  const { data, error } = await supabase.from("posts").select("*").order("name");
+  if (error) { toast("Error loading posts: " + error.message); return; }
+  posts = data || [];
+  const formSel = document.getElementById("f_post_id");
+  formSel.innerHTML = '<option value="">—</option>' + posts.map(p => `<option value="${p.id}">${p.name}</option>`).join("");
+  renderPostTable();
+}
+function renderPostTable() {
+  document.getElementById("postTableBody").innerHTML = posts.map(p =>
+    `<tr><td>${p.name}</td><td>${p.active ? "Yes" : "No"}</td></tr>`
+  ).join("") || `<tr><td colspan="2" class="small">No posts yet.</td></tr>`;
+}
+function openPostModal() {
+  document.getElementById("p_name").value = "";
+  document.getElementById("postModalBg").style.display = "flex";
+}
+async function savePost() {
+  const name = document.getElementById("p_name").value.trim();
+  if (!name) { toast("Post name is required."); return; }
+  const { error } = await supabase.from("posts").insert({ name });
+  if (error) { toast("Error: " + error.message); return; }
+  closeModal("postModalBg");
+  toast("Post added.");
+  await loadPosts();
+}
+
+// ---------- Employees ----------
+async function loadEmployees() {
+  const { data, error } = await supabase.from("employees").select("*").order("tm_number");
+  if (error) { toast("Error loading employees: " + error.message); document.getElementById("empTableBody").innerHTML = `<tr><td colspan="7" class="small">${error.message}</td></tr>`; return; }
+  employees = data || [];
+  renderEmployees();
+}
+function branchLabel(id) { const b = branches.find(x => x.id === id); return b ? b.code : ""; }
+function postLabel(id) { const p = posts.find(x => x.id === id); return p ? p.name : ""; }
+
+function renderEmployees() {
+  const q = document.getElementById("empSearch").value.trim().toLowerCase();
+  const branchFilter = document.getElementById("empFilterBranch").value;
+  const statusFilter = document.getElementById("empFilterStatus").value;
+  const filtered = employees.filter(e => {
+    if (q && !((e.full_name||"").toLowerCase().includes(q) || (e.tm_number||"").toLowerCase().includes(q))) return false;
+    if (branchFilter && e.home_branch_id !== branchFilter) return false;
+    if (statusFilter && e.status !== statusFilter) return false;
+    return true;
+  });
+  document.getElementById("empTableBody").innerHTML = filtered.map(e => `
+    <tr onclick="openEmployeeModal('${e.id}')">
+      <td><img class="avatar" src="${e.photo_url || ''}" onerror="this.style.visibility='hidden'"></td>
+      <td>${e.tm_number || ""}</td>
+      <td>${e.full_name || ""}</td>
+      <td>${postLabel(e.post_id)}</td>
+      <td>${branchLabel(e.home_branch_id)}</td>
+      <td>${e.daily_rate != null ? "₱" + e.daily_rate : ""}</td>
+      <td><span class="badge ${e.status === 'active' ? 'active' : 'inactive'}">${e.status || "—"}</span></td>
+    </tr>`).join("") || `<tr><td colspan="7" class="small">No employees match.</td></tr>`;
+}
+
+let currentEmpId = null;
+function openEmployeeModal(id) {
+  currentEmpId = id || null;
+  document.getElementById("empModalTitle").textContent = id ? "Edit Employee" : "Add Employee";
+  document.getElementById("viewHistoryBtn").style.display = id ? "inline-block" : "none";
+  const fields = ["tm_number","status","salutation","suffix","surname","first_name","middle_name","full_name",
+    "date_of_birth","marital_status","address","tel_number","hire_date","post_id","branch_id","daily_rate",
+    "sss_number","philhealth_number","pagibig_number","tin_number","valid_id_type","valid_id_number",
+    "emergency_contact_name","emergency_contact_phone"];
+  fields.forEach(f => { const el = document.getElementById("f_" + f); if (el) el.value = ""; });
+  document.getElementById("f_status").value = "active";
+  document.getElementById("photoNote").style.display = "none";
+
+  if (id) {
+    const e = employees.find(x => x.id === id);
+    document.getElementById("f_tm_number").value = e.tm_number || "";
+    document.getElementById("f_status").value = e.status || "active";
+    document.getElementById("f_salutation").value = e.salutation || "";
+    document.getElementById("f_suffix").value = e.suffix || "";
+    document.getElementById("f_surname").value = e.surname || "";
+    document.getElementById("f_first_name").value = e.first_name || "";
+    document.getElementById("f_middle_name").value = e.middle_name || "";
+    document.getElementById("f_full_name").value = e.full_name || "";
+    document.getElementById("f_date_of_birth").value = e.date_of_birth || "";
+    document.getElementById("f_marital_status").value = e.marital_status || "Single";
+    document.getElementById("f_address").value = e.address || "";
+    document.getElementById("f_tel_number").value = e.tel_number || "";
+    document.getElementById("f_hire_date").value = e.hire_date || "";
+    document.getElementById("f_post_id").value = e.post_id || "";
+    document.getElementById("f_branch_id").value = e.home_branch_id || "";
+    document.getElementById("f_daily_rate").value = e.daily_rate ?? "";
+    document.getElementById("f_sss_number").value = e.sss_number || "";
+    document.getElementById("f_philhealth_number").value = e.philhealth_number || "";
+    document.getElementById("f_pagibig_number").value = e.pagibig_number || "";
+    document.getElementById("f_tin_number").value = e.tin_number || "";
+    document.getElementById("f_valid_id_type").value = e.valid_id_type || "";
+    document.getElementById("f_valid_id_number").value = e.valid_id_number || "";
+    document.getElementById("f_emergency_contact_name").value = e.emergency_contact_name || "";
+    document.getElementById("f_emergency_contact_phone").value = e.emergency_contact_phone || "";
+    if (e.photo_url) {
+      document.getElementById("photoPreview").src = e.photo_url;
+      document.getElementById("photoNote").style.display = "flex";
+    }
+  }
+  document.getElementById("empModalBg").style.display = "flex";
+}
+
+// auto-build full name as a convenience
+["f_salutation","f_first_name","f_middle_name","f_surname","f_suffix"].forEach(id => {
+  document.addEventListener("input", (ev) => {
+    if (ev.target.id === id) {
+      const sal = document.getElementById("f_salutation").value.trim();
+      const fn = document.getElementById("f_first_name").value.trim();
+      const mn = document.getElementById("f_middle_name").value.trim();
+      const sn = document.getElementById("f_surname").value.trim();
+      const sx = document.getElementById("f_suffix").value.trim();
+      document.getElementById("f_full_name").value = [sal, fn, mn, sn, sx].filter(Boolean).join(" ");
+    }
+  });
+});
+
+async function saveEmployee() {
+  const tm_number = document.getElementById("f_tm_number").value.trim();
+  if (!tm_number) { toast("TM Number is required."); return; }
+
+  const payload = {
+    tm_number,
+    status: document.getElementById("f_status").value,
+    salutation: document.getElementById("f_salutation").value.trim() || null,
+    suffix: document.getElementById("f_suffix").value.trim() || null,
+    surname: document.getElementById("f_surname").value.trim() || null,
+    first_name: document.getElementById("f_first_name").value.trim() || null,
+    middle_name: document.getElementById("f_middle_name").value.trim() || null,
+    full_name: document.getElementById("f_full_name").value.trim() || null,
+    date_of_birth: document.getElementById("f_date_of_birth").value || null,
+    marital_status: document.getElementById("f_marital_status").value,
+    address: document.getElementById("f_address").value.trim() || null,
+    tel_number: document.getElementById("f_tel_number").value.trim() || null,
+    hire_date: document.getElementById("f_hire_date").value || null,
+    post_id: document.getElementById("f_post_id").value || null,
+    home_branch_id: document.getElementById("f_branch_id").value || null,
+    daily_rate: document.getElementById("f_daily_rate").value || null,
+    sss_number: document.getElementById("f_sss_number").value.trim() || null,
+    philhealth_number: document.getElementById("f_philhealth_number").value.trim() || null,
+    pagibig_number: document.getElementById("f_pagibig_number").value.trim() || null,
+    tin_number: document.getElementById("f_tin_number").value.trim() || null,
+    valid_id_type: document.getElementById("f_valid_id_type").value.trim() || null,
+    valid_id_number: document.getElementById("f_valid_id_number").value.trim() || null,
+    emergency_contact_name: document.getElementById("f_emergency_contact_name").value.trim() || null,
+    emergency_contact_phone: document.getElementById("f_emergency_contact_phone").value.trim() || null,
+    updated_at: new Date().toISOString(),
+  };
+
+  let empId = currentEmpId;
+  let changedForHistory = true;
+
+  if (empId) {
+    const before = employees.find(x => x.id === empId);
+    changedForHistory = before.daily_rate != payload.daily_rate ||
+      before.post_id != payload.post_id || before.home_branch_id != payload.home_branch_id ||
+      before.status != payload.status;
+    const { error } = await supabase.from("employees").update(payload).eq("id", empId);
+    if (error) { toast("Error: " + error.message); return; }
+  } else {
+    const { data, error } = await supabase.from("employees").insert(payload).select().single();
+    if (error) { toast("Error: " + error.message); return; }
+    empId = data.id;
+  }
+
+  if (changedForHistory) {
+    await supabase.from("employee_rate_history").insert({
+      employee_id: empId,
+      post_id: payload.post_id,
+      branch_id: payload.home_branch_id,
+      daily_rate: payload.daily_rate,
+      status: payload.status,
+      effective_date: new Date().toISOString().slice(0,10),
+    });
+  }
+
+  closeModal("empModalBg");
+  toast("Employee saved.");
+  await loadEmployees();
+}
+
+async function viewRateHistory() {
+  if (!currentEmpId) return;
+  const e = employees.find(x => x.id === currentEmpId);
+  document.getElementById("historyEmpName").textContent = e.full_name || e.tm_number;
+  const { data, error } = await supabase.from("employee_rate_history")
+    .select("*").eq("employee_id", currentEmpId).order("effective_date", { ascending: false });
+  if (error) { toast("Error: " + error.message); return; }
+  document.getElementById("historyTableBody").innerHTML = (data || []).map(h => `
+    <tr>
+      <td>${h.effective_date || ""}</td>
+      <td>${postLabel(h.post_id)}</td>
+      <td>${branchLabel(h.branch_id)}</td>
+      <td>${h.daily_rate != null ? "₱" + h.daily_rate : ""}</td>
+      <td>${h.status || ""}</td>
+      <td>${h.reason_left || ""}</td>
+    </tr>`).join("") || `<tr><td colspan="6" class="small">No history yet.</td></tr>`;
+  closeModal("empModalBg");
+  document.getElementById("historyModalBg").style.display = "flex";
+}
+</script>
+</body>
+</html>
