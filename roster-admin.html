@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>GS Roster — Weekly Scheduling</title>
+<style>
+:root { --bg:#0f172a; --card:#1e293b; --accent:#22c55e; --danger:#ef4444; --warn:#f59e0b; --text:#f1f5f9; --muted:#94a3b8; --border:#334155; }
+* { box-sizing: border-box; }
+body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; padding:16px; }
+h1 { font-size:20px; margin:0 0 4px; }
+h2 { font-size:15px; margin:0 0 12px; color:var(--muted); font-weight:600; }
+.wrap { max-width:1300px; margin:0 auto; }
+.card { background:var(--card); border-radius:14px; padding:18px; margin-bottom:16px; }
+label { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; margin-top:10px; }
+input, select, textarea { width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); background:#0f172a; color:var(--text); font-size:14px; }
+button { padding:10px 16px; border-radius:8px; border:none; font-size:14px; font-weight:600; cursor:pointer; background:var(--accent); color:#052e16; }
+button.secondary { background:#0f172a; color:var(--text); border:1px solid var(--border); }
+button.danger { background:transparent; color:var(--danger); border:1px solid var(--danger); }
+button.small-btn { padding:5px 10px; font-size:12px; }
+button:disabled { opacity:0.4; cursor:not-allowed; }
+.row { display:flex; gap:10px; flex-wrap:wrap; }
+.row > div { flex:1; min-width:160px; }
+table { width:100%; border-collapse:collapse; font-size:13px; }
+th, td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--border); }
+th { color:var(--muted); font-weight:600; }
+tr:hover { background:#25324a; }
+.badge { display:inline-block; padding:2px 8px; border-radius:20px; font-size:11px; font-weight:600; }
+.badge.active { background:#052e16; color:var(--accent); }
+.badge.inactive { background:#450a0a; color:var(--danger); }
+.tabs { display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; }
+.tab { padding:8px 14px; border-radius:8px; cursor:pointer; background:var(--card); color:var(--muted); font-size:13px; font-weight:600; }
+.tab.active { background:var(--accent); color:#052e16; }
+.panel { display:none; }
+.panel.active { display:block; }
+.pin-screen { max-width:320px; margin:80px auto; text-align:center; }
+.toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:var(--card); border:1px solid var(--accent); padding:10px 18px; border-radius:10px; font-size:13px; display:none; z-index:99; }
+.modal-bg { display:none; position:fixed; inset:0; background:rgba(0,0,0,.6); align-items:center; justify-content:center; z-index:50; padding:16px; }
+.modal { background:var(--card); border-radius:14px; padding:20px; max-width:520px; width:100%; max-height:85vh; overflow:auto; }
+.small { font-size:12px; color:var(--muted); }
+.close-x { float:right; cursor:pointer; color:var(--muted); font-size:20px; }
+.nav-links { font-size:12px; margin-bottom:14px; }
+.nav-links a { color:var(--muted); text-decoration:none; margin-right:14px; }
+.nav-links a:hover { color:var(--accent); }
+
+/* ---- Week toolbar ---- */
+.week-toolbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px; }
+.week-toolbar .spacer { flex:1; }
+.week-label { font-size:14px; font-weight:600; min-width:170px; text-align:center; }
+
+/* ---- Roster grid ---- */
+.grid-scroll { overflow-x:auto; }
+.grid-table { width:100%; border-collapse:collapse; table-layout:fixed; min-width:900px; }
+.grid-table th, .grid-table td { border:1px solid var(--border); vertical-align:top; padding:6px; font-size:12px; }
+.grid-table th { background:#0f172a; color:var(--muted); text-align:center; font-weight:600; padding:8px 4px; }
+.grid-table th.today { color:var(--accent); }
+.shift-label-cell { background:#0f172a; width:110px; }
+.shift-label-cell .lbl { font-weight:700; font-size:13px; }
+.shift-label-cell .time { color:var(--muted); font-size:11px; }
+.day-cell { min-height:70px; }
+.chip { display:block; background:#0f172a; border:1px solid var(--border); border-radius:6px; padding:4px 6px; margin-bottom:4px; cursor:pointer; font-size:11px; line-height:1.35; }
+.chip:hover { border-color:var(--accent); }
+.chip .nm { font-weight:600; }
+.chip .pst { color:var(--muted); }
+.chip.status-reliever { border-color:var(--accent); }
+.chip.status-no_show { border-color:var(--danger); opacity:0.75; }
+.chip.status-swapped { border-color:var(--warn); }
+.chip.status-cancelled { opacity:0.45; text-decoration:line-through; }
+.chip .flags { color:var(--warn); font-size:10px; }
+.add-cell-btn { width:100%; padding:4px; font-size:11px; background:transparent; border:1px dashed var(--border); color:var(--muted); border-radius:6px; }
+.add-cell-btn:hover { border-color:var(--accent); color:var(--accent); }
+.no-template-msg { padding:20px; text-align:center; color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+
+<div id="pinScreen" class="pin-screen">
+  <h1>GS Roster</h1>
+  <p class="small">Weekly Scheduling — Admin access only</p>
+  <input type="password" id="pinInput" placeholder="Enter PIN" style="text-align:center; font-size:18px; letter-spacing:4px;">
+  <button style="width:100%; margin-top:10px;" onclick="checkPin()">Sign in</button>
+  <div id="pinError" class="small" style="color:var(--danger); margin-top:8px;"></div>
+</div>
+
+<div id="app" class="wrap" style="display:none;">
+  <div class="nav-links"><a href="hr-admin.html">HR Admin</a><a href="timesheet-admin.html">Timesheet Admin</a><a href="roster-admin.html">Roster</a></div>
+  <h1>GS Roster — Weekly Scheduling</h1>
+  <p class="small" style="margin-bottom:16px;">Assigns crew to shifts. Timesheet reads its crew list from here. Uses the same admin PIN as HR/Timesheet.</p>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="weekly">Weekly Roster</div>
+    <div class="tab" data-tab="templates">Shift Templates</div>
+  </div>
+
+  <!-- ===================== WEEKLY ROSTER ===================== -->
+  <div class="panel active" id="panel-weekly">
+    <div class="card">
+      <div class="week-toolbar">
+        <div style="min-width:200px;">
+          <label style="margin-top:0;">Branch</label>
+          <select id="branchSelect"></select>
+        </div>
+        <div class="spacer"></div>
+        <button class="secondary" onclick="prevWeek()">‹ Prev Week</button>
+        <div class="week-label" id="weekLabel">—</div>
+        <button class="secondary" onclick="nextWeek()">Next Week ›</button>
+        <button class="secondary" onclick="goToday()">This Week</button>
+      </div>
+      <div class="grid-scroll">
+        <table class="grid-table" id="rosterGrid">
+          <thead><tr><th>Shift</th></tr></thead>
+          <tbody><tr><td class="small">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== SHIFT TEMPLATES ===================== -->
+  <div class="panel" id="panel-templates">
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h2 style="margin:0;">Shift Templates (per branch)</h2>
+        <button onclick="openTemplateModal()">+ Add Template</button>
+      </div>
+      <p class="small">Defines the recurring shift blocks (e.g. AM/PM/GY) offered at each branch. The Weekly Roster grid is built from these.</p>
+      <table style="margin-top:10px;">
+        <thead><tr><th>Branch</th><th>Label</th><th>Time In</th><th>Time Out</th><th></th></tr></thead>
+        <tbody id="templateTableBody"><tr><td colspan="5" class="small">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- ===================== ASSIGN / EDIT MODAL ===================== -->
+<div class="modal-bg" id="assignModalBg">
+  <div class="modal">
+    <span class="close-x" onclick="closeModal('assignModalBg')">&times;</span>
+    <h2 id="assignModalTitle">Assign Employee</h2>
+    <p class="small" id="assignModalSub"></p>
+    <input type="hidden" id="a_assignment_id">
+    <input type="hidden" id="a_branch_id">
+    <input type="hidden" id="a_date">
+    <input type="hidden" id="a_shift_label">
+    <input type="hidden" id="a_time_in">
+    <input type="hidden" id="a_time_out">
+
+    <label>Employee</label>
+    <input list="empDatalist" id="a_employee_input" placeholder="Type TM # or name…">
+    <datalist id="empDatalist"></datalist>
+
+    <div class="row">
+      <div><label>Post (for this shift)</label><select id="a_post_id"></select></div>
+      <div><label>Status</label>
+        <select id="a_status">
+          <option value="scheduled">Scheduled</option>
+          <option value="confirmed">Confirmed</option>
+          <option value="reliever">Reliever</option>
+          <option value="swapped">Swapped</option>
+          <option value="no_show">No Show</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+      </div>
+    </div>
+    <div class="row">
+      <div><label>Pump Assignment (optional)</label>
+        <select id="a_pump_assignment"><option value="">—</option><option>Pump 1</option><option>Pump 2</option></select>
+      </div>
+      <div><label>Reliever For (optional)</label>
+        <input list="empDatalist" id="a_reliever_for_input" placeholder="Who are they covering?">
+      </div>
+    </div>
+    <div class="row">
+      <div><label><input type="checkbox" id="a_double_pump" style="width:auto; display:inline-block; margin-right:6px;">Double Pump</label></div>
+      <div><label><input type="checkbox" id="a_emergency_roster" style="width:auto; display:inline-block; margin-right:6px;">Emergency Roster</label></div>
+    </div>
+    <label>Notes</label>
+    <textarea id="a_notes" rows="2"></textarea>
+
+    <div class="row" style="margin-top:16px;">
+      <button onclick="saveAssignment()">Save</button>
+      <button class="secondary" onclick="closeModal('assignModalBg')">Cancel</button>
+      <button class="danger" id="deleteAssignBtn" style="display:none;" onclick="deleteAssignment()">Remove</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== TEMPLATE MODAL ===================== -->
+<div class="modal-bg" id="templateModalBg">
+  <div class="modal">
+    <span class="close-x" onclick="closeModal('templateModalBg')">&times;</span>
+    <h2 id="templateModalTitle">Add Shift Template</h2>
+    <input type="hidden" id="t_id">
+    <label>Branch</label><select id="t_branch_id"></select>
+    <label>Shift Label (e.g. AM / PM / GY)</label><input id="t_shift_label">
+    <div class="row">
+      <div><label>Time In</label><input type="time" id="t_time_in"></div>
+      <div><label>Time Out</label><input type="time" id="t_time_out"></div>
+    </div>
+    <p class="small">Time Out earlier than Time In is treated as an overnight shift (e.g. GY 20:02 → 04:02).</p>
+    <div class="row" style="margin-top:16px;">
+      <button onclick="saveTemplate()">Save</button>
+      <button class="secondary" onclick="closeModal('templateModalBg')">Cancel</button>
+      <button class="danger" id="deleteTemplateBtn" style="display:none;" onclick="deleteTemplate()">Delete</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+// ============================================================
+// CONFIG — same Supabase project as gs-timesheet / hr-admin
+// ============================================================
+const SUPABASE_URL = "https://cztkovsjxuaiburaudgk.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_eBOzdnFAdfFavl2QAYY6bA_lfAIJUhh";
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let branches = [];
+let posts = [];
+let employees = [];
+let templates = [];       // shift_templates for the currently selected branch
+let shiftsWeek = [];      // shifts rows covering the current branch+week
+let assignmentsWeek = []; // roster_assignments rows covering the current branch+week
+let weekStart = null;     // Date, Monday of the displayed week
+
+// ---------- PIN gate (shares the SAME key as hr-admin.html / timesheet-admin.html: 'admin_pin') ----------
+async function checkPin() {
+  const val = document.getElementById("pinInput").value.trim();
+  const { data, error } = await supabase.from("app_settings").select("value").eq("key", "admin_pin").single();
+  if (error) { document.getElementById("pinError").textContent = "Could not verify PIN: " + error.message; return; }
+  if (data && data.value === val) {
+    sessionStorage.setItem("roster_admin_ok", "1");
+    document.getElementById("pinScreen").style.display = "none";
+    document.getElementById("app").style.display = "block";
+    initApp();
+  } else {
+    document.getElementById("pinError").textContent = "Incorrect PIN.";
+  }
+}
+if (sessionStorage.getItem("roster_admin_ok") === "1") {
+  document.getElementById("pinScreen").style.display = "none";
+  document.getElementById("app").style.display = "block";
+  window.addEventListener("DOMContentLoaded", initApp);
+}
+
+// ---------- Tabs ----------
+document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => {
+  document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+  document.querySelectorAll(".panel").forEach(x => x.classList.remove("active"));
+  t.classList.add("active");
+  document.getElementById("panel-" + t.dataset.tab).classList.add("active");
+  if (t.dataset.tab === "templates") renderTemplateTable();
+}));
+
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.style.display = "block";
+  setTimeout(() => t.style.display = "none", 2500);
+}
+function closeModal(id) { document.getElementById(id).style.display = "none"; }
+
+// ---------- Date helpers ----------
+function isoDate(d) { return d.toISOString().slice(0, 10); }
+function mondayOf(d) {
+  const x = new Date(d);
+  const day = x.getDay(); // 0=Sun..6=Sat
+  const diff = day === 0 ? -6 : 1 - day;
+  x.setDate(x.getDate() + diff);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+function weekDates() {
+  const out = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(weekStart);
+    d.setDate(d.getDate() + i);
+    out.push(d);
+  }
+  return out;
+}
+function fmtShort(d) { return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }); }
+function fmtTime(t) { return t ? t.slice(0, 5) : ""; }
+
+// ---------- Init ----------
+async function initApp() {
+  weekStart = mondayOf(new Date());
+  await Promise.all([loadBranches(), loadPosts(), loadEmployees()]);
+  document.getElementById("branchSelect").addEventListener("change", () => loadWeeklyRoster());
+  await loadWeeklyRoster();
+}
+
+// ---------- Branches / Posts / Employees ----------
+async function loadBranches() {
+  const { data, error } = await supabase.from("branches").select("*").order("code");
+  if (error) { toast("Error loading branches: " + error.message); return; }
+  branches = data || [];
+  const sel = document.getElementById("branchSelect");
+  sel.innerHTML = branches.map(b => `<option value="${b.id}">${b.code} — ${b.name}</option>`).join("");
+  const tSel = document.getElementById("t_branch_id");
+  tSel.innerHTML = branches.map(b => `<option value="${b.id}">${b.code} — ${b.name}</option>`).join("");
+  const gs1 = branches.find(b => b.code === "GS1");
+  if (gs1) sel.value = gs1.id;
+}
+async function loadPosts() {
+  const { data, error } = await supabase.from("posts").select("*").eq("active", true).order("name");
+  if (error) { toast("Error loading posts: " + error.message); return; }
+  posts = data || [];
+  document.getElementById("a_post_id").innerHTML = '<option value="">—</option>' + posts.map(p => `<option value="${p.id}">${p.name}</option>`).join("");
+}
+async function loadEmployees() {
+  const { data, error } = await supabase.from("employees").select("*").eq("status", "active").order("tm_number");
+  if (error) { toast("Error loading employees: " + error.message); return; }
+  employees = data || [];
+  const dl = document.getElementById("empDatalist");
+  dl.innerHTML = employees.map(e => `<option value="${e.tm_number} — ${e.full_name || ''}">`).join("");
+}
+function findEmployeeByInput(text) {
+  const tm = (text || "").split("—")[0].trim();
+  return employees.find(e => e.tm_number === tm) || null;
+}
+function branchCode(id) { const b = branches.find(x => x.id === id); return b ? b.code : "—"; }
+function postName(id) { const p = posts.find(x => x.id === id); return p ? p.name : ""; }
+function empLabel(id) { const e = employees.find(x => x.id === id); return e ? `${e.full_name || e.tm_number} (${e.tm_number})` : "Unknown"; }
+
+// ---------- Week navigation ----------
+function renderWeekLabel() {
+  const dates = weekDates();
+  document.getElementById("weekLabel").textContent = `${fmtShort(dates[0])} – ${fmtShort(dates[6])}`;
+}
+function prevWeek() { weekStart.setDate(weekStart.getDate() - 7); loadWeeklyRoster(); }
+function nextWeek() { weekStart.setDate(weekStart.getDate() + 7); loadWeeklyRoster(); }
+function goToday() { weekStart = mondayOf(new Date()); loadWeeklyRoster(); }
+
+// ---------- Weekly roster grid ----------
+async function loadWeeklyRoster() {
+  renderWeekLabel();
+  const branchId = document.getElementById("branchSelect").value;
+  if (!branchId) return;
+  const dates = weekDates();
+  const startISO = isoDate(dates[0]), endISO = isoDate(dates[6]);
+
+  const [{ data: tpl, error: tplErr }, { data: shiftsData, error: shiftsErr }] = await Promise.all([
+    supabase.from("shift_templates").select("*").eq("branch_id", branchId).order("scheduled_time_in"),
+    supabase.from("shifts").select("*").eq("branch_id", branchId).gte("shift_date", startISO).lte("shift_date", endISO),
+  ]);
+  if (tplErr) { toast("Error loading templates: " + tplErr.message); return; }
+  if (shiftsErr) { toast("Error loading shifts: " + shiftsErr.message); return; }
+  templates = tpl || [];
+  shiftsWeek = shiftsData || [];
+
+  let assignData = [];
+  if (shiftsWeek.length) {
+    const shiftIds = shiftsWeek.map(s => s.id);
+    const { data, error } = await supabase.from("roster_assignments").select("*").in("shift_id", shiftIds);
+    if (error) { toast("Error loading assignments: " + error.message); return; }
+    assignData = data || [];
+  }
+  assignmentsWeek = assignData;
+
+  renderGrid(branchId, dates);
+}
+
+function renderGrid(branchId, dates) {
+  const table = document.getElementById("rosterGrid");
+  if (!templates.length) {
+    table.innerHTML = `<tbody><tr><td class="no-template-msg">No shift templates set up for ${branchCode(branchId)} yet. Add one under the "Shift Templates" tab.</td></tr></tbody>`;
+    return;
+  }
+  const todayISO = isoDate(new Date());
+  let thead = "<tr><th>Shift</th>" + dates.map(d => {
+    const iso = isoDate(d);
+    return `<th class="${iso === todayISO ? 'today' : ''}">${fmtShort(d)}</th>`;
+  }).join("") + "</tr>";
+
+  let tbody = templates.map(t => {
+    let row = `<tr><td class="shift-label-cell"><div class="lbl">${t.shift_label}</div><div class="time">${fmtTime(t.scheduled_time_in)}–${fmtTime(t.scheduled_time_out)}</div></td>`;
+    dates.forEach(d => {
+      const iso = isoDate(d);
+      const shift = shiftsWeek.find(s => s.shift_date === iso && s.shift_label === t.shift_label);
+      const cellAssignments = shift ? assignmentsWeek.filter(a => a.shift_id === shift.id) : [];
+      const chips = cellAssignments.map(a => {
+        const flags = [a.double_pump ? "DP" : "", a.emergency_roster ? "ER" : ""].filter(Boolean).join(" · ");
+        return `<div class="chip status-${a.status}" onclick='openAssignModal(${JSON.stringify(iso)}, ${JSON.stringify(t.shift_label)}, ${JSON.stringify(t)}, ${JSON.stringify(a)})'>
+          <span class="nm">${empLabel(a.employee_id)}</span><br>
+          <span class="pst">${postName(a.post_id)}${a.status !== 'scheduled' ? ' · ' + a.status : ''}</span>
+          ${flags ? `<div class="flags">${flags}</div>` : ""}
+        </div>`;
+      }).join("");
+      row += `<td class="day-cell">${chips}<button class="add-cell-btn" onclick='openAssignModal(${JSON.stringify(iso)}, ${JSON.stringify(t.shift_label)}, ${JSON.stringify(t)}, null)'>+ Add</button></td>`;
+    });
+    row += "</tr>";
+    return row;
+  }).join("");
+
+  table.innerHTML = `<thead>${thead}</thead><tbody>${tbody}</tbody>`;
+}
+
+// ---------- Assign modal ----------
+function openAssignModal(dateISO, shiftLabel, template, assignment) {
+  const branchId = document.getElementById("branchSelect").value;
+  document.getElementById("a_branch_id").value = branchId;
+  document.getElementById("a_date").value = dateISO;
+  document.getElementById("a_shift_label").value = shiftLabel;
+  document.getElementById("a_time_in").value = template.scheduled_time_in;
+  document.getElementById("a_time_out").value = template.scheduled_time_out;
+  document.getElementById("assignModalSub").textContent = `${branchCode(branchId)} · ${shiftLabel} (${fmtTime(template.scheduled_time_in)}–${fmtTime(template.scheduled_time_out)}) · ${dateISO}`;
+
+  if (assignment) {
+    document.getElementById("assignModalTitle").textContent = "Edit Assignment";
+    document.getElementById("a_assignment_id").value = assignment.id;
+    const emp = employees.find(e => e.id === assignment.employee_id);
+    document.getElementById("a_employee_input").value = emp ? `${emp.tm_number} — ${emp.full_name || ''}` : "";
+    document.getElementById("a_post_id").value = assignment.post_id || "";
+    document.getElementById("a_status").value = assignment.status || "scheduled";
+    document.getElementById("a_pump_assignment").value = assignment.pump_assignment || "";
+    const relEmp = employees.find(e => e.id === assignment.reliever_for);
+    document.getElementById("a_reliever_for_input").value = relEmp ? `${relEmp.tm_number} — ${relEmp.full_name || ''}` : "";
+    document.getElementById("a_double_pump").checked = !!assignment.double_pump;
+    document.getElementById("a_emergency_roster").checked = !!assignment.emergency_roster;
+    document.getElementById("a_notes").value = assignment.notes || "";
+    document.getElementById("deleteAssignBtn").style.display = "inline-block";
+  } else {
+    document.getElementById("assignModalTitle").textContent = "Assign Employee";
+    document.getElementById("a_assignment_id").value = "";
+    document.getElementById("a_employee_input").value = "";
+    document.getElementById("a_post_id").value = "";
+    document.getElementById("a_status").value = "scheduled";
+    document.getElementById("a_pump_assignment").value = "";
+    document.getElementById("a_reliever_for_input").value = "";
+    document.getElementById("a_double_pump").checked = false;
+    document.getElementById("a_emergency_roster").checked = false;
+    document.getElementById("a_notes").value = "";
+    document.getElementById("deleteAssignBtn").style.display = "none";
+  }
+  document.getElementById("assignModalBg").style.display = "flex";
+}
+
+document.getElementById("a_employee_input").addEventListener("input", function () {
+  const emp = findEmployeeByInput(this.value);
+  if (emp && emp.post_id) document.getElementById("a_post_id").value = emp.post_id;
+});
+
+// Ensures a `shifts` row exists for this branch+date+label, returns its id.
+async function getOrCreateShift(branchId, dateISO, shiftLabel, timeIn, timeOut) {
+  let shift = shiftsWeek.find(s => s.branch_id === branchId && s.shift_date === dateISO && s.shift_label === shiftLabel);
+  if (shift) return shift.id;
+  const { data, error } = await supabase.from("shifts").insert({
+    branch_id: branchId, shift_date: dateISO, shift_label: shiftLabel,
+    scheduled_time_in: timeIn, scheduled_time_out: timeOut,
+  }).select().single();
+  if (error) throw error;
+  shiftsWeek.push(data);
+  return data.id;
+}
+
+async function saveAssignment() {
+  const empInput = document.getElementById("a_employee_input").value;
+  const emp = findEmployeeByInput(empInput);
+  if (!emp) { toast("Pick a valid employee from the list."); return; }
+
+  const relInput = document.getElementById("a_reliever_for_input").value;
+  const relEmp = relInput ? findEmployeeByInput(relInput) : null;
+
+  const branchId = document.getElementById("a_branch_id").value;
+  const dateISO = document.getElementById("a_date").value;
+  const shiftLabel = document.getElementById("a_shift_label").value;
+  const timeIn = document.getElementById("a_time_in").value;
+  const timeOut = document.getElementById("a_time_out").value;
+
+  let shiftId;
+  try {
+    shiftId = await getOrCreateShift(branchId, dateISO, shiftLabel, timeIn, timeOut);
+  } catch (err) { toast("Error creating shift: " + err.message); return; }
+
+  const payload = {
+    shift_id: shiftId,
+    employee_id: emp.id,
+    post_id: document.getElementById("a_post_id").value || null,
+    branch_id: branchId,
+    assignment_date: dateISO,
+    status: document.getElementById("a_status").value,
+    pump_assignment: document.getElementById("a_pump_assignment").value || null,
+    double_pump: document.getElementById("a_double_pump").checked,
+    emergency_roster: document.getElementById("a_emergency_roster").checked,
+    reliever_for: relEmp ? relEmp.id : null,
+    notes: document.getElementById("a_notes").value.trim() || null,
+    updated_at: new Date().toISOString(),
+  };
+
+  const existingId = document.getElementById("a_assignment_id").value;
+  const { error } = existingId
+    ? await supabase.from("roster_assignments").update(payload).eq("id", existingId)
+    : await supabase.from("roster_assignments").insert(payload);
+
+  if (error) {
+    if (error.code === "23505") toast("This employee is already assigned to this shift.");
+    else toast("Error: " + error.message);
+    return;
+  }
+  closeModal("assignModalBg");
+  toast("Assignment saved.");
+  await loadWeeklyRoster();
+}
+
+async function deleteAssignment() {
+  const id = document.getElementById("a_assignment_id").value;
+  if (!id) return;
+  if (!confirm("Remove this assignment?")) return;
+  const { error } = await supabase.from("roster_assignments").delete().eq("id", id);
+  if (error) { toast("Error: " + error.message); return; }
+  closeModal("assignModalBg");
+  toast("Assignment removed.");
+  await loadWeeklyRoster();
+}
+
+// ---------- Shift Templates tab ----------
+async function renderTemplateTable() {
+  const { data, error } = await supabase.from("shift_templates").select("*").order("branch_id").order("scheduled_time_in");
+  if (error) { toast("Error loading templates: " + error.message); return; }
+  document.getElementById("templateTableBody").innerHTML = (data || []).map(t => `
+    <tr>
+      <td>${branchCode(t.branch_id)}</td>
+      <td>${t.shift_label}</td>
+      <td>${fmtTime(t.scheduled_time_in)}</td>
+      <td>${fmtTime(t.scheduled_time_out)}</td>
+      <td><button class="secondary small-btn" onclick='openTemplateModal(${JSON.stringify(t)})'>Edit</button></td>
+    </tr>`).join("") || `<tr><td colspan="5" class="small">No templates yet.</td></tr>`;
+}
+
+function openTemplateModal(t) {
+  if (t) {
+    document.getElementById("templateModalTitle").textContent = "Edit Shift Template";
+    document.getElementById("t_id").value = t.id;
+    document.getElementById("t_branch_id").value = t.branch_id || "";
+    document.getElementById("t_shift_label").value = t.shift_label || "";
+    document.getElementById("t_time_in").value = fmtTime(t.scheduled_time_in);
+    document.getElementById("t_time_out").value = fmtTime(t.scheduled_time_out);
+    document.getElementById("deleteTemplateBtn").style.display = "inline-block";
+  } else {
+    document.getElementById("templateModalTitle").textContent = "Add Shift Template";
+    document.getElementById("t_id").value = "";
+    document.getElementById("t_shift_label").value = "";
+    document.getElementById("t_time_in").value = "";
+    document.getElementById("t_time_out").value = "";
+    document.getElementById("deleteTemplateBtn").style.display = "none";
+  }
+  document.getElementById("templateModalBg").style.display = "flex";
+}
+
+async function saveTemplate() {
+  const payload = {
+    branch_id: document.getElementById("t_branch_id").value,
+    shift_label: document.getElementById("t_shift_label").value.trim(),
+    scheduled_time_in: document.getElementById("t_time_in").value,
+    scheduled_time_out: document.getElementById("t_time_out").value,
+  };
+  if (!payload.branch_id || !payload.shift_label || !payload.scheduled_time_in || !payload.scheduled_time_out) {
+    toast("Branch, label, time in, and time out are all required."); return;
+  }
+  const id = document.getElementById("t_id").value;
+  const { error } = id
+    ? await supabase.from("shift_templates").update(payload).eq("id", id)
+    : await supabase.from("shift_templates").insert(payload);
+  if (error) { toast("Error: " + error.message); return; }
+  closeModal("templateModalBg");
+  toast("Template saved.");
+  await renderTemplateTable();
+  await loadWeeklyRoster();
+}
+
+async function deleteTemplate() {
+  const id = document.getElementById("t_id").value;
+  if (!id) return;
+  if (!confirm("Delete this shift template? Existing shifts/assignments already created from it are unaffected.")) return;
+  const { error } = await supabase.from("shift_templates").delete().eq("id", id);
+  if (error) { toast("Error: " + error.message); return; }
+  closeModal("templateModalBg");
+  toast("Template deleted.");
+  await renderTemplateTable();
+  await loadWeeklyRoster();
+}
+</script>
+</body>
+</html>
