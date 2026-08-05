@@ -39,6 +39,8 @@
   <label for="branchSelect">Branch</label>
   <select id="branchSelect"></select>
 
+  <div id="todayRosterBox" style="margin-top:10px; padding:10px; border-radius:10px; background:#0f172a; border:1px solid #334155; font-size:12px; color:var(--muted);">Loading today's roster…</div>
+
   <div style="display:flex; gap:8px; margin:14px 0;">
     <button type="button" id="scanModeBtn" style="flex:1; padding:10px; border-radius:8px; border:none; background:var(--accent); color:#052e16; font-weight:600;">Scan ID</button>
     <button type="button" id="manualModeBtn" style="flex:1; padding:10px; border-radius:8px; border:1px solid #334155; background:#0f172a; color:var(--text);">Manual Select</button>
@@ -152,10 +154,11 @@ async function loadDropdowns() {
     // Crew list now comes from Roster (roster_assignments), scoped to today.
     // 'cancelled' assignments don't count as being on the roster; every other
     // status (scheduled/confirmed/reliever/swapped/no_show) still does, since
-    // all of those mean someone was expected to show up today.
+    // all of those mean someone was expected to show up today. Shift label
+    // and time are embedded so the "today's roster" banner can group by shift.
     const { data: assignments, error: raErr } = await supabase
       .from("roster_assignments")
-      .select("employee_id, branch_id, shift_id, post_id, status, double_pump, emergency_roster")
+      .select("employee_id, branch_id, shift_id, post_id, status, double_pump, emergency_roster, shifts(shift_label, scheduled_time_in)")
       .eq("assignment_date", today)
       .neq("status", "cancelled");
     if (raErr) throw raErr;
@@ -163,7 +166,8 @@ async function loadDropdowns() {
 
     localStorage.setItem("gs_dropdown_cache", JSON.stringify({ employees, branches: branchSelect.innerHTML, assignments: activeAssignments }));
     renderEmployeeOptions();
-    branchSelect.addEventListener("change", renderEmployeeOptions);
+    renderTodayRoster();
+    branchSelect.addEventListener("change", () => { renderEmployeeOptions(); renderTodayRoster(); });
     document.getElementById("showAllEmployees").addEventListener("change", renderEmployeeOptions);
   } catch (err) {
     const cached = localStorage.getItem("gs_dropdown_cache");
@@ -173,7 +177,8 @@ async function loadDropdowns() {
       branchSelect.innerHTML = c.branches;
       activeAssignments = c.assignments || [];
       renderEmployeeOptions();
-      branchSelect.addEventListener("change", renderEmployeeOptions);
+      renderTodayRoster();
+      branchSelect.addEventListener("change", () => { renderEmployeeOptions(); renderTodayRoster(); });
       document.getElementById("showAllEmployees").addEventListener("change", renderEmployeeOptions);
     } else {
       logMsg("Could not load employee/branch list: " + (err.message || err), "queued");
@@ -195,6 +200,39 @@ function renderEmployeeOptions() {
   }).join("");
   updateManualPhotoPreview();
   empSelect.onchange = updateManualPhotoPreview;
+}
+
+// Shows who Roster actually scheduled for the selected branch today, grouped
+// by shift and sorted by start time, so whoever's running the kiosk can spot
+// the right name/TM# at a glance instead of hunting the full dropdown.
+function renderTodayRoster() {
+  const box = document.getElementById("todayRosterBox");
+  const branchId = document.getElementById("branchSelect").value;
+  const todays = activeAssignments.filter(a => a.branch_id === branchId);
+  if (!todays.length) {
+    box.innerHTML = "No one rostered here today yet.";
+    return;
+  }
+  const groups = {};
+  todays.forEach(a => {
+    const label = a.shifts ? a.shifts.shift_label : "Unscheduled";
+    const timeIn = a.shifts ? a.shifts.scheduled_time_in : null;
+    const key = label + "|" + (timeIn || "");
+    if (!groups[key]) groups[key] = { label, timeIn, people: [] };
+    const emp = allEmployees.find(e => e.id === a.employee_id);
+    if (emp) groups[key].people.push(`${emp.full_name} (${emp.tm_number})`);
+  });
+  const rows = Object.values(groups).sort((x, y) => (x.timeIn || "").localeCompare(y.timeIn || ""));
+  box.innerHTML = `<b>Today's roster</b><br>` + rows.map(g =>
+    `${g.label}${g.timeIn ? " " + fmtTimeOnly(g.timeIn) : ""}: ${g.people.join(", ") || "—"}`
+  ).join("<br>");
+}
+
+function fmtTimeOnly(t) {
+  if (!t) return "";
+  const [h, m] = t.split(":").map(Number);
+  const d = new Date(); d.setHours(h, m, 0, 0);
+  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
 function updateManualPhotoPreview() {
