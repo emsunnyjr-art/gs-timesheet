@@ -154,8 +154,12 @@ tr:hover { background:#25324a; }
     <input type="hidden" id="a_branch_id">
     <input type="hidden" id="a_date">
     <input type="hidden" id="a_shift_label">
-    <input type="hidden" id="a_time_in">
-    <input type="hidden" id="a_time_out">
+
+    <div class="row">
+      <div><label>Time In</label><input type="time" id="a_time_in"></div>
+      <div><label>Time Out</label><input type="time" id="a_time_out"></div>
+    </div>
+    <p class="small">Defaults from the shift template. Changing these only affects <b>this date's</b> shift (and everyone assigned to it that day) — the recurring template is untouched, so this is safe to use for one-off business needs (e.g. GY starting early tonight).</p>
 
     <label>Employee</label>
     <input list="empDatalist" id="a_employee_input" placeholder="Type TM # or name…">
@@ -439,18 +443,22 @@ function renderGrid(branchId, dates) {
     dates.forEach(d => {
       const iso = isoDate(d);
       const shift = shiftsWeek.find(s => s.shift_date === iso && s.shift_label === t.shift_label);
+      const isOverride = shift && (shift.scheduled_time_in !== t.scheduled_time_in || shift.scheduled_time_out !== t.scheduled_time_out);
+      const overrideBadge = isOverride
+        ? `<div class="flags" style="color:var(--warn); margin-bottom:4px;">⚙ ${fmtTime(shift.scheduled_time_in)}–${fmtTime(shift.scheduled_time_out)} today</div>`
+        : "";
       const cellAssignments = shift ? assignmentsWeek.filter(a => a.shift_id === shift.id) : [];
       const chips = cellAssignments.map(a => {
         const flags = [a.double_pump ? "DP" : "", a.emergency_roster ? "ER" : ""].filter(Boolean).join(" · ");
         const emp = employees.find(x => x.id === a.employee_id);
         const borrowedTag = emp && emp.home_branch_id !== branchId ? ` <span class="flags">· from ${branchCode(emp.home_branch_id)}</span>` : "";
-        return `<div class="chip status-${a.status}" onclick='openAssignModal(${JSON.stringify(iso)}, ${JSON.stringify(t.shift_label)}, ${JSON.stringify(t)}, ${JSON.stringify(a)})'>
+        return `<div class="chip status-${a.status}" onclick='openAssignModal(${JSON.stringify(iso)}, ${JSON.stringify(t.shift_label)}, ${JSON.stringify(t)}, ${JSON.stringify(a)}, ${JSON.stringify(shift)})'>
           <span class="nm">${empLabel(a.employee_id)}</span>${borrowedTag}<br>
           <span class="pst">${postName(a.post_id)}${a.status !== 'scheduled' ? ' · ' + a.status : ''}</span>
           ${flags ? `<div class="flags">${flags}</div>` : ""}
         </div>`;
       }).join("");
-      row += `<td class="day-cell">${chips}<button class="add-cell-btn" onclick='openAssignModal(${JSON.stringify(iso)}, ${JSON.stringify(t.shift_label)}, ${JSON.stringify(t)}, null)'>+ Add</button></td>`;
+      row += `<td class="day-cell">${overrideBadge}${chips}<button class="add-cell-btn" onclick='openAssignModal(${JSON.stringify(iso)}, ${JSON.stringify(t.shift_label)}, ${JSON.stringify(t)}, null, ${JSON.stringify(shift)})'>+ Add</button></td>`;
     });
     row += "</tr>";
     return row;
@@ -460,14 +468,16 @@ function renderGrid(branchId, dates) {
 }
 
 // ---------- Assign modal ----------
-function openAssignModal(dateISO, shiftLabel, template, assignment) {
+function openAssignModal(dateISO, shiftLabel, template, assignment, existingShift) {
   const branchId = document.getElementById("branchSelect").value;
+  const effectiveTimeIn = existingShift ? existingShift.scheduled_time_in : template.scheduled_time_in;
+  const effectiveTimeOut = existingShift ? existingShift.scheduled_time_out : template.scheduled_time_out;
   document.getElementById("a_branch_id").value = branchId;
   document.getElementById("a_date").value = dateISO;
   document.getElementById("a_shift_label").value = shiftLabel;
-  document.getElementById("a_time_in").value = template.scheduled_time_in;
-  document.getElementById("a_time_out").value = template.scheduled_time_out;
-  document.getElementById("assignModalSub").textContent = `${branchCode(branchId)} · ${shiftLabel} (${fmtTime(template.scheduled_time_in)}–${fmtTime(template.scheduled_time_out)}) · ${dateISO}`;
+  document.getElementById("a_time_in").value = fmtTime(effectiveTimeIn);
+  document.getElementById("a_time_out").value = fmtTime(effectiveTimeOut);
+  document.getElementById("assignModalSub").textContent = `${branchCode(branchId)} · ${shiftLabel} template: ${fmtTime(template.scheduled_time_in)}–${fmtTime(template.scheduled_time_out)} · ${dateISO}`;
   document.getElementById("doubleBookWarning").style.display = "none";
 
   if (assignment) {
@@ -512,9 +522,22 @@ document.getElementById("a_employee_input").addEventListener("input", function (
 });
 
 // Ensures a `shifts` row exists for this branch+date+label, returns its id.
+// If one already exists and the admin edited the time in the modal, this
+// updates that shift's actual time for this date (shared by everyone
+// assigned to it that day) -- a one-off override, not a template change.
 async function getOrCreateShift(branchId, dateISO, shiftLabel, timeIn, timeOut) {
   let shift = shiftsWeek.find(s => s.branch_id === branchId && s.shift_date === dateISO && s.shift_label === shiftLabel);
-  if (shift) return shift.id;
+  if (shift) {
+    const changed = fmtTime(shift.scheduled_time_in) !== timeIn || fmtTime(shift.scheduled_time_out) !== timeOut;
+    if (changed) {
+      const { data, error } = await supabase.from("shifts")
+        .update({ scheduled_time_in: timeIn, scheduled_time_out: timeOut })
+        .eq("id", shift.id).select().single();
+      if (error) throw error;
+      Object.assign(shift, data);
+    }
+    return shift.id;
+  }
   const { data, error } = await supabase.from("shifts").insert({
     branch_id: branchId, shift_date: dateISO, shift_label: shiftLabel,
     scheduled_time_in: timeIn, scheduled_time_out: timeOut,
