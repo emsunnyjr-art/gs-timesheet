@@ -160,6 +160,11 @@ tr:hover { background:#25324a; }
     <label>Employee</label>
     <input list="empDatalist" id="a_employee_input" placeholder="Type TM # or name…">
     <datalist id="empDatalist"></datalist>
+    <label style="display:flex; align-items:center; gap:6px; margin-top:6px;">
+      <input type="checkbox" id="a_include_other_branches" style="width:auto; display:inline-block;" onchange="rebuildEmployeeDatalist()">
+      <span class="small" style="margin:0;">Pull a TM from another branch (defaults to this branch's own crew)</span>
+    </label>
+    <div id="doubleBookWarning" class="small" style="display:none; color:var(--warn); background:#f59e0b1a; border:1px solid var(--warn); border-radius:8px; padding:8px; margin-top:8px;"></div>
 
     <div class="row">
       <div><label>Post (for this shift)</label><select id="a_post_id"></select></div>
@@ -179,7 +184,8 @@ tr:hover { background:#25324a; }
         <select id="a_pump_assignment"><option value="">—</option><option>Pump 1</option><option>Pump 2</option></select>
       </div>
       <div><label>Reliever For (optional)</label>
-        <input list="empDatalist" id="a_reliever_for_input" placeholder="Who are they covering?">
+        <input list="allEmpDatalist" id="a_reliever_for_input" placeholder="Who are they covering?">
+        <datalist id="allEmpDatalist"></datalist>
       </div>
     </div>
     <div class="row">
@@ -349,8 +355,22 @@ async function loadEmployees() {
   const { data, error } = await supabase.from("employees").select("*").eq("status", "active").order("tm_number");
   if (error) { toast("Error loading employees: " + error.message); return; }
   employees = data || [];
+  const allDl = document.getElementById("allEmpDatalist");
+  allDl.innerHTML = employees.map(e => `<option value="${e.tm_number} — ${e.full_name || ''}">`).join("");
+}
+// Rebuilds the "Employee" datalist for the assign modal. Defaults to only
+// the branch currently being scheduled; checking "Pull a TM from another
+// branch" widens it to every active employee, tagging each with their home
+// branch so it's clear who's being borrowed.
+function rebuildEmployeeDatalist() {
+  const branchId = document.getElementById("a_branch_id").value;
+  const includeOthers = document.getElementById("a_include_other_branches").checked;
+  const list = includeOthers ? employees : employees.filter(e => e.home_branch_id === branchId);
   const dl = document.getElementById("empDatalist");
-  dl.innerHTML = employees.map(e => `<option value="${e.tm_number} — ${e.full_name || ''}">`).join("");
+  dl.innerHTML = list.map(e => {
+    const tag = e.home_branch_id !== branchId ? ` (${branchCode(e.home_branch_id)})` : "";
+    return `<option value="${e.tm_number} — ${e.full_name || ''}${tag}">`;
+  }).join("");
 }
 function findEmployeeByInput(text) {
   const tm = (text || "").split("—")[0].trim();
@@ -358,7 +378,11 @@ function findEmployeeByInput(text) {
 }
 function branchCode(id) { const b = branches.find(x => x.id === id); return b ? b.code : "—"; }
 function postName(id) { const p = posts.find(x => x.id === id); return p ? p.name : ""; }
-function empLabel(id) { const e = employees.find(x => x.id === id); return e ? `${e.full_name || e.tm_number} (${e.tm_number})` : "Unknown"; }
+function empLabel(id) {
+  const e = employees.find(x => x.id === id);
+  if (!e) return "Unknown";
+  return `${e.full_name || e.tm_number} (${e.tm_number})`;
+}
 
 // ---------- Week navigation ----------
 function renderWeekLabel() {
@@ -418,8 +442,10 @@ function renderGrid(branchId, dates) {
       const cellAssignments = shift ? assignmentsWeek.filter(a => a.shift_id === shift.id) : [];
       const chips = cellAssignments.map(a => {
         const flags = [a.double_pump ? "DP" : "", a.emergency_roster ? "ER" : ""].filter(Boolean).join(" · ");
+        const emp = employees.find(x => x.id === a.employee_id);
+        const borrowedTag = emp && emp.home_branch_id !== branchId ? ` <span class="flags">· from ${branchCode(emp.home_branch_id)}</span>` : "";
         return `<div class="chip status-${a.status}" onclick='openAssignModal(${JSON.stringify(iso)}, ${JSON.stringify(t.shift_label)}, ${JSON.stringify(t)}, ${JSON.stringify(a)})'>
-          <span class="nm">${empLabel(a.employee_id)}</span><br>
+          <span class="nm">${empLabel(a.employee_id)}</span>${borrowedTag}<br>
           <span class="pst">${postName(a.post_id)}${a.status !== 'scheduled' ? ' · ' + a.status : ''}</span>
           ${flags ? `<div class="flags">${flags}</div>` : ""}
         </div>`;
@@ -442,11 +468,16 @@ function openAssignModal(dateISO, shiftLabel, template, assignment) {
   document.getElementById("a_time_in").value = template.scheduled_time_in;
   document.getElementById("a_time_out").value = template.scheduled_time_out;
   document.getElementById("assignModalSub").textContent = `${branchCode(branchId)} · ${shiftLabel} (${fmtTime(template.scheduled_time_in)}–${fmtTime(template.scheduled_time_out)}) · ${dateISO}`;
+  document.getElementById("doubleBookWarning").style.display = "none";
 
   if (assignment) {
     document.getElementById("assignModalTitle").textContent = "Edit Assignment";
     document.getElementById("a_assignment_id").value = assignment.id;
     const emp = employees.find(e => e.id === assignment.employee_id);
+    // If this assignment was already pulling someone from another branch,
+    // start with the toggle on so they still show up in the datalist.
+    document.getElementById("a_include_other_branches").checked = !!(emp && emp.home_branch_id !== branchId);
+    rebuildEmployeeDatalist();
     document.getElementById("a_employee_input").value = emp ? `${emp.tm_number} — ${emp.full_name || ''}` : "";
     document.getElementById("a_post_id").value = assignment.post_id || "";
     document.getElementById("a_status").value = assignment.status || "scheduled";
@@ -460,6 +491,8 @@ function openAssignModal(dateISO, shiftLabel, template, assignment) {
   } else {
     document.getElementById("assignModalTitle").textContent = "Assign Employee";
     document.getElementById("a_assignment_id").value = "";
+    document.getElementById("a_include_other_branches").checked = false;
+    rebuildEmployeeDatalist();
     document.getElementById("a_employee_input").value = "";
     document.getElementById("a_post_id").value = "";
     document.getElementById("a_status").value = "scheduled";
@@ -491,6 +524,48 @@ async function getOrCreateShift(branchId, dateISO, shiftLabel, timeIn, timeOut) 
   return data.id;
 }
 
+// ---------- Double-booking cross-check ----------
+// Anchors a shift's time-in/out to an actual date range, rolling the end
+// into the next day for overnight shifts (e.g. GY 20:02 -> 04:02).
+function toAbsRange(dateISO, timeIn, timeOut) {
+  const start = new Date(`${dateISO}T${timeIn}`);
+  let end = new Date(`${dateISO}T${timeOut}`);
+  if (end <= start) end.setDate(end.getDate() + 1);
+  return { start, end };
+}
+
+// Looks at every branch (not just the one being scheduled) for existing
+// roster_assignments for this employee within a day on either side, and
+// flags any whose time range overlaps the shift being assigned. Fails open
+// (returns no conflicts) on a lookup error rather than blocking the save.
+async function findDoubleBookingConflicts(employeeId, dateISO, timeIn, timeOut, excludeAssignmentId) {
+  const d = new Date(dateISO + "T00:00:00");
+  const prev = new Date(d); prev.setDate(prev.getDate() - 1);
+  const next = new Date(d); next.setDate(next.getDate() + 1);
+
+  const { data, error } = await supabase
+    .from("roster_assignments")
+    .select("id, branch_id, status, shifts(shift_date, shift_label, scheduled_time_in, scheduled_time_out)")
+    .eq("employee_id", employeeId)
+    .gte("assignment_date", isoDate(prev))
+    .lte("assignment_date", isoDate(next))
+    .neq("status", "cancelled");
+  if (error) { console.error("Double-booking check failed:", error); return []; }
+
+  const target = toAbsRange(dateISO, timeIn, timeOut);
+  const conflicts = [];
+  for (const row of (data || [])) {
+    if (excludeAssignmentId && row.id === excludeAssignmentId) continue;
+    const s = row.shifts;
+    if (!s) continue;
+    const other = toAbsRange(s.shift_date, s.scheduled_time_in, s.scheduled_time_out);
+    if (target.start < other.end && other.start < target.end) {
+      conflicts.push(`${branchCode(row.branch_id)} · ${s.shift_label} (${fmtTime(s.scheduled_time_in)}–${fmtTime(s.scheduled_time_out)}) on ${s.shift_date}`);
+    }
+  }
+  return conflicts;
+}
+
 async function saveAssignment() {
   const empInput = document.getElementById("a_employee_input").value;
   const emp = findEmployeeByInput(empInput);
@@ -504,6 +579,21 @@ async function saveAssignment() {
   const shiftLabel = document.getElementById("a_shift_label").value;
   const timeIn = document.getElementById("a_time_in").value;
   const timeOut = document.getElementById("a_time_out").value;
+  const existingId = document.getElementById("a_assignment_id").value || null;
+  const status = document.getElementById("a_status").value;
+
+  const warnEl = document.getElementById("doubleBookWarning");
+  warnEl.style.display = "none";
+  if (status !== "cancelled") {
+    const conflicts = await findDoubleBookingConflicts(emp.id, dateISO, timeIn, timeOut, existingId);
+    if (conflicts.length) {
+      const label = emp.full_name || emp.tm_number;
+      warnEl.textContent = `⚠ ${label} is already scheduled: ${conflicts.join("; ")}.`;
+      warnEl.style.display = "block";
+      const proceed = confirm(`${label} is already scheduled during this time:\n${conflicts.join("\n")}\n\nAssign them here anyway?`);
+      if (!proceed) return;
+    }
+  }
 
   let shiftId;
   try {
@@ -525,7 +615,6 @@ async function saveAssignment() {
     updated_at: new Date().toISOString(),
   };
 
-  const existingId = document.getElementById("a_assignment_id").value;
   const { error } = existingId
     ? await supabase.from("roster_assignments").update(payload).eq("id", existingId)
     : await supabase.from("roster_assignments").insert(payload);
