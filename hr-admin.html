@@ -176,19 +176,7 @@ tr:hover { background:#25324a; }
     </div>
     <label>Full Name (auto-filled, editable)</label><input id="f_full_name">
     <div class="row">
-      <div>
-        <label>Date of Birth</label>
-        <div class="row" style="gap:6px;">
-          <div style="flex:1;">
-            <input type="text" id="f_date_of_birth_display" placeholder="__/__/____" maxlength="10" inputmode="numeric" autocomplete="off" style="font-family:monospace; letter-spacing:1px;">
-          </div>
-          <div style="flex:0;">
-            <button type="button" class="secondary" onclick="openDobPicker()">📅</button>
-          </div>
-        </div>
-        <input type="date" id="f_date_of_birth_picker" style="position:absolute; opacity:0; width:0; height:0; pointer-events:none;">
-        <input type="hidden" id="f_date_of_birth">
-      </div>
+      <div><label>Date of Birth</label><input type="date" id="f_date_of_birth"></div>
       <div><label>Marital Status</label>
         <select id="f_marital_status"><option>Single</option><option>Married</option><option>Widowed</option><option>Separated</option></select>
       </div>
@@ -479,41 +467,6 @@ async function quickToggleStatus(id) {
   await loadEmployees();
 }
 
-// ---------- Date of Birth mask: __/__/____ with a calendar fallback ----------
-document.getElementById("f_date_of_birth_display").addEventListener("input", () => {
-  const display = document.getElementById("f_date_of_birth_display");
-  const hidden = document.getElementById("f_date_of_birth");
-  const picker = document.getElementById("f_date_of_birth_picker");
-
-  let digits = display.value.replace(/\D/g, "").slice(0, 8);
-  let formatted = digits.slice(0, 2);
-  if (digits.length >= 3) formatted += "/" + digits.slice(2, 4);
-  if (digits.length >= 5) formatted += "/" + digits.slice(4, 8);
-  display.value = formatted;
-
-  if (digits.length === 8) {
-    const mm = digits.slice(0, 2), dd = digits.slice(2, 4), yyyy = digits.slice(4, 8);
-    hidden.value = `${yyyy}-${mm}-${dd}`;
-    picker.value = hidden.value;
-  } else {
-    hidden.value = "";
-  }
-});
-
-document.getElementById("f_date_of_birth_picker").addEventListener("change", () => {
-  const picker = document.getElementById("f_date_of_birth_picker");
-  if (!picker.value) return;
-  const [yyyy, mm, dd] = picker.value.split("-");
-  document.getElementById("f_date_of_birth_display").value = `${mm}/${dd}/${yyyy}`;
-  document.getElementById("f_date_of_birth").value = picker.value;
-});
-
-function openDobPicker() {
-  const picker = document.getElementById("f_date_of_birth_picker");
-  if (picker.showPicker) picker.showPicker();
-  else picker.click();
-}
-
 function suggestNextTmNumber() {
   let max = 0;
   for (const e of employees) {
@@ -542,8 +495,6 @@ function openEmployeeModal(id) {
   directPhotoUrl = null;
   document.getElementById("f_photo_url_input").value = "";
   document.getElementById("capturedPreview").style.display = "none";
-  document.getElementById("f_date_of_birth_display").value = "";
-  document.getElementById("f_date_of_birth_picker").value = "";
   if (!id) {
     document.getElementById("f_tm_number").value = suggestNextTmNumber();
   }
@@ -559,11 +510,6 @@ function openEmployeeModal(id) {
     document.getElementById("f_middle_name").value = e.middle_name || "";
     document.getElementById("f_full_name").value = e.full_name || "";
     document.getElementById("f_date_of_birth").value = e.date_of_birth || "";
-    if (e.date_of_birth) {
-      const [yyyy, mm, dd] = e.date_of_birth.split("-");
-      document.getElementById("f_date_of_birth_display").value = `${mm}/${dd}/${yyyy}`;
-      document.getElementById("f_date_of_birth_picker").value = e.date_of_birth;
-    }
     document.getElementById("f_marital_status").value = e.marital_status || "Single";
     document.getElementById("f_address").value = e.address || "";
     document.getElementById("f_tel_number").value = e.tel_number || "";
