@@ -76,20 +76,31 @@ tr:hover { background:#25324a; }
 
 <div id="pinScreen" class="pin-screen">
   <h1>GS Roster</h1>
-  <p class="small">Weekly Scheduling — Admin access only</p>
-  <input type="password" id="pinInput" placeholder="Enter PIN" style="text-align:center; font-size:18px; letter-spacing:4px;">
-  <button style="width:100%; margin-top:10px;" onclick="checkPin()">Sign in</button>
+  <p class="small">Weekly Scheduling — sign in with your manager account</p>
+  <label style="margin-top:14px;">Email</label>
+  <input type="email" id="loginEmail" placeholder="you@example.com">
+  <label>Password</label>
+  <input type="password" id="loginPassword" placeholder="Password">
+  <button style="width:100%; margin-top:10px;" onclick="doLogin()">Sign in</button>
   <div id="pinError" class="small" style="color:var(--danger); margin-top:8px;"></div>
 </div>
 
 <div id="app" class="wrap" style="display:none;">
   <div class="nav-links"><a href="hr-admin.html">HR Admin</a><a href="timesheet-admin.html">Timesheet Admin</a><a href="roster-admin.html">Roster</a></div>
-  <h1>GS Roster — Weekly Scheduling</h1>
-  <p class="small" style="margin-bottom:16px;">Assigns crew to shifts. Timesheet reads its crew list from here. Uses the same admin PIN as HR/Timesheet.</p>
+  <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+    <div>
+      <h1>GS Roster — Weekly Scheduling</h1>
+      <p class="small" style="margin-bottom:16px;">Assigns crew to shifts. Timesheet reads its crew list from here.</p>
+    </div>
+    <div style="text-align:right;">
+      <div class="small" id="whoAmI"></div>
+      <button class="secondary small-btn" onclick="doLogout()">Sign out</button>
+    </div>
+  </div>
 
   <div class="tabs">
     <div class="tab active" data-tab="weekly">Weekly Roster</div>
-    <div class="tab" data-tab="templates">Shift Templates</div>
+    <div class="tab" id="templatesTab" data-tab="templates">Shift Templates</div>
   </div>
 
   <!-- ===================== WEEKLY ROSTER ===================== -->
@@ -223,26 +234,49 @@ let templates = [];       // shift_templates for the currently selected branch
 let shiftsWeek = [];      // shifts rows covering the current branch+week
 let assignmentsWeek = []; // roster_assignments rows covering the current branch+week
 let weekStart = null;     // Date, Monday of the displayed week
+let myRoles = [];         // this user's user_branch_roles rows
+let isOwner = false;      // true if any role row has branch_id = null
+let myBranchIds = [];     // branch ids this user can manage (ignored if isOwner)
 
-// ---------- PIN gate (shares the SAME key as hr-admin.html / timesheet-admin.html: 'admin_pin') ----------
-async function checkPin() {
-  const val = document.getElementById("pinInput").value.trim();
-  const { data, error } = await supabase.rpc("verify_admin_pin", { input_pin: val });
-  if (error) { document.getElementById("pinError").textContent = "Could not verify PIN: " + error.message; return; }
-  if (data === true) {
-    sessionStorage.setItem("roster_admin_ok", "1");
-    document.getElementById("pinScreen").style.display = "none";
-    document.getElementById("app").style.display = "block";
-    initApp();
-  } else {
-    document.getElementById("pinError").textContent = "Incorrect PIN.";
-  }
+// ---------- Auth (real Supabase Auth accounts, scoped per branch via user_branch_roles) ----------
+async function doLogin() {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  document.getElementById("pinError").textContent = "";
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) { document.getElementById("pinError").textContent = "Sign in failed: " + error.message; return; }
+  await afterLogin(data.user);
 }
-if (sessionStorage.getItem("roster_admin_ok") === "1") {
+
+async function doLogout() {
+  await supabase.auth.signOut();
+  location.reload();
+}
+
+async function afterLogin(user) {
+  const { data: roles, error } = await supabase.from("user_branch_roles").select("*").eq("user_id", user.id);
+  if (error) { document.getElementById("pinError").textContent = "Could not load your branch access: " + error.message; return; }
+  myRoles = roles || [];
+  if (!myRoles.length) {
+    document.getElementById("pinError").textContent = "This account has no branch access configured yet. Ask an admin to add you.";
+    await supabase.auth.signOut();
+    return;
+  }
+  isOwner = myRoles.some(r => r.branch_id === null);
+  myBranchIds = myRoles.filter(r => r.branch_id !== null).map(r => r.branch_id);
+  document.getElementById("whoAmI").textContent = `${user.email} · ${isOwner ? "All branches" : "Branch access: " + myRoles.length}`;
+  document.getElementById("templatesTab").style.display = isOwner ? "" : "none";
   document.getElementById("pinScreen").style.display = "none";
   document.getElementById("app").style.display = "block";
-  window.addEventListener("DOMContentLoaded", initApp);
+  initApp();
 }
+
+(async function checkExistingSession() {
+  const { data } = await supabase.auth.getSession();
+  if (data && data.session && data.session.user) {
+    await afterLogin(data.session.user);
+  }
+})();
 
 // ---------- Tabs ----------
 document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => {
@@ -296,11 +330,13 @@ async function loadBranches() {
   const { data, error } = await supabase.from("branches").select("*").order("code");
   if (error) { toast("Error loading branches: " + error.message); return; }
   branches = data || [];
+  const visibleBranches = isOwner ? branches : branches.filter(b => myBranchIds.includes(b.id));
   const sel = document.getElementById("branchSelect");
-  sel.innerHTML = branches.map(b => `<option value="${b.id}">${b.code} — ${b.name}</option>`).join("");
+  sel.innerHTML = visibleBranches.map(b => `<option value="${b.id}">${b.code} — ${b.name}</option>`).join("");
   const tSel = document.getElementById("t_branch_id");
   tSel.innerHTML = branches.map(b => `<option value="${b.id}">${b.code} — ${b.name}</option>`).join("");
-  const gs1 = branches.find(b => b.code === "GS1");
+  if (!isOwner && visibleBranches.length === 1) sel.disabled = true;
+  const gs1 = visibleBranches.find(b => b.code === "GS1") || visibleBranches[0];
   if (gs1) sel.value = gs1.id;
 }
 async function loadPosts() {
