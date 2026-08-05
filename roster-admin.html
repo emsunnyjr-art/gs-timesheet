@@ -227,9 +227,9 @@ let weekStart = null;     // Date, Monday of the displayed week
 // ---------- PIN gate (shares the SAME key as hr-admin.html / timesheet-admin.html: 'admin_pin') ----------
 async function checkPin() {
   const val = document.getElementById("pinInput").value.trim();
-  const { data, error } = await supabase.from("app_settings").select("value").eq("key", "admin_pin").single();
+  const { data, error } = await supabase.rpc("verify_admin_pin", { input_pin: val });
   if (error) { document.getElementById("pinError").textContent = "Could not verify PIN: " + error.message; return; }
-  if (data && data.value === val) {
+  if (data === true) {
     sessionStorage.setItem("roster_admin_ok", "1");
     document.getElementById("pinScreen").style.display = "none";
     document.getElementById("app").style.display = "block";
