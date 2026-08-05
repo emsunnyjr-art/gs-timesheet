@@ -708,9 +708,8 @@ async function saveShiftTemplate() {
   const pin = prompt("Enter Admin PIN to save this shift schedule:");
   if (pin === null) return; // cancelled — no change made
 
-  const { data: setting, error: pinErr } = await supabase
-    .from("app_settings").select("value").eq("key", "admin_pin").single();
-  if (pinErr || !setting || pin !== setting.value) {
+  const { data: pinOk, error: pinErr } = await supabase.rpc("verify_admin_pin", { input_pin: pin });
+  if (pinErr || pinOk !== true) {
     msg.textContent = "Incorrect admin PIN — not saved.";
     msg.className = "msg err";
     return;
@@ -878,9 +877,8 @@ async function handlePhotoReplace(employeeId, file) {
   const pin = prompt("Enter Admin PIN to replace this employee's profile photo:");
   if (pin === null) return; // cancelled — no change made
 
-  const { data: setting, error: pinErr } = await supabase
-    .from("app_settings").select("value").eq("key", "admin_pin").single();
-  if (pinErr || !setting || pin !== setting.value) {
+  const { data: pinOk, error: pinErr } = await supabase.rpc("verify_admin_pin", { input_pin: pin });
+  if (pinErr || pinOk !== true) {
     msg.textContent = "Incorrect admin PIN — photo not changed.";
     msg.className = "msg err";
     return;
