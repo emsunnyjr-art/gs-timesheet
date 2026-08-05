@@ -136,8 +136,11 @@ tr:hover { background:#25324a; cursor:pointer; }
 
     <div class="photo-note" id="photoNote" style="display:none;">
       <img id="photoPreview" class="avatar" style="width:48px;height:48px;">
-      <span class="small">Photo is managed in Timesheet Admin (Employees tab → Photo button), not here — keeps one audit trail for photo changes.</span>
+      <span class="small">Same photo storage as Timesheet Admin — replacing it here updates it there too.</span>
     </div>
+    <label>Profile Photo</label>
+    <input type="file" accept="image/*" id="f_photo_file">
+    <p class="small">Requires admin PIN + your name, logged to the audit trail — same as replacing a photo in Timesheet Admin.</p>
 
     <div class="row">
       <div><label>TM Number *</label><input id="f_tm_number"></div>
@@ -387,15 +390,38 @@ function renderEmployees() {
     return true;
   });
   document.getElementById("empTableBody").innerHTML = filtered.map(e => `
-    <tr onclick="openEmployeeModal('${e.id}')">
-      <td><img class="avatar" src="${e.photo_url || ''}" onerror="this.style.visibility='hidden'"></td>
-      <td>${e.tm_number || ""}</td>
-      <td>${e.full_name || ""}</td>
-      <td>${postLabel(e.post_id)}</td>
-      <td>${branchLabel(e.home_branch_id)}</td>
-      <td>${e.daily_rate != null ? "₱" + e.daily_rate : ""}</td>
-      <td><span class="badge ${e.status === 'active' ? 'active' : 'inactive'}">${e.status || "—"}</span></td>
+    <tr>
+      <td onclick="openEmployeeModal('${e.id}')" style="cursor:pointer;"><img class="avatar" src="${e.photo_url || ''}" onerror="this.style.visibility='hidden'"></td>
+      <td onclick="openEmployeeModal('${e.id}')" style="cursor:pointer;">${e.tm_number || ""}</td>
+      <td onclick="openEmployeeModal('${e.id}')" style="cursor:pointer;">${e.full_name || ""}</td>
+      <td onclick="openEmployeeModal('${e.id}')" style="cursor:pointer;">${postLabel(e.post_id)}</td>
+      <td onclick="openEmployeeModal('${e.id}')" style="cursor:pointer;">${branchLabel(e.home_branch_id)}</td>
+      <td onclick="openEmployeeModal('${e.id}')" style="cursor:pointer;">${e.daily_rate != null ? "₱" + e.daily_rate : ""}</td>
+      <td>
+        <span class="badge ${e.status === 'active' ? 'active' : 'inactive'}" style="cursor:pointer;" onclick="quickToggleStatus('${e.id}')" title="Click to toggle">${e.status || "—"}</span>
+      </td>
     </tr>`).join("") || `<tr><td colspan="7" class="small">No employees match.</td></tr>`;
+}
+
+async function quickToggleStatus(id) {
+  const e = employees.find(x => x.id === id);
+  if (!e) return;
+  const newStatus = e.status === "active" ? "inactive" : "active";
+  let reason = null;
+  if (newStatus === "inactive") {
+    reason = prompt(`Mark ${e.full_name || e.tm_number} as inactive — reason (optional):`);
+    if (reason === null) return; // cancelled
+  } else {
+    if (!confirm(`Mark ${e.full_name || e.tm_number} as active again?`)) return;
+  }
+  const { error } = await supabase.from("employees").update({ status: newStatus, updated_at: new Date().toISOString() }).eq("id", id);
+  if (error) { toast("Error: " + error.message); return; }
+  await supabase.from("employee_rate_history").insert({
+    employee_id: id, post_id: e.post_id, branch_id: e.home_branch_id, daily_rate: e.daily_rate,
+    status: newStatus, reason_left: reason || null, effective_date: new Date().toISOString().slice(0,10),
+  });
+  toast(`${e.full_name || e.tm_number} marked ${newStatus}.`);
+  await loadEmployees();
 }
 
 let currentEmpId = null;
@@ -410,6 +436,7 @@ function openEmployeeModal(id) {
   fields.forEach(f => { const el = document.getElementById("f_" + f); if (el) el.value = ""; });
   document.getElementById("f_status").value = "active";
   document.getElementById("photoNote").style.display = "none";
+  document.getElementById("f_photo_file").value = "";
 
   if (id) {
     const e = employees.find(x => x.id === id);
@@ -458,6 +485,39 @@ function openEmployeeModal(id) {
     }
   });
 });
+
+async function uploadPhotoIfSelected(employeeId, empName) {
+  const fileInput = document.getElementById("f_photo_file");
+  const file = fileInput.files[0];
+  if (!file) return; // no new photo selected, nothing to do
+
+  const pin = prompt("Enter Admin PIN to replace this employee's profile photo:");
+  if (pin === null) return; // cancelled
+  const { data: setting, error: pinErr } = await supabase.from("app_settings").select("value").eq("key", "admin_pin").single();
+  if (pinErr || !setting || pin !== setting.value) {
+    toast("Incorrect admin PIN — photo not changed.");
+    return;
+  }
+  const adminName = (prompt("Your name (for the audit log):") || "").trim() || "Unknown admin";
+
+  const emp = employees.find(e => e.id === employeeId);
+  const oldUrl = emp ? emp.photo_url : null;
+  const path = `employees/${employeeId}.jpg`;
+
+  const { error: upErr } = await supabase.storage.from("photos").upload(path, file, { upsert: true });
+  if (upErr) { toast("Photo upload failed: " + upErr.message); return; }
+
+  const newUrl = supabase.storage.from("photos").getPublicUrl(path).data.publicUrl + `?t=${Date.now()}`;
+  const { error: updErr } = await supabase.from("employees").update({
+    photo_url: newUrl, photo_updated_at: new Date().toISOString(), photo_updated_by: adminName
+  }).eq("id", employeeId);
+  if (updErr) { toast("Photo uploaded but employee update failed: " + updErr.message); return; }
+
+  await supabase.from("employee_photo_audit").insert({
+    employee_id: employeeId, old_photo_url: oldUrl, new_photo_url: newUrl, changed_by: adminName
+  });
+  toast(`Photo updated for ${empName || "employee"} by ${adminName}.`);
+}
 
 async function saveEmployee() {
   const tm_number = document.getElementById("f_tm_number").value.trim();
@@ -520,6 +580,7 @@ async function saveEmployee() {
 
   closeModal("empModalBg");
   toast("Employee saved.");
+  await uploadPhotoIfSelected(empId, payload.full_name);
   await loadEmployees();
 }
 
