@@ -23,7 +23,7 @@ button:disabled { opacity:0.4; cursor:not-allowed; }
 table { width:100%; border-collapse:collapse; font-size:13px; }
 th, td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--border); }
 th { color:var(--muted); font-weight:600; }
-tr:hover { background:#25324a; cursor:pointer; }
+tr:hover { background:#25324a; }
 .badge { display:inline-block; padding:2px 8px; border-radius:20px; font-size:11px; font-weight:600; }
 .badge.active { background:#052e16; color:var(--accent); }
 .badge.inactive { background:#450a0a; color:var(--danger); }
@@ -139,11 +139,23 @@ tr:hover { background:#25324a; cursor:pointer; }
       <span class="small">Same photo storage as Timesheet Admin — replacing it here updates it there too.</span>
     </div>
     <label>Profile Photo</label>
-    <input type="file" accept="image/*" id="f_photo_file">
+    <div class="row">
+      <div><input type="file" accept="image/*" id="f_photo_file" onchange="onPhotoFileChosen()"></div>
+      <div style="flex:0;"><button type="button" class="secondary" onclick="openCamera()">📷 Take Photo</button></div>
+    </div>
+    <div id="cameraBox" style="display:none; margin-top:8px;">
+      <video id="cameraVideo" autoplay playsinline style="width:100%; max-width:320px; border-radius:8px; background:#000;"></video>
+      <div class="row" style="margin-top:8px;">
+        <button type="button" onclick="capturePhoto()">Capture</button>
+        <button type="button" class="secondary" onclick="closeCamera()">Cancel</button>
+      </div>
+    </div>
+    <canvas id="cameraCanvas" style="display:none;"></canvas>
+    <img id="capturedPreview" style="display:none; margin-top:8px; width:80px; height:80px; border-radius:8px; object-fit:cover;">
     <p class="small">Requires admin PIN + your name, logged to the audit trail — same as replacing a photo in Timesheet Admin.</p>
 
     <div class="row">
-      <div><label>TM Number *</label><input id="f_tm_number"></div>
+      <div><label>TM Number * <span class="small">(auto-suggested, editable)</span></label><input id="f_tm_number"></div>
       <div><label>Status</label>
         <select id="f_status"><option value="active">Active</option><option value="inactive">Not Active</option></select>
       </div>
@@ -318,11 +330,23 @@ async function loadBranches() {
 }
 function renderBranchTable() {
   document.getElementById("branchTableBody").innerHTML = branches.map(b =>
-    `<tr><td>${b.code}</td><td>${b.name||""}</td><td>${b.company_name||""}</td><td>${b.address||""}</td><td>${b.email||""}</td></tr>`
+    `<tr onclick="openBranchModal('${b.id}')"><td>${b.code}</td><td>${b.name||""}</td><td>${b.company_name||""}</td><td>${b.address||""}</td><td>${b.email||""}</td></tr>`
   ).join("") || `<tr><td colspan="5" class="small">No branches yet.</td></tr>`;
 }
-function openBranchModal() {
-  ["b_code","b_name","b_company_name","b_address","b_email"].forEach(id => document.getElementById(id).value = "");
+let currentBranchId = null;
+function openBranchModal(id) {
+  currentBranchId = id || null;
+  document.querySelector("#branchModalBg h2").textContent = id ? "Edit Branch" : "Add Branch";
+  if (id) {
+    const b = branches.find(x => x.id === id);
+    document.getElementById("b_code").value = b.code || "";
+    document.getElementById("b_name").value = b.name || "";
+    document.getElementById("b_company_name").value = b.company_name || "";
+    document.getElementById("b_address").value = b.address || "";
+    document.getElementById("b_email").value = b.email || "";
+  } else {
+    ["b_code","b_name","b_company_name","b_address","b_email"].forEach(id => document.getElementById(id).value = "");
+  }
   document.getElementById("branchModalBg").style.display = "flex";
 }
 async function saveBranch() {
@@ -334,7 +358,9 @@ async function saveBranch() {
     email: document.getElementById("b_email").value.trim(),
   };
   if (!payload.code) { toast("Branch code is required."); return; }
-  const { error } = await supabase.from("branches").insert(payload);
+  const { error } = currentBranchId
+    ? await supabase.from("branches").update(payload).eq("id", currentBranchId)
+    : await supabase.from("branches").insert(payload);
   if (error) { toast("Error: " + error.message); return; }
   closeModal("branchModalBg");
   toast("Branch added.");
@@ -352,20 +378,32 @@ async function loadPosts() {
 }
 function renderPostTable() {
   document.getElementById("postTableBody").innerHTML = posts.map(p =>
-    `<tr><td>${p.name}</td><td>${p.active ? "Yes" : "No"}</td></tr>`
+    `<tr><td onclick="openPostModal('${p.id}')" style="cursor:pointer;">${p.name}</td><td><span class="badge ${p.active ? 'active' : 'inactive'}" style="cursor:pointer;" onclick="togglePostActive('${p.id}')">${p.active ? "Yes" : "No"}</span></td></tr>`
   ).join("") || `<tr><td colspan="2" class="small">No posts yet.</td></tr>`;
 }
-function openPostModal() {
-  document.getElementById("p_name").value = "";
+async function togglePostActive(id) {
+  const p = posts.find(x => x.id === id);
+  if (!p) return;
+  const { error } = await supabase.from("posts").update({ active: !p.active }).eq("id", id);
+  if (error) { toast("Error: " + error.message); return; }
+  await loadPosts();
+}
+let currentPostId = null;
+function openPostModal(id) {
+  currentPostId = id || null;
+  document.querySelector("#postModalBg h2").textContent = id ? "Edit Post" : "Add Post";
+  document.getElementById("p_name").value = id ? (posts.find(x => x.id === id)?.name || "") : "";
   document.getElementById("postModalBg").style.display = "flex";
 }
 async function savePost() {
   const name = document.getElementById("p_name").value.trim();
   if (!name) { toast("Post name is required."); return; }
-  const { error } = await supabase.from("posts").insert({ name });
+  const { error } = currentPostId
+    ? await supabase.from("posts").update({ name }).eq("id", currentPostId)
+    : await supabase.from("posts").insert({ name, active: true });
   if (error) { toast("Error: " + error.message); return; }
   closeModal("postModalBg");
-  toast("Post added.");
+  toast("Post saved.");
   await loadPosts();
 }
 
@@ -424,6 +462,17 @@ async function quickToggleStatus(id) {
   await loadEmployees();
 }
 
+function suggestNextTmNumber() {
+  let max = 0;
+  for (const e of employees) {
+    const n = parseInt(e.tm_number, 10);
+    if (!isNaN(n) && n > max) max = n;
+  }
+  const next = max + 1;
+  // Matches your existing convention: 001–099 are 3-digit, 100+ are 4-digit with a leading zero
+  return next < 100 ? String(next).padStart(3, "0") : String(next).padStart(4, "0");
+}
+
 let currentEmpId = null;
 function openEmployeeModal(id) {
   currentEmpId = id || null;
@@ -437,6 +486,11 @@ function openEmployeeModal(id) {
   document.getElementById("f_status").value = "active";
   document.getElementById("photoNote").style.display = "none";
   document.getElementById("f_photo_file").value = "";
+  capturedPhotoBlob = null;
+  document.getElementById("capturedPreview").style.display = "none";
+  if (!id) {
+    document.getElementById("f_tm_number").value = suggestNextTmNumber();
+  }
 
   if (id) {
     const e = employees.find(x => x.id === id);
@@ -486,9 +540,53 @@ function openEmployeeModal(id) {
   });
 });
 
+let cameraStream = null;
+let capturedPhotoBlob = null;
+
+function onPhotoFileChosen() {
+  capturedPhotoBlob = null; // manual file pick overrides any camera capture
+  document.getElementById("capturedPreview").style.display = "none";
+}
+
+async function openCamera() {
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+  } catch (err) {
+    try {
+      cameraStream = await navigator.mediaDevices.getUserMedia({ video: true }); // fallback: any available camera (typical on desktop)
+    } catch (err2) {
+      toast("Could not access camera: " + err2.message);
+      return;
+    }
+  }
+  document.getElementById("cameraVideo").srcObject = cameraStream;
+  document.getElementById("cameraBox").style.display = "block";
+}
+
+function closeCamera() {
+  if (cameraStream) { cameraStream.getTracks().forEach(t => t.stop()); cameraStream = null; }
+  document.getElementById("cameraBox").style.display = "none";
+}
+
+function capturePhoto() {
+  const video = document.getElementById("cameraVideo");
+  const canvas = document.getElementById("cameraCanvas");
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext("2d").drawImage(video, 0, 0);
+  canvas.toBlob(blob => {
+    capturedPhotoBlob = blob;
+    document.getElementById("f_photo_file").value = ""; // camera capture overrides any manual file pick
+    const preview = document.getElementById("capturedPreview");
+    preview.src = URL.createObjectURL(blob);
+    preview.style.display = "inline-block";
+  }, "image/jpeg", 0.9);
+  closeCamera();
+}
+
 async function uploadPhotoIfSelected(employeeId, empName) {
   const fileInput = document.getElementById("f_photo_file");
-  const file = fileInput.files[0];
+  const file = capturedPhotoBlob || fileInput.files[0];
   if (!file) return; // no new photo selected, nothing to do
 
   const pin = prompt("Enter Admin PIN to replace this employee's profile photo:");
