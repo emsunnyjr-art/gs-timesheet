@@ -280,9 +280,9 @@ let employees = [];
 // ---------- PIN gate (shares the SAME key as timesheet-admin.html: 'admin_pin') ----------
 async function checkPin() {
   const val = document.getElementById("pinInput").value.trim();
-  const { data, error } = await supabase.from("app_settings").select("value").eq("key", "admin_pin").single();
+  const { data, error } = await supabase.rpc("verify_admin_pin", { input_pin: val });
   if (error) { document.getElementById("pinError").textContent = "Could not verify PIN: " + error.message; return; }
-  if (data && data.value === val) {
+  if (data === true) {
     sessionStorage.setItem("hr_admin_ok", "1");
     document.getElementById("pinScreen").style.display = "none";
     document.getElementById("app").style.display = "block";
@@ -612,8 +612,8 @@ async function uploadPhotoIfSelected(employeeId, empName) {
 
   const pin = prompt("Enter Admin PIN to replace this employee's profile photo:");
   if (pin === null) return; // cancelled
-  const { data: setting, error: pinErr } = await supabase.from("app_settings").select("value").eq("key", "admin_pin").single();
-  if (pinErr || !setting || pin !== setting.value) {
+  const { data: pinOk, error: pinErr } = await supabase.rpc("verify_admin_pin", { input_pin: pin });
+  if (pinErr || pinOk !== true) {
     toast("Incorrect admin PIN — photo not changed.");
     return;
   }
