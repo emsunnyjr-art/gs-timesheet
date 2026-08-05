@@ -133,7 +133,7 @@ window.addEventListener("offline", updateNetStatus);
 
 // ---------- Load employees & branches ----------
 let allEmployees = [];
-let activeAssignments = []; // [{employee_id, branch_id}] for today's date
+let activeAssignments = []; // today's roster_assignments rows: [{employee_id, branch_id, shift_id, post_id, status, double_pump, emergency_roster}]
 
 async function loadDropdowns() {
   const empSelect = document.getElementById("employeeSelect");
@@ -150,10 +150,17 @@ async function loadDropdowns() {
     if (brErr) throw brErr;
     branchSelect.innerHTML = branches.map(b => `<option value="${b.id}">${b.code} — ${b.name}</option>`).join("");
 
-    const { data: assignments } = await supabase
-      .from("assignments").select("employee_id, branch_id, start_date, end_date")
-      .lte("start_date", today);
-    activeAssignments = (assignments || []).filter(a => !a.end_date || a.end_date >= today);
+    // Crew list now comes from Roster (roster_assignments), scoped to today.
+    // 'cancelled' assignments don't count as being on the roster; every other
+    // status (scheduled/confirmed/reliever/swapped/no_show) still does, since
+    // all of those mean someone was expected to show up today.
+    const { data: assignments, error: raErr } = await supabase
+      .from("roster_assignments")
+      .select("employee_id, branch_id, shift_id, post_id, status, double_pump, emergency_roster")
+      .eq("assignment_date", today)
+      .neq("status", "cancelled");
+    if (raErr) throw raErr;
+    activeAssignments = assignments || [];
 
     localStorage.setItem("gs_dropdown_cache", JSON.stringify({ employees, branches: branchSelect.innerHTML, assignments: activeAssignments }));
     renderEmployeeOptions();
@@ -362,7 +369,7 @@ function showConfirm(blob) {
   const warnEl = document.getElementById("rosterWarning");
   const onRoster = checkRosterMatch(selectedEmployeeId);
   if (!onRoster) {
-    warnEl.textContent = "⚠ Not on today's roster for this branch (not home branch or an active assignment). You can still continue.";
+    warnEl.textContent = "⚠ Not on today's roster for this branch (not home branch and no roster assignment for today). You can still continue.";
     warnEl.style.display = "block";
   } else {
     warnEl.style.display = "none";
@@ -434,9 +441,22 @@ async function pushEntry(entry, photoBlob) {
     // NOTE: this assumes an open shift/timesheet_entries row exists to update on "out".
     // Real implementation should look up today's open entry for this employee before inserting.
     if (entry.type === "in") {
+      // Pull the roster assignment for this employee+branch today, if any,
+      // so the punch is linked back to what Roster scheduled (shift_id,
+      // post_id) instead of floating unattached. activeAssignments is the
+      // same today-scoped roster_assignments snapshot used for the roster
+      // warning above; for entries synced later from the offline queue this
+      // may reflect the day the entry was captured, not the sync day, which
+      // is what we want.
+      const rosterMatch = activeAssignments.find(a => a.employee_id === entry.employee_id && a.branch_id === entry.branch_id);
       const { error } = await supabase.from("timesheet_entries").insert({
         employee_id: entry.employee_id,
         branch_id: entry.branch_id,
+        shift_id: rosterMatch ? rosterMatch.shift_id : null,
+        post_id: rosterMatch ? rosterMatch.post_id : null,
+        reliever: rosterMatch ? rosterMatch.status === "reliever" : false,
+        is_double_pump: rosterMatch ? !!rosterMatch.double_pump : false,
+        is_emergency_roster: rosterMatch ? !!rosterMatch.emergency_roster : false,
         time_in: entry.timestamp,
         photo_url
       });
@@ -455,8 +475,17 @@ async function pushEntry(entry, photoBlob) {
           .update({ time_out: entry.timestamp }).eq("id", openRows[0].id);
         if (error) throw error;
       } else {
+        const rosterMatch = activeAssignments.find(a => a.employee_id === entry.employee_id && a.branch_id === entry.branch_id);
         const { error } = await supabase.from("timesheet_entries").insert({
-          employee_id: entry.employee_id, branch_id: entry.branch_id, time_out: entry.timestamp, photo_url
+          employee_id: entry.employee_id,
+          branch_id: entry.branch_id,
+          shift_id: rosterMatch ? rosterMatch.shift_id : null,
+          post_id: rosterMatch ? rosterMatch.post_id : null,
+          reliever: rosterMatch ? rosterMatch.status === "reliever" : false,
+          is_double_pump: rosterMatch ? !!rosterMatch.double_pump : false,
+          is_emergency_roster: rosterMatch ? !!rosterMatch.emergency_roster : false,
+          time_out: entry.timestamp,
+          photo_url
         });
         if (error) throw error;
       }
