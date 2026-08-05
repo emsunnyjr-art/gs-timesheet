@@ -218,6 +218,7 @@ let selectedEmployeeId = null;
 let selectedEmployeeName = null;
 let capturedPhotoBlob = null;
 let detectedAction = null; // "in" | "out" -- auto-determined, not chosen by the user
+let lastPushError = null;  // most recent Supabase error message, shown on failure
 
 const scanModeBtn = document.getElementById("scanModeBtn");
 const manualModeBtn = document.getElementById("manualModeBtn");
@@ -470,8 +471,13 @@ async function submitEntry(type) {
 
   if (navigator.onLine) {
     const ok = await pushEntry(entry, capturedPhotoBlob);
-    logMsg(`${type === "in" ? "Timed in" : "Timed out"} — ${selectedEmployeeName} — synced`, ok ? "synced" : "queued");
-    if (!ok) queueEntry(entry, capturedPhotoBlob);
+    const label = `${type === "in" ? "Timed in" : "Timed out"} — ${selectedEmployeeName}`;
+    if (ok) {
+      logMsg(`${label} — synced`, "synced");
+    } else {
+      logMsg(`${label} — FAILED to save (${lastPushError || "unknown error"}), queued for retry`, "queued");
+      queueEntry(entry, capturedPhotoBlob);
+    }
   } else {
     queueEntry(entry, capturedPhotoBlob);
     logMsg(`${type === "in" ? "Timed in" : "Timed out"} — ${selectedEmployeeName} — queued offline`, "queued");
@@ -545,6 +551,7 @@ async function pushEntry(entry, photoBlob) {
     return true;
   } catch (err) {
     console.error(err);
+    lastPushError = err && err.message ? err.message : String(err);
     return false;
   }
 }
