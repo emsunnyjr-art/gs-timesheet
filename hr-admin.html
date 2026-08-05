@@ -143,6 +143,11 @@ tr:hover { background:#25324a; }
       <div><input type="file" accept="image/*" id="f_photo_file" onchange="onPhotoFileChosen()"></div>
       <div style="flex:0;"><button type="button" class="secondary" onclick="openCamera()">📷 Take Photo</button></div>
     </div>
+    <label>Or paste a photo URL (if it's already hosted online)</label>
+    <div class="row">
+      <div><input type="text" id="f_photo_url_input" placeholder="https://..."></div>
+      <div style="flex:0;"><button type="button" class="secondary" onclick="useUrlPhoto()">Use URL</button></div>
+    </div>
     <div id="cameraBox" style="display:none; margin-top:8px;">
       <video id="cameraVideo" autoplay playsinline style="width:100%; max-width:320px; border-radius:8px; background:#000;"></video>
       <div class="row" style="margin-top:8px;">
@@ -171,7 +176,19 @@ tr:hover { background:#25324a; }
     </div>
     <label>Full Name (auto-filled, editable)</label><input id="f_full_name">
     <div class="row">
-      <div><label>Date of Birth</label><input type="date" id="f_date_of_birth"></div>
+      <div>
+        <label>Date of Birth</label>
+        <div class="row" style="gap:6px;">
+          <div style="flex:1;">
+            <input type="text" id="f_date_of_birth_display" placeholder="__/__/____" maxlength="10" inputmode="numeric" autocomplete="off" style="font-family:monospace; letter-spacing:1px;">
+          </div>
+          <div style="flex:0;">
+            <button type="button" class="secondary" onclick="openDobPicker()">📅</button>
+          </div>
+        </div>
+        <input type="date" id="f_date_of_birth_picker" style="position:absolute; opacity:0; width:0; height:0; pointer-events:none;">
+        <input type="hidden" id="f_date_of_birth">
+      </div>
       <div><label>Marital Status</label>
         <select id="f_marital_status"><option>Single</option><option>Married</option><option>Widowed</option><option>Separated</option></select>
       </div>
@@ -462,6 +479,41 @@ async function quickToggleStatus(id) {
   await loadEmployees();
 }
 
+// ---------- Date of Birth mask: __/__/____ with a calendar fallback ----------
+document.getElementById("f_date_of_birth_display").addEventListener("input", () => {
+  const display = document.getElementById("f_date_of_birth_display");
+  const hidden = document.getElementById("f_date_of_birth");
+  const picker = document.getElementById("f_date_of_birth_picker");
+
+  let digits = display.value.replace(/\D/g, "").slice(0, 8);
+  let formatted = digits.slice(0, 2);
+  if (digits.length >= 3) formatted += "/" + digits.slice(2, 4);
+  if (digits.length >= 5) formatted += "/" + digits.slice(4, 8);
+  display.value = formatted;
+
+  if (digits.length === 8) {
+    const mm = digits.slice(0, 2), dd = digits.slice(2, 4), yyyy = digits.slice(4, 8);
+    hidden.value = `${yyyy}-${mm}-${dd}`;
+    picker.value = hidden.value;
+  } else {
+    hidden.value = "";
+  }
+});
+
+document.getElementById("f_date_of_birth_picker").addEventListener("change", () => {
+  const picker = document.getElementById("f_date_of_birth_picker");
+  if (!picker.value) return;
+  const [yyyy, mm, dd] = picker.value.split("-");
+  document.getElementById("f_date_of_birth_display").value = `${mm}/${dd}/${yyyy}`;
+  document.getElementById("f_date_of_birth").value = picker.value;
+});
+
+function openDobPicker() {
+  const picker = document.getElementById("f_date_of_birth_picker");
+  if (picker.showPicker) picker.showPicker();
+  else picker.click();
+}
+
 function suggestNextTmNumber() {
   let max = 0;
   for (const e of employees) {
@@ -487,7 +539,11 @@ function openEmployeeModal(id) {
   document.getElementById("photoNote").style.display = "none";
   document.getElementById("f_photo_file").value = "";
   capturedPhotoBlob = null;
+  directPhotoUrl = null;
+  document.getElementById("f_photo_url_input").value = "";
   document.getElementById("capturedPreview").style.display = "none";
+  document.getElementById("f_date_of_birth_display").value = "";
+  document.getElementById("f_date_of_birth_picker").value = "";
   if (!id) {
     document.getElementById("f_tm_number").value = suggestNextTmNumber();
   }
@@ -503,6 +559,11 @@ function openEmployeeModal(id) {
     document.getElementById("f_middle_name").value = e.middle_name || "";
     document.getElementById("f_full_name").value = e.full_name || "";
     document.getElementById("f_date_of_birth").value = e.date_of_birth || "";
+    if (e.date_of_birth) {
+      const [yyyy, mm, dd] = e.date_of_birth.split("-");
+      document.getElementById("f_date_of_birth_display").value = `${mm}/${dd}/${yyyy}`;
+      document.getElementById("f_date_of_birth_picker").value = e.date_of_birth;
+    }
     document.getElementById("f_marital_status").value = e.marital_status || "Single";
     document.getElementById("f_address").value = e.address || "";
     document.getElementById("f_tel_number").value = e.tel_number || "";
@@ -542,9 +603,23 @@ function openEmployeeModal(id) {
 
 let cameraStream = null;
 let capturedPhotoBlob = null;
+let directPhotoUrl = null;
+
+function useUrlPhoto() {
+  const url = document.getElementById("f_photo_url_input").value.trim();
+  if (!url) { toast("Enter a photo URL first."); return; }
+  directPhotoUrl = url;
+  capturedPhotoBlob = null;
+  document.getElementById("f_photo_file").value = "";
+  const preview = document.getElementById("capturedPreview");
+  preview.src = url;
+  preview.style.display = "inline-block";
+  toast("Photo URL set — click Save to apply it.");
+}
 
 function onPhotoFileChosen() {
   capturedPhotoBlob = null; // manual file pick overrides any camera capture
+  directPhotoUrl = null;    // and overrides a pasted URL
   document.getElementById("capturedPreview").style.display = "none";
 }
 
@@ -587,7 +662,7 @@ function capturePhoto() {
 async function uploadPhotoIfSelected(employeeId, empName) {
   const fileInput = document.getElementById("f_photo_file");
   const file = capturedPhotoBlob || fileInput.files[0];
-  if (!file) return; // no new photo selected, nothing to do
+  if (!file && !directPhotoUrl) return; // no new photo selected, nothing to do
 
   const pin = prompt("Enter Admin PIN to replace this employee's profile photo:");
   if (pin === null) return; // cancelled
@@ -600,20 +675,26 @@ async function uploadPhotoIfSelected(employeeId, empName) {
 
   const emp = employees.find(e => e.id === employeeId);
   const oldUrl = emp ? emp.photo_url : null;
-  const path = `employees/${employeeId}.jpg`;
+  let newUrl;
 
-  const { error: upErr } = await supabase.storage.from("photos").upload(path, file, { upsert: true });
-  if (upErr) { toast("Photo upload failed: " + upErr.message); return; }
+  if (directPhotoUrl) {
+    newUrl = directPhotoUrl;
+  } else {
+    const path = `employees/${employeeId}.jpg`;
+    const { error: upErr } = await supabase.storage.from("photos").upload(path, file, { upsert: true });
+    if (upErr) { toast("Photo upload failed: " + upErr.message); return; }
+    newUrl = supabase.storage.from("photos").getPublicUrl(path).data.publicUrl + `?t=${Date.now()}`;
+  }
 
-  const newUrl = supabase.storage.from("photos").getPublicUrl(path).data.publicUrl + `?t=${Date.now()}`;
   const { error: updErr } = await supabase.from("employees").update({
     photo_url: newUrl, photo_updated_at: new Date().toISOString(), photo_updated_by: adminName
   }).eq("id", employeeId);
-  if (updErr) { toast("Photo uploaded but employee update failed: " + updErr.message); return; }
+  if (updErr) { toast("Photo set but employee update failed: " + updErr.message); return; }
 
   await supabase.from("employee_photo_audit").insert({
     employee_id: employeeId, old_photo_url: oldUrl, new_photo_url: newUrl, changed_by: adminName
   });
+  directPhotoUrl = null;
   toast(`Photo updated for ${empName || "employee"} by ${adminName}.`);
 }
 
