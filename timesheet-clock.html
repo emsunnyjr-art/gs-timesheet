@@ -53,8 +53,9 @@
   </div>
 
   <div id="manualPanel" style="display:none;">
-    <label for="employeeSelect">Employee</label>
-    <select id="employeeSelect"></select>
+    <label for="employeeInput">Employee</label>
+    <input list="employeeDatalist" id="employeeInput" placeholder="Type TM # or name…" autocomplete="off">
+    <datalist id="employeeDatalist"></datalist>
     <div id="manualPhotoPreview" style="display:none; margin-top:8px;">
       <img id="manualEmpPhoto" style="width:80px; height:80px; border-radius:8px; object-fit:cover;">
     </div>
@@ -137,7 +138,6 @@ let allEmployees = [];
 let activeAssignments = []; // today's roster_assignments rows: [{employee_id, branch_id, shift_id, post_id, status, double_pump, emergency_roster}]
 
 async function loadDropdowns() {
-  const empSelect = document.getElementById("employeeSelect");
   const branchSelect = document.getElementById("branchSelect");
   const today = new Date().toISOString().slice(0, 10);
   try {
@@ -188,18 +188,24 @@ async function loadDropdowns() {
 }
 
 function renderEmployeeOptions() {
-  const empSelect = document.getElementById("employeeSelect");
+  const dl = document.getElementById("employeeDatalist");
   const branchId = document.getElementById("branchSelect").value;
   const showAll = document.getElementById("showAllEmployees").checked;
   const assignedIds = new Set(activeAssignments.filter(a => a.branch_id === branchId).map(a => a.employee_id));
   const list = showAll ? allEmployees : allEmployees.filter(e => e.home_branch_id === branchId || assignedIds.has(e.id));
   const source = list.length ? list : allEmployees; // fall back to full list if branch has nobody assigned
-  empSelect.innerHTML = source.map(e => {
+  dl.innerHTML = source.map(e => {
     const tag = assignedIds.has(e.id) && e.home_branch_id !== branchId ? " · assigned" : "";
-    return `<option value="${e.id}">${e.full_name} (${e.tm_number})${tag}</option>`;
+    return `<option value="${e.tm_number} — ${e.full_name}${tag}">`;
   }).join("");
   updateManualPhotoPreview();
-  empSelect.onchange = updateManualPhotoPreview;
+}
+
+// Matches whatever the person typed/picked in the Employee field back to a
+// real employee record, by TM number (the part before the em dash).
+function findEmployeeByManualInput(text) {
+  const tm = (text || "").split("—")[0].trim();
+  return allEmployees.find(e => e.tm_number === tm) || null;
 }
 
 // Shows who Roster actually scheduled for the selected branch today, grouped
@@ -236,8 +242,7 @@ function fmtTimeOnly(t) {
 }
 
 function updateManualPhotoPreview() {
-  const empSelect = document.getElementById("employeeSelect");
-  const emp = allEmployees.find(e => e.id === empSelect.value);
+  const emp = findEmployeeByManualInput(document.getElementById("employeeInput").value);
   const wrap = document.getElementById("manualPhotoPreview");
   const img = document.getElementById("manualEmpPhoto");
   if (emp && emp.photo_url) {
@@ -434,11 +439,13 @@ async function onEmployeeIdentified(id, name) {
 }
 
 // ---------- Manual mode: pick employee, then capture photo ----------
+document.getElementById("employeeInput").addEventListener("input", updateManualPhotoPreview);
+
 document.getElementById("manualUsePhotoBtn").addEventListener("click", async () => {
-  const empSelect = document.getElementById("employeeSelect");
-  if (!empSelect.value) { logMsg("Select an employee first.", "queued"); return; }
-  selectedEmployeeId = empSelect.value;
-  selectedEmployeeName = empSelect.options[empSelect.selectedIndex].text;
+  const emp = findEmployeeByManualInput(document.getElementById("employeeInput").value);
+  if (!emp) { logMsg("Type a few letters of the name or TM #, then pick one from the list.", "queued"); return; }
+  selectedEmployeeId = emp.id;
+  selectedEmployeeName = `${emp.full_name} (${emp.tm_number})`;
   try {
     await openCamera();
     // give the camera a moment to focus before capturing
