@@ -436,10 +436,18 @@ async function saveEntryFlags(id, btn) {
     is_double_pump: row.querySelector(".flag-double").checked,
     is_emergency_roster: row.querySelector(".flag-emergency").checked
   };
-  const { error } = await supabase.from("timesheet_entries").update(payload).eq("id", id);
+  const { data, error } = await supabase.from("timesheet_entries").update(payload).eq("id", id).select("time_out").single();
   const msg = document.getElementById("entriesMsg");
-  msg.textContent = error ? error.message : "Saved — wages recalculated.";
-  msg.className = "msg " + (error ? "err" : "ok");
+  if (error) {
+    msg.textContent = error.message;
+    msg.className = "msg err";
+  } else if (data && data.time_out) {
+    msg.textContent = "Saved — wages recalculated.";
+    msg.className = "msg ok";
+  } else {
+    msg.textContent = "Saved. Wages will show once this employee clocks out (still an open shift).";
+    msg.className = "msg ok";
+  }
   if (!error) loadEntries();
 }
 
