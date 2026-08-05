@@ -66,18 +66,17 @@
     <div style="font-weight:600; margin-bottom:6px;">Confirm identity</div>
     <div id="confirmName" style="color:var(--accent); font-size:15px; margin-bottom:8px;"></div>
     <div id="rosterWarning" style="display:none; color:#f59e0b; font-size:12px; margin-bottom:8px; padding:6px 8px; background:#f59e0b1a; border-radius:6px;"></div>
+    <div id="actionBadge" style="font-size:13px; font-weight:600; margin-bottom:8px; padding:6px 8px; border-radius:6px;"></div>
     <img id="confirmPhoto" style="width:100%; border-radius:8px; display:block;">
     <div style="font-size:11px; color:var(--muted); margin-top:6px;">Attendance photo for this time in/out only — it does not change your profile photo. Profile photos can only be replaced by an admin.</div>
+    <div id="overrideRow" style="display:none; margin-top:8px; font-size:12px; text-align:center;">
+      <a href="#" id="overrideLink" style="color:var(--muted);">Not right? Switch to Time Out instead</a>
+    </div>
     <div style="display:flex; gap:8px; margin-top:10px;">
       <button type="button" id="retakeBtn" style="flex:1; padding:10px; border-radius:8px; border:1px solid #334155; background:#0f172a; color:var(--text);">Retake Photo</button>
       <button type="button" id="cancelBtn" style="flex:1; padding:10px; border-radius:8px; border:1px solid var(--accent-out); background:transparent; color:var(--accent-out);">Cancel</button>
-      <button type="button" id="confirmBtn" style="flex:1; padding:10px; border-radius:8px; border:none; background:var(--accent); color:#052e16; font-weight:600;">Confirm — This Is Me</button>
+      <button type="button" id="confirmBtn" style="flex:2; padding:10px; border-radius:8px; border:none; background:var(--accent); color:#052e16; font-weight:600;" disabled>Checking…</button>
     </div>
-  </div>
-
-  <div class="btn-row" style="margin-top:16px;">
-    <button class="btn-in" id="clockInBtn" disabled>Time In</button>
-    <button class="btn-out" id="clockOutBtn" disabled>Time Out</button>
   </div>
 
   <div class="log" id="log"></div>
@@ -218,6 +217,7 @@ let sharedStream = null;
 let selectedEmployeeId = null;
 let selectedEmployeeName = null;
 let capturedPhotoBlob = null;
+let detectedAction = null; // "in" | "out" -- auto-determined, not chosen by the user
 
 const scanModeBtn = document.getElementById("scanModeBtn");
 const manualModeBtn = document.getElementById("manualModeBtn");
@@ -250,8 +250,10 @@ function resetSelection() {
   selectedEmployeeId = null;
   selectedEmployeeName = null;
   capturedPhotoBlob = null;
-  document.getElementById("clockInBtn").disabled = true;
-  document.getElementById("clockOutBtn").disabled = true;
+  detectedAction = null;
+  document.getElementById("confirmBtn").disabled = true;
+  document.getElementById("confirmBtn").textContent = "Checking…";
+  document.getElementById("overrideRow").style.display = "none";
 }
 
 // ---------- Camera (shared by scan + manual capture) ----------
@@ -335,6 +337,55 @@ function checkRosterMatch(employeeId) {
   return emp.home_branch_id === branchId || assigned;
 }
 
+// Auto-detects whether this should be a Time In or Time Out: if the
+// employee has an open entry (time_in set, time_out still null) from any
+// prior punch, this is a Time Out; otherwise it's a Time In. This is what
+// makes the roster's predetermined shift time matter in practice -- the
+// person doesn't choose in/out themselves, the system infers it from
+// whether they're already clocked in.
+async function detectClockAction(employeeId) {
+  try {
+    const { data, error } = await supabase
+      .from("timesheet_entries")
+      .select("id")
+      .eq("employee_id", employeeId)
+      .is("time_out", null)
+      .order("time_in", { ascending: false })
+      .limit(1);
+    if (error) throw error;
+    return (data && data.length) ? "out" : "in";
+  } catch (err) {
+    console.error("detectClockAction failed, defaulting to Time In:", err);
+    return "in"; // safest default if the lookup fails
+  }
+}
+
+function renderActionBadge() {
+  const badge = document.getElementById("actionBadge");
+  const btn = document.getElementById("confirmBtn");
+  const overrideRow = document.getElementById("overrideRow");
+  const overrideLink = document.getElementById("overrideLink");
+  if (detectedAction === "in") {
+    badge.textContent = "Will record: TIME IN";
+    badge.style.background = "#052e1680"; badge.style.color = "var(--accent)";
+    btn.textContent = "Confirm — Time In"; btn.style.background = "var(--accent)"; btn.style.color = "#052e16";
+    overrideLink.textContent = "Not right? Switch to Time Out instead";
+  } else {
+    badge.textContent = "Will record: TIME OUT";
+    badge.style.background = "#450a0a80"; badge.style.color = "var(--accent-out)";
+    btn.textContent = "Confirm — Time Out"; btn.style.background = "var(--accent-out)"; btn.style.color = "#450a0a";
+    overrideLink.textContent = "Not right? Switch to Time In instead";
+  }
+  overrideRow.style.display = "block";
+  btn.disabled = false;
+}
+
+document.getElementById("overrideLink").addEventListener("click", (e) => {
+  e.preventDefault();
+  detectedAction = detectedAction === "in" ? "out" : "in";
+  renderActionBadge();
+});
+
 async function onEmployeeIdentified(id, name) {
   qrLoopActive = false;
   selectedEmployeeId = id;
@@ -362,7 +413,7 @@ document.getElementById("manualUsePhotoBtn").addEventListener("click", async () 
 });
 
 // ---------- Confirm panel ----------
-function showConfirm(blob) {
+async function showConfirm(blob) {
   capturedPhotoBlob = blob;
   document.getElementById("confirmName").textContent = selectedEmployeeName;
   document.getElementById("confirmPhoto").src = URL.createObjectURL(blob);
@@ -377,6 +428,13 @@ function showConfirm(blob) {
   scanPanel.style.display = "none";
   manualPanel.style.display = "none";
   confirmPanel.style.display = "block";
+
+  document.getElementById("confirmBtn").disabled = true;
+  document.getElementById("confirmBtn").textContent = "Checking…";
+  document.getElementById("overrideRow").style.display = "none";
+  detectedAction = await detectClockAction(selectedEmployeeId);
+  // Guard against a stale response if the person cancelled/switched while the lookup was in flight.
+  if (selectedEmployeeId !== null) renderActionBadge();
 }
 
 document.getElementById("retakeBtn").addEventListener("click", async () => {
@@ -386,21 +444,15 @@ document.getElementById("retakeBtn").addEventListener("click", async () => {
 });
 
 document.getElementById("confirmBtn").addEventListener("click", () => {
+  const action = detectedAction || "in";
   confirmPanel.style.display = "none";
-  document.getElementById("clockInBtn").disabled = false;
-  document.getElementById("clockOutBtn").disabled = false;
-  const onRoster = checkRosterMatch(selectedEmployeeId);
-  logMsg(`Identity confirmed: ${selectedEmployeeName}${onRoster ? "" : " (not on roster for this branch)"}`, onRoster ? "synced" : "queued");
+  submitEntry(action);
 });
 
 document.getElementById("cancelBtn").addEventListener("click", () => {
   logMsg("Cancelled — no entry recorded.", "queued");
   setMode(mode); // resets selection and restarts scan/manual for the current mode
 });
-
-// ---------- Clock in/out ----------
-document.getElementById("clockInBtn").addEventListener("click", () => submitEntry("in"));
-document.getElementById("clockOutBtn").addEventListener("click", () => submitEntry("out"));
 
 async function submitEntry(type) {
   const employee_id = selectedEmployeeId;
