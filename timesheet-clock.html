@@ -54,8 +54,10 @@
 
   <div id="manualPanel" style="display:none;">
     <label for="employeeInput">Employee</label>
-    <input list="employeeDatalist" id="employeeInput" placeholder="Type TM # or name…" autocomplete="off">
-    <datalist id="employeeDatalist"></datalist>
+    <div style="position:relative;">
+      <input type="text" id="employeeInput" placeholder="Type TM # or name…" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <div id="employeeSuggestions" style="display:none; position:absolute; z-index:20; top:100%; left:0; right:0; background:#0f172a; border:1px solid #334155; border-radius:8px; max-height:240px; overflow-y:auto; margin-top:4px; box-shadow:0 8px 20px rgba(0,0,0,.4);"></div>
+    </div>
     <div id="manualPhotoPreview" style="display:none; margin-top:8px;">
       <img id="manualEmpPhoto" style="width:80px; height:80px; border-radius:8px; object-fit:cover;">
     </div>
@@ -187,25 +189,83 @@ async function loadDropdowns() {
   }
 }
 
+function escapeHtml(str) {
+  return String(str ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+let manualEmployeeSource = []; // this branch's pickable list, recomputed on branch/showAll change
+let manualSelectedEmployeeId = null; // set only when a suggestion is actually clicked
+
 function renderEmployeeOptions() {
-  const dl = document.getElementById("employeeDatalist");
   const branchId = document.getElementById("branchSelect").value;
   const showAll = document.getElementById("showAllEmployees").checked;
   const assignedIds = new Set(activeAssignments.filter(a => a.branch_id === branchId).map(a => a.employee_id));
   const list = showAll ? allEmployees : allEmployees.filter(e => e.home_branch_id === branchId || assignedIds.has(e.id));
-  const source = list.length ? list : allEmployees; // fall back to full list if branch has nobody assigned
-  dl.innerHTML = source.map(e => {
-    const tag = assignedIds.has(e.id) && e.home_branch_id !== branchId ? " · assigned" : "";
-    return `<option value="${e.tm_number} — ${e.full_name}${tag}">`;
-  }).join("");
+  manualEmployeeSource = list.length ? list : allEmployees; // fall back to full list if branch has nobody assigned
   updateManualPhotoPreview();
 }
 
-// Matches whatever the person typed/picked in the Employee field back to a
-// real employee record, by TM number (the part before the em dash).
+// Custom dropdown, built in JS rather than a native <datalist>, because iOS
+// Safari doesn't render datalist suggestions at all -- without this, typing
+// on an iPhone was showing the phone's own keyboard predictions instead of
+// real TM names.
+function renderEmployeeSuggestions() {
+  const box = document.getElementById("employeeSuggestions");
+  const q = document.getElementById("employeeInput").value.trim().toLowerCase();
+  if (!q) { box.style.display = "none"; box.innerHTML = ""; return; }
+  const branchId = document.getElementById("branchSelect").value;
+  const assignedIds = new Set(activeAssignments.filter(a => a.branch_id === branchId).map(a => a.employee_id));
+  const matches = manualEmployeeSource.filter(e =>
+    e.tm_number.toLowerCase().includes(q) || (e.full_name || "").toLowerCase().includes(q)
+  ).slice(0, 25);
+  if (!matches.length) {
+    box.innerHTML = `<div style="padding:10px; color:var(--muted); font-size:13px;">No match</div>`;
+    box.style.display = "block";
+    return;
+  }
+  box.innerHTML = matches.map(e => {
+    const tag = assignedIds.has(e.id) && e.home_branch_id !== branchId ? " · assigned" : "";
+    return `<div class="emp-suggestion" data-id="${e.id}" style="padding:10px; cursor:pointer; border-bottom:1px solid #334155; font-size:14px;">
+      ${escapeHtml(e.full_name)} <span style="color:var(--muted);">(${escapeHtml(e.tm_number)})</span>${tag}
+    </div>`;
+  }).join("");
+  box.style.display = "block";
+  box.querySelectorAll(".emp-suggestion").forEach(el => {
+    el.addEventListener("mousedown", (ev) => { // mousedown (not click) fires before the input's blur
+      ev.preventDefault();
+      const emp = allEmployees.find(x => x.id === el.dataset.id);
+      if (!emp) return;
+      manualSelectedEmployeeId = emp.id;
+      document.getElementById("employeeInput").value = `${emp.full_name} (${emp.tm_number})`;
+      box.style.display = "none";
+      updateManualPhotoPreview();
+    });
+  });
+}
+
+document.getElementById("employeeInput").addEventListener("input", () => {
+  manualSelectedEmployeeId = null; // typing invalidates a prior click-selection
+  renderEmployeeSuggestions();
+  updateManualPhotoPreview();
+});
+document.getElementById("employeeInput").addEventListener("focus", renderEmployeeSuggestions);
+document.getElementById("employeeInput").addEventListener("blur", () => {
+  setTimeout(() => { document.getElementById("employeeSuggestions").style.display = "none"; }, 150);
+});
+
+// Resolves the currently selected employee: prefer an explicit dropdown
+// click, fall back to matching the typed text against TM#/name directly
+// (covers someone typing an exact TM number and not clicking a suggestion).
 function findEmployeeByManualInput(text) {
-  const tm = (text || "").split("—")[0].trim();
-  return allEmployees.find(e => e.tm_number === tm) || null;
+  if (manualSelectedEmployeeId) {
+    const byClick = allEmployees.find(e => e.id === manualSelectedEmployeeId);
+    if (byClick) return byClick;
+  }
+  const q = (text || "").trim().toLowerCase();
+  if (!q) return null;
+  return allEmployees.find(e => e.tm_number.toLowerCase() === q) ||
+         manualEmployeeSource.find(e => (e.full_name || "").toLowerCase() === q) ||
+         null;
 }
 
 // Shows who Roster actually scheduled for the selected branch today, grouped
@@ -226,11 +286,11 @@ function renderTodayRoster() {
     const key = label + "|" + (timeIn || "");
     if (!groups[key]) groups[key] = { label, timeIn, people: [] };
     const emp = allEmployees.find(e => e.id === a.employee_id);
-    if (emp) groups[key].people.push(`${emp.full_name} (${emp.tm_number})`);
+    if (emp) groups[key].people.push(`${escapeHtml(emp.full_name)} (${escapeHtml(emp.tm_number)})`);
   });
   const rows = Object.values(groups).sort((x, y) => (x.timeIn || "").localeCompare(y.timeIn || ""));
   box.innerHTML = `<b>Today's roster</b><br>` + rows.map(g =>
-    `${g.label}${g.timeIn ? " " + fmtTimeOnly(g.timeIn) : ""}: ${g.people.join(", ") || "—"}`
+    `${escapeHtml(g.label)}${g.timeIn ? " " + fmtTimeOnly(g.timeIn) : ""}: ${g.people.join(", ") || "—"}`
   ).join("<br>");
 }
 
@@ -295,9 +355,13 @@ function resetSelection() {
   selectedEmployeeName = null;
   capturedPhotoBlob = null;
   detectedAction = null;
+  manualSelectedEmployeeId = null;
   document.getElementById("confirmBtn").disabled = true;
   document.getElementById("confirmBtn").textContent = "Checking…";
   document.getElementById("overrideRow").style.display = "none";
+  document.getElementById("employeeInput").value = "";
+  document.getElementById("employeeSuggestions").style.display = "none";
+  document.getElementById("manualPhotoPreview").style.display = "none";
 }
 
 // ---------- Camera (shared by scan + manual capture) ----------
@@ -439,8 +503,6 @@ async function onEmployeeIdentified(id, name) {
 }
 
 // ---------- Manual mode: pick employee, then capture photo ----------
-document.getElementById("employeeInput").addEventListener("input", updateManualPhotoPreview);
-
 document.getElementById("manualUsePhotoBtn").addEventListener("click", async () => {
   const emp = findEmployeeByManualInput(document.getElementById("employeeInput").value);
   if (!emp) { logMsg("Type a few letters of the name or TM #, then pick one from the list.", "queued"); return; }
