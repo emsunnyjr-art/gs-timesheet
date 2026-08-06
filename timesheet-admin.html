@@ -401,7 +401,7 @@ async function loadEntries() {
   const branch = document.getElementById("filterBranch").value;
   const from = document.getElementById("filterFrom").value;
   const to = document.getElementById("filterTo").value;
-  let q = supabase.from("timesheet_entries").select("id, time_in, time_out, total_hours, late_minutes, is_late, is_overtime, is_holiday, is_double_pump, is_emergency_roster, total_wages, employees(full_name)").order("time_in", { ascending: false }).limit(50);
+  let q = supabase.from("timesheet_entries").select("id, time_in, time_out, total_hours, late_minutes, is_late, is_overtime, is_holiday, is_double_pump, is_emergency_roster, total_wages, shift_id, employees(full_name)").order("time_in", { ascending: false }).limit(50);
   if (branch) q = q.eq("branch_id", branch);
   if (from) q = q.gte("time_in", from);
   if (to) q = q.lte("time_in", to + "T23:59:59");
@@ -410,25 +410,54 @@ async function loadEntries() {
   if (error) { msg.textContent = error.message; msg.className = "msg err"; return; }
   msg.textContent = "";
   const tbody = document.querySelector("#entriesTable tbody");
-  tbody.innerHTML = (data || []).map(e => `
-    <tr data-id="${e.id}">
-      <td>${e.employees?.full_name || "—"}</td>
+  tbody.innerHTML = (data || []).map(e => {
+    const complete = !!e.time_out;
+    return `
+    <tr data-id="${e.id}" data-has-out="${complete ? "1" : "0"}">
+      <td>${e.employees?.full_name || "—"}${!e.shift_id ? `<br><span style="color:var(--warn); font-size:11px;">⚠ Unscheduled — late # is a guess, not vs. an actual roster shift</span>` : ""}</td>
       <td>${fmtTime(e.time_in)} → ${fmtTime(e.time_out)}</td>
       <td>${e.total_hours ?? "—"}</td>
-      <td><input type="number" class="flag-late-min" style="width:70px;" value="${e.late_minutes ?? 0}"></td>
+      <td><input type="number" class="flag-late-min" style="width:70px;" value="${e.late_minutes ?? 0}" ${complete ? "" : "disabled"}></td>
       <td>
-        <label><input type="checkbox" class="flag-ot" ${e.is_overtime ? "checked" : ""}> OT</label>
-        <label><input type="checkbox" class="flag-holiday" ${e.is_holiday ? "checked" : ""}> Holiday</label>
-        <label><input type="checkbox" class="flag-double" ${e.is_double_pump ? "checked" : ""}> Double Pump</label>
-        <label><input type="checkbox" class="flag-emergency" ${e.is_emergency_roster ? "checked" : ""}> Emergency</label>
+        <label><input type="checkbox" class="flag-ot" ${e.is_overtime ? "checked" : ""} ${complete ? "" : "disabled"}> OT</label>
+        <label><input type="checkbox" class="flag-holiday" ${e.is_holiday ? "checked" : ""} ${complete ? "" : "disabled"}> Holiday</label>
+        <label><input type="checkbox" class="flag-double" ${e.is_double_pump ? "checked" : ""} ${complete ? "" : "disabled"}> Double Pump</label>
+        <label><input type="checkbox" class="flag-emergency" ${e.is_emergency_roster ? "checked" : ""} ${complete ? "" : "disabled"}> Emergency</label>
       </td>
       <td>${(e.total_wages ?? 0).toFixed(2)}</td>
-      <td><button class="secondary" onclick="saveEntryFlags('${e.id}', this)">Save</button></td>
-    </tr>`).join("");
+      <td>
+        <button class="secondary" onclick="saveEntryFlags('${e.id}', this)" ${complete ? "" : "disabled"} title="${complete ? "" : "Save is locked until this employee clocks out"}">Save</button>
+        ${complete ? "" : `<div class="small" style="color:var(--warn); margin-top:4px;">Still clocked in</div>`}
+        <button class="danger" style="margin-top:6px;" onclick="deleteEntry('${e.id}', this)">Delete</button>
+      </td>
+    </tr>`;
+  }).join("");
+}
+
+async function deleteEntry(id, btn) {
+  const row = btn.closest("tr");
+  const name = row.querySelector("td").textContent.trim();
+  if (!confirm(`Delete this timesheet entry for ${name}? This cannot be undone.`)) return;
+  const { error } = await supabase.from("timesheet_entries").delete().eq("id", id);
+  const msg = document.getElementById("entriesMsg");
+  if (error) {
+    msg.textContent = error.message;
+    msg.className = "msg err";
+  } else {
+    msg.textContent = "Entry deleted.";
+    msg.className = "msg ok";
+    row.remove();
+  }
 }
 
 async function saveEntryFlags(id, btn) {
   const row = btn.closest("tr");
+  if (row.dataset.hasOut !== "1") {
+    const msg = document.getElementById("entriesMsg");
+    msg.textContent = "Can't save — this employee hasn't clocked out yet.";
+    msg.className = "msg err";
+    return;
+  }
   const payload = {
     late_minutes: parseFloat(row.querySelector(".flag-late-min").value) || 0,
     is_overtime: row.querySelector(".flag-ot").checked,
