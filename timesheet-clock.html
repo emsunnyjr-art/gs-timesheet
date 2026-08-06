@@ -139,6 +139,17 @@ window.addEventListener("offline", updateNetStatus);
 // ---------- Load employees & branches ----------
 let allEmployees = [];
 let activeAssignments = []; // today's roster_assignments rows: [{employee_id, branch_id, shift_id, post_id, status, double_pump, emergency_roster}]
+let openEntryEmployeeIds = new Set(); // employees who currently have an open (time_out is null) entry
+
+async function loadOpenEntries() {
+  try {
+    const { data, error } = await supabase.from("timesheet_entries").select("employee_id").is("time_out", null);
+    if (error) throw error;
+    openEntryEmployeeIds = new Set((data || []).map(r => r.employee_id));
+  } catch (err) {
+    console.error("loadOpenEntries failed:", err);
+  }
+}
 
 async function loadDropdowns() {
   const branchSelect = document.getElementById("branchSelect");
@@ -166,6 +177,7 @@ async function loadDropdowns() {
       .neq("status", "cancelled");
     if (raErr) throw raErr;
     activeAssignments = assignments || [];
+    await loadOpenEntries();
 
     localStorage.setItem("gs_dropdown_cache", JSON.stringify({ employees, branches: branchSelect.innerHTML, assignments: activeAssignments }));
     renderEmployeeOptions();
@@ -179,6 +191,7 @@ async function loadDropdowns() {
       allEmployees = c.employees;
       branchSelect.innerHTML = c.branches;
       activeAssignments = c.assignments || [];
+      await loadOpenEntries();
       renderEmployeeOptions();
       renderTodayRoster();
       branchSelect.addEventListener("change", () => { renderEmployeeOptions(); renderTodayRoster(); });
@@ -269,9 +282,12 @@ function findEmployeeByManualInput(text) {
          null;
 }
 
-// Shows who Roster actually scheduled for the selected branch today, grouped
-// by shift and sorted by start time, so whoever's running the kiosk can spot
-// the right name/TM# at a glance instead of hunting the full dropdown.
+// Shows who Roster scheduled for the selected branch today, split into two
+// explicit groups so shift handover with zero coverage gap is unambiguous:
+// "On Duty Now" (has an open entry -> tap to Time Out) and "Not Clocked In
+// Yet" (no open entry -> tap to Time In). Both groups are always visible and
+// tappable at once -- the incoming shift can clock in before the outgoing
+// shift clocks out, on purpose, so there's never a gap at the pumps.
 function renderTodayRoster() {
   const box = document.getElementById("todayRosterBox");
   const branchId = document.getElementById("branchSelect").value;
@@ -280,19 +296,58 @@ function renderTodayRoster() {
     box.innerHTML = "No one rostered here today yet.";
     return;
   }
-  const groups = {};
-  todays.forEach(a => {
-    const label = a.shifts ? a.shifts.shift_label : "Unscheduled";
-    const timeIn = a.shifts ? a.shifts.scheduled_time_in : null;
-    const key = label + "|" + (timeIn || "");
-    if (!groups[key]) groups[key] = { label, timeIn, people: [] };
-    const emp = allEmployees.find(e => e.id === a.employee_id);
-    if (emp) groups[key].people.push(`${escapeHtml(emp.full_name)} (${escapeHtml(emp.tm_number)})`);
+  const sorted = [...todays].sort((a, b) => {
+    const ta = a.shifts ? a.shifts.scheduled_time_in : "";
+    const tb = b.shifts ? b.shifts.scheduled_time_in : "";
+    return (ta || "").localeCompare(tb || "");
   });
-  const rows = Object.values(groups).sort((x, y) => (x.timeIn || "").localeCompare(y.timeIn || ""));
-  box.innerHTML = `<b>Today's roster</b><br>` + rows.map(g =>
-    `${escapeHtml(g.label)}${g.timeIn ? " " + fmtTimeOnly(g.timeIn) : ""}: ${g.people.join(", ") || "—"}`
-  ).join("<br>");
+
+  function personButton(a, isOpen) {
+    const emp = allEmployees.find(e => e.id === a.employee_id);
+    if (!emp) return "";
+    const shiftLabel = a.shifts ? `${a.shifts.shift_label} ${fmtTimeOnly(a.shifts.scheduled_time_in)}` : "Unscheduled";
+    const tagColor = isOpen ? "var(--accent-out)" : "var(--accent)";
+    const tagText = isOpen ? "TIME OUT" : "TIME IN";
+    return `<button type="button" class="roster-person-btn" data-id="${emp.id}"
+        style="display:flex; justify-content:space-between; align-items:center; width:100%; text-align:left;
+               padding:10px; margin-top:6px; border-radius:8px; border:1px solid ${tagColor}; background:#0f172a; color:var(--text);">
+      <span>${escapeHtml(emp.full_name)} <span style="color:var(--muted);">(${escapeHtml(emp.tm_number)})</span><br>
+        <span style="font-size:11px; color:var(--muted);">${escapeHtml(shiftLabel)}</span></span>
+      <span style="font-weight:700; color:${tagColor}; border:1px solid ${tagColor}; border-radius:6px; padding:3px 8px; font-size:11px; white-space:nowrap;">${tagText}</span>
+    </button>`;
+  }
+
+  const onDuty = sorted.filter(a => openEntryEmployeeIds.has(a.employee_id));
+  const notYet = sorted.filter(a => !openEntryEmployeeIds.has(a.employee_id));
+
+  box.innerHTML =
+    `<b>On Duty Now (${onDuty.length})</b>` +
+    (onDuty.length ? onDuty.map(a => personButton(a, true)).join("") : `<div class="small" style="margin-top:4px;">Nobody clocked in yet.</div>`) +
+    `<b style="display:block; margin-top:14px;">Not Clocked In Yet (${notYet.length})</b>` +
+    (notYet.length ? notYet.map(a => personButton(a, false)).join("") : `<div class="small" style="margin-top:4px;">Everyone rostered is already on duty.</div>`);
+
+  box.querySelectorAll(".roster-person-btn").forEach(el => {
+    el.addEventListener("click", () => {
+      const emp = allEmployees.find(e => e.id === el.dataset.id);
+      if (emp) startClockFlowFor(emp.id, `${emp.full_name} (${emp.tm_number})`);
+    });
+  });
+}
+
+// Shared entry point for Manual Select and the roster-button tap: opens the
+// camera, captures a frame, and hands off to the confirm/auto-detect flow.
+async function startClockFlowFor(employeeId, employeeName) {
+  selectedEmployeeId = employeeId;
+  selectedEmployeeName = employeeName;
+  try {
+    await openCamera();
+    setTimeout(async () => {
+      const blob = await captureFrame();
+      showConfirm(blob);
+    }, 400);
+  } catch (err) {
+    logMsg("Camera error: " + err.message, "queued");
+  }
 }
 
 function fmtTimeOnly(t) {
@@ -507,18 +562,7 @@ async function onEmployeeIdentified(id, name) {
 document.getElementById("manualUsePhotoBtn").addEventListener("click", async () => {
   const emp = findEmployeeByManualInput(document.getElementById("employeeInput").value);
   if (!emp) { logMsg("Type a few letters of the name or TM #, then pick one from the list.", "queued"); return; }
-  selectedEmployeeId = emp.id;
-  selectedEmployeeName = `${emp.full_name} (${emp.tm_number})`;
-  try {
-    await openCamera();
-    // give the camera a moment to focus before capturing
-    setTimeout(async () => {
-      const blob = await captureFrame();
-      showConfirm(blob);
-    }, 400);
-  } catch (err) {
-    logMsg("Camera error: " + err.message, "queued");
-  }
+  await startClockFlowFor(emp.id, `${emp.full_name} (${emp.tm_number})`);
 });
 
 // ---------- Confirm panel ----------
@@ -582,6 +626,8 @@ async function submitEntry(type) {
     const label = `${type === "in" ? "Timed in" : "Timed out"} — ${selectedEmployeeName}`;
     if (ok) {
       logMsg(`${label} — synced`, "synced");
+      if (type === "in") openEntryEmployeeIds.add(employee_id); else openEntryEmployeeIds.delete(employee_id);
+      renderTodayRoster();
     } else {
       logMsg(`${label} — FAILED to save (${lastPushError || "unknown error"}), queued for retry`, "queued");
       queueEntry(entry, capturedPhotoBlob);
