@@ -43,6 +43,9 @@ tr:hover { background:#25324a; }
 .close-x { float:right; cursor:pointer; color:var(--muted); font-size:20px; }
 .section-label { font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin-top:20px; border-top:1px solid var(--border); padding-top:14px; }
 .photo-note { display:flex; gap:10px; align-items:center; background:#0f172a; border:1px solid var(--border); border-radius:8px; padding:10px; margin-top:8px; }
+.nav-links { font-size:12px; margin-bottom:14px; }
+.nav-links a { color:var(--muted); text-decoration:none; margin-right:14px; }
+.nav-links a:hover { color:var(--accent); }
 </style>
 </head>
 <body>
@@ -57,6 +60,7 @@ tr:hover { background:#25324a; }
 </div>
 
 <div id="app" class="wrap" style="display:none;">
+  <div class="nav-links"><a href="index.html">🏠 Home</a><a href="hr-admin.html">HR Admin</a><a href="timesheet-admin.html">Timesheet Admin</a><a href="roster-admin.html">Roster</a></div>
   <div style="display:flex; align-items:center; gap:12px;">
     <img src="logo.png" alt="A's Fuel" style="width:44px; height:44px; border-radius:50%;">
     <h1 style="margin:0;">GS HR — Employee Database</h1>
