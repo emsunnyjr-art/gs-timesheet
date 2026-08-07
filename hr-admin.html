@@ -141,8 +141,16 @@ tr:hover { background:#25324a; }
             <option value="">All</option>
           </select>
         </div>
+        <div style="min-width:170px;">
+          <label style="margin-top:0;">Hired on/after</label>
+          <input type="date" id="idcardHiredSince">
+        </div>
         <button class="secondary" onclick="loadIdCards()">Load / Refresh</button>
-        <button onclick="window.print()">Print Cards</button>
+      </div>
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:12px;">
+        <button class="secondary" onclick="setAllIdCardsSelected(true)">Select All</button>
+        <button class="secondary" onclick="setAllIdCardsSelected(false)">Select None</button>
+        <button onclick="window.print()">Print Selected</button>
         <span class="small" id="idcardStatus"></span>
       </div>
     </div>
@@ -177,11 +185,15 @@ tr:hover { background:#25324a; }
   .id-qr { width:70px; height:70px; background:white; border-radius:6px; padding:4px; margin-top:10px; flex-shrink:0; }
   .id-qr canvas { width:100% !important; height:100% !important; }
 
+  .id-card-check { position:absolute; top:8px; right:8px; width:18px; height:18px; z-index:2; }
+
   @media print {
     body { background:white; padding:0; }
     .no-print, .nav-links, h1, .tabs, p.small { display:none !important; }
     .card-grid { gap:8px; }
     .id-card { break-inside: avoid; }
+    .id-card.card-unselected { display:none !important; }
+    .id-card-check { display:none !important; }
   }
 </style>
 
@@ -368,6 +380,15 @@ document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () =>
 }));
 document.getElementById("idcardBranchFilter").addEventListener("change", loadIdCards);
 document.getElementById("idcardStatusFilter").addEventListener("change", loadIdCards);
+document.getElementById("idcardHiredSince").addEventListener("change", loadIdCards);
+
+function setAllIdCardsSelected(selected) {
+  document.querySelectorAll("#idcardGrid .id-card").forEach(card => {
+    card.classList.toggle("card-unselected", !selected);
+    const cb = card.querySelector(".id-card-check");
+    if (cb) cb.checked = selected;
+  });
+}
 
 function toast(msg) {
   const t = document.getElementById("toast");
@@ -415,11 +436,13 @@ async function loadIdCards() {
   try {
     const branchId = document.getElementById("idcardBranchFilter").value;
     const statusFilter = document.getElementById("idcardStatusFilter").value;
+    const hiredSince = document.getElementById("idcardHiredSince").value;
     let q = supabase.from("employees")
-      .select("id, tm_number, full_name, photo_url, home_branch_id, status, branches(code,name), posts(name)")
+      .select("id, tm_number, full_name, photo_url, home_branch_id, status, hire_date, branches(code,name), posts(name)")
       .order("full_name");
     if (statusFilter) q = q.eq("status", statusFilter);
     if (branchId) q = q.eq("home_branch_id", branchId);
+    if (hiredSince) q = q.gte("hire_date", hiredSince);
 
     const { data, error } = await q;
     if (error) { status.textContent = "Error: " + error.message; return; }
@@ -427,12 +450,14 @@ async function loadIdCards() {
     for (const emp of (data || [])) {
       const card = document.createElement("div");
       card.className = "id-card";
+      card.style.position = "relative";
       const photoHtml = emp.photo_url ? `<img src="${emp.photo_url}" alt="">` : "No Photo";
       // QR generated as a plain image (no JS library / CDN script dependency
       // to fail silently) -- content is EMP:<tm_number>, read by the Clock
       // app's "Scan ID" mode.
       const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=140x140&margin=0&data=${encodeURIComponent("EMP:" + emp.tm_number)}`;
       card.innerHTML = `
+        <input type="checkbox" class="id-card-check no-print" checked title="Include in print" onchange="this.closest('.id-card').classList.toggle('card-unselected', !this.checked)">
         <div class="id-photo">${photoHtml}</div>
         <div class="id-info">
           <div class="company">A's Fuel / Adie and Ace's</div>
@@ -445,7 +470,7 @@ async function loadIdCards() {
       `;
       grid.appendChild(card);
     }
-    status.textContent = `${data.length} card(s) ready.`;
+    status.textContent = `${data.length} card(s) shown, all pre-selected — untick any you don't want to print.`;
   } catch (err) {
     console.error("loadIdCards failed:", err);
     status.textContent = "Something went wrong loading cards: " + (err.message || err);
