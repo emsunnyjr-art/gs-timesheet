@@ -63,6 +63,7 @@ tr:hover { background:#25324a; }
     <div class="tab active" data-tab="employees">Employees</div>
     <div class="tab" data-tab="branches">Branches</div>
     <div class="tab" data-tab="posts">Posts</div>
+    <div class="tab" data-tab="idcards">ID Cards</div>
   </div>
 
   <!-- ===================== EMPLOYEES ===================== -->
@@ -110,20 +111,57 @@ tr:hover { background:#25324a; }
     </div>
   </div>
 
-  <!-- ===================== POSTS ===================== -->
-  <div class="panel" id="panel-posts">
-    <div class="card">
-      <div style="display:flex; justify-content:space-between; align-items:center;">
-        <h2 style="margin:0;">Posts (job titles)</h2>
-        <button onclick="openPostModal()">+ Add Post</button>
+  <!-- ===================== ID CARDS ===================== -->
+  <div class="panel" id="panel-idcards">
+    <div class="card no-print">
+      <div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;">
+        <div style="flex:1; min-width:200px;">
+          <label style="margin-top:0;">Filter by branch</label>
+          <select id="idcardBranchFilter"><option value="">All branches</option></select>
+        </div>
+        <button class="secondary" onclick="loadIdCards()">Load / Refresh</button>
+        <button onclick="window.print()">Print Cards</button>
+        <span class="small" id="idcardStatus"></span>
       </div>
-      <table style="margin-top:10px;">
-        <thead><tr><th>Name</th><th>Active</th></tr></thead>
-        <tbody id="postTableBody"><tr><td colspan="2" class="small">Loading…</td></tr></tbody>
-      </table>
     </div>
+    <div class="card-grid" id="idcardGrid"></div>
   </div>
 </div>
+
+<style>
+  /* CR80 card size ratio (3.375in x 2.125in), scaled for screen */
+  .card-grid { display:flex; flex-wrap:wrap; gap:16px; justify-content:center; }
+  .id-card {
+    width: 337.5px; height: 212.5px;
+    background: linear-gradient(135deg, #1e293b, #0f172a);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    display: flex;
+    gap: 12px;
+    color: white;
+    position: relative;
+    overflow: hidden;
+  }
+  .id-card::before { content:""; position:absolute; top:0; left:0; right:0; height:6px; background:var(--accent); }
+  .id-photo { width:70px; height:85px; background:#334155; border-radius:6px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:11px; color:var(--muted); text-align:center; margin-top:10px; overflow:hidden; }
+  .id-photo img { width:100%; height:100%; object-fit:cover; }
+  .id-info { flex:1; margin-top:10px; min-width:0; }
+  .id-info .company { font-size:10px; color:var(--accent); font-weight:700; letter-spacing:0.05em; text-transform:uppercase; }
+  .id-info .name { font-size:15px; font-weight:700; margin-top:4px; line-height:1.2; }
+  .id-info .role { font-size:11px; color:var(--muted); margin-top:2px; }
+  .id-info .branch { font-size:11px; color:var(--muted); }
+  .id-info .tm { font-size:10px; color:var(--muted); margin-top:6px; font-family:monospace; }
+  .id-qr { width:70px; height:70px; background:white; border-radius:6px; padding:4px; margin-top:10px; flex-shrink:0; }
+  .id-qr canvas { width:100% !important; height:100% !important; }
+
+  @media print {
+    body { background:white; padding:0; }
+    .no-print, .nav-links, h1, .tabs, p.small { display:none !important; }
+    .card-grid { gap:8px; }
+    .id-card { break-inside: avoid; }
+  }
+</style>
 
 <div class="toast" id="toast"></div>
 
@@ -265,6 +303,7 @@ tr:hover { background:#25324a; }
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
 <script>
 // ============================================================
 // CONFIG — same Supabase project as gs-timesheet
@@ -303,6 +342,7 @@ document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () =>
   document.querySelectorAll(".panel").forEach(x => x.classList.remove("active"));
   t.classList.add("active");
   document.getElementById("panel-" + t.dataset.tab).classList.add("active");
+  if (t.dataset.tab === "idcards") loadIdCards();
 }));
 
 function toast(msg) {
@@ -337,6 +377,47 @@ function renderBranchTable() {
   document.getElementById("branchTableBody").innerHTML = branches.map(b =>
     `<tr onclick="openBranchModal('${b.id}')"><td>${b.code}</td><td>${b.name||""}</td><td>${b.company_name||""}</td><td>${b.address||""}</td><td>${b.email||""}</td></tr>`
   ).join("") || `<tr><td colspan="5" class="small">No branches yet.</td></tr>`;
+  document.getElementById("idcardBranchFilter").innerHTML =
+    '<option value="">All branches</option>' + branches.map(b => `<option value="${b.id}">${b.code} — ${b.name}</option>`).join("");
+}
+
+// ---------- ID Cards (folded in from the old standalone id-cards.html) ----------
+async function loadIdCards() {
+  const status = document.getElementById("idcardStatus");
+  status.textContent = "Loading…";
+  const branchId = document.getElementById("idcardBranchFilter").value;
+
+  let q = supabase.from("employees")
+    .select("id, tm_number, full_name, photo_url, home_branch_id, branches(code,name), posts(name)")
+    .eq("status", "active")
+    .order("full_name");
+  if (branchId) q = q.eq("home_branch_id", branchId);
+
+  const { data, error } = await q;
+  if (error) { status.textContent = error.message; return; }
+
+  const grid = document.getElementById("idcardGrid");
+  grid.innerHTML = "";
+  for (const emp of data) {
+    const card = document.createElement("div");
+    card.className = "id-card";
+    const photoHtml = emp.photo_url ? `<img src="${emp.photo_url}" alt="">` : "No Photo";
+    card.innerHTML = `
+      <div class="id-photo">${photoHtml}</div>
+      <div class="id-info">
+        <div class="company">A's Fuel / Adie and Ace's</div>
+        <div class="name">${emp.full_name}</div>
+        <div class="role">${emp.posts?.name || "—"}</div>
+        <div class="branch">${emp.branches?.code || "—"} — ${emp.branches?.name || ""}</div>
+        <div class="tm">TM #${emp.tm_number}</div>
+      </div>
+      <div class="id-qr"><canvas id="idqr-${emp.tm_number}"></canvas></div>
+    `;
+    grid.appendChild(card);
+    // QR content: EMP:<tm_number> -- read by the Clock app's "Scan ID" mode.
+    QRCode.toCanvas(document.getElementById(`idqr-${emp.tm_number}`), `EMP:${emp.tm_number}`, { width: 62, margin: 0 });
+  }
+  status.textContent = `${data.length} card(s) ready.`;
 }
 let currentBranchId = null;
 function openBranchModal(id) {
