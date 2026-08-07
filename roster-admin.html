@@ -75,6 +75,7 @@ tr:hover { background:#25324a; }
 <body>
 
 <div id="pinScreen" class="pin-screen">
+  <img src="logo.png" alt="A's Fuel" style="width:72px; height:72px; border-radius:50%; margin-bottom:8px;">
   <h1>GS Roster</h1>
   <p class="small">Weekly Scheduling — sign in with your manager account</p>
   <label style="margin-top:14px;">Email</label>
@@ -88,9 +89,12 @@ tr:hover { background:#25324a; }
 <div id="app" class="wrap" style="display:none;">
   <div class="nav-links"><a href="hr-admin.html">HR Admin</a><a href="timesheet-admin.html">Timesheet Admin</a><a href="roster-admin.html">Roster</a></div>
   <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-    <div>
-      <h1>GS Roster — Weekly Scheduling</h1>
-      <p class="small" style="margin-bottom:16px;">Assigns crew to shifts. Timesheet reads its crew list from here.</p>
+    <div style="display:flex; align-items:center; gap:12px;">
+      <img src="logo.png" alt="A's Fuel" style="width:44px; height:44px; border-radius:50%;">
+      <div>
+        <h1 style="margin:0;">GS Roster — Weekly Scheduling</h1>
+        <p class="small" style="margin-bottom:0;">Assigns crew to shifts. Timesheet reads its crew list from here.</p>
+      </div>
     </div>
     <div style="text-align:right;">
       <div class="small" id="whoAmI"></div>

@@ -48,6 +48,7 @@ tr:hover { background:#25324a; }
 <body>
 
 <div id="pinScreen" class="pin-screen">
+  <img src="logo.png" alt="A's Fuel" style="width:72px; height:72px; border-radius:50%; margin-bottom:8px;">
   <h1>GS HR</h1>
   <p class="small">Employee Database — Admin access only</p>
   <input type="password" id="pinInput" placeholder="Enter PIN" style="text-align:center; font-size:18px; letter-spacing:4px;">
@@ -56,7 +57,10 @@ tr:hover { background:#25324a; }
 </div>
 
 <div id="app" class="wrap" style="display:none;">
-  <h1>GS HR — Employee Database</h1>
+  <div style="display:flex; align-items:center; gap:12px;">
+    <img src="logo.png" alt="A's Fuel" style="width:44px; height:44px; border-radius:50%;">
+    <h1 style="margin:0;">GS HR — Employee Database</h1>
+  </div>
   <p class="small" style="margin-bottom:16px;">Admin app. Roster, Timesheet, and Products/Selling all read employee data from here. Uses the same admin PIN as Timesheet.</p>
 
   <div class="tabs">
@@ -460,7 +464,7 @@ async function loadIdCards() {
         <input type="checkbox" class="id-card-check no-print" checked title="Include in print" onchange="this.closest('.id-card').classList.toggle('card-unselected', !this.checked)">
         <div class="id-photo">${photoHtml}</div>
         <div class="id-info">
-          <div class="company">A's Fuel / Adie and Ace's</div>
+          <div class="company"><img src="logo.png" alt="A's Fuel" style="height:16px; width:16px; border-radius:50%; vertical-align:middle; margin-right:4px;">A's Fuel / Adie and Ace's</div>
           <div class="name">${emp.full_name}</div>
           <div class="role">${emp.posts?.name || "—"}</div>
           <div class="branch">${emp.branches?.code || "—"} — ${emp.branches?.name || ""}</div>
