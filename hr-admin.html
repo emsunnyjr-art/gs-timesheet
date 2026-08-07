@@ -133,6 +133,14 @@ tr:hover { background:#25324a; }
           <label style="margin-top:0;">Filter by branch</label>
           <select id="idcardBranchFilter"><option value="">All branches</option></select>
         </div>
+        <div style="min-width:160px;">
+          <label style="margin-top:0;">Status</label>
+          <select id="idcardStatusFilter">
+            <option value="active" selected>Active</option>
+            <option value="inactive">Not Active</option>
+            <option value="">All</option>
+          </select>
+        </div>
         <button class="secondary" onclick="loadIdCards()">Load / Refresh</button>
         <button onclick="window.print()">Print Cards</button>
         <span class="small" id="idcardStatus"></span>
@@ -358,6 +366,8 @@ document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () =>
   document.getElementById("panel-" + t.dataset.tab).classList.add("active");
   if (t.dataset.tab === "idcards") loadIdCards();
 }));
+document.getElementById("idcardBranchFilter").addEventListener("change", loadIdCards);
+document.getElementById("idcardStatusFilter").addEventListener("change", loadIdCards);
 
 function toast(msg) {
   const t = document.getElementById("toast");
@@ -404,23 +414,24 @@ async function loadIdCards() {
 
   try {
     const branchId = document.getElementById("idcardBranchFilter").value;
+    const statusFilter = document.getElementById("idcardStatusFilter").value;
     let q = supabase.from("employees")
-      .select("id, tm_number, full_name, photo_url, home_branch_id, branches(code,name), posts(name)")
-      .eq("status", "active")
+      .select("id, tm_number, full_name, photo_url, home_branch_id, status, branches(code,name), posts(name)")
       .order("full_name");
+    if (statusFilter) q = q.eq("status", statusFilter);
     if (branchId) q = q.eq("home_branch_id", branchId);
 
     const { data, error } = await q;
     if (error) { status.textContent = "Error: " + error.message; return; }
 
-    const qrLibMissing = typeof QRCode === "undefined";
-    if (qrLibMissing) console.error("QRCode library failed to load from CDN -- cards will render without QR codes.");
-
-    let qrFailures = 0;
     for (const emp of (data || [])) {
       const card = document.createElement("div");
       card.className = "id-card";
       const photoHtml = emp.photo_url ? `<img src="${emp.photo_url}" alt="">` : "No Photo";
+      // QR generated as a plain image (no JS library / CDN script dependency
+      // to fail silently) -- content is EMP:<tm_number>, read by the Clock
+      // app's "Scan ID" mode.
+      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=140x140&margin=0&data=${encodeURIComponent("EMP:" + emp.tm_number)}`;
       card.innerHTML = `
         <div class="id-photo">${photoHtml}</div>
         <div class="id-info">
@@ -428,27 +439,13 @@ async function loadIdCards() {
           <div class="name">${emp.full_name}</div>
           <div class="role">${emp.posts?.name || "—"}</div>
           <div class="branch">${emp.branches?.code || "—"} — ${emp.branches?.name || ""}</div>
-          <div class="tm">TM #${emp.tm_number}</div>
+          <div class="tm">TM #${emp.tm_number}${emp.status !== "active" ? " · " + emp.status : ""}</div>
         </div>
-        <div class="id-qr"><canvas id="idqr-${emp.tm_number}"></canvas></div>
+        <div class="id-qr"><img src="${qrUrl}" width="62" height="62" alt="QR" onerror="this.replaceWith(document.createTextNode('QR failed to load'))"></div>
       `;
       grid.appendChild(card);
-      // QR content: EMP:<tm_number> -- read by the Clock app's "Scan ID" mode.
-      // Guarded individually so one bad record or a missing QR library can't
-      // silently stall the whole batch.
-      if (!qrLibMissing) {
-        try {
-          QRCode.toCanvas(document.getElementById(`idqr-${emp.tm_number}`), `EMP:${emp.tm_number}`, { width: 62, margin: 0 });
-        } catch (qrErr) {
-          qrFailures++;
-          console.error(`QR generation failed for TM ${emp.tm_number}:`, qrErr);
-        }
-      }
     }
-    let msg = `${data.length} card(s) ready.`;
-    if (qrLibMissing) msg += " QR code library didn't load — cards have no QR codes this time, try refreshing.";
-    else if (qrFailures) msg += ` (${qrFailures} card(s) missing a QR code.)`;
-    status.textContent = msg;
+    status.textContent = `${data.length} card(s) ready.`;
   } catch (err) {
     console.error("loadIdCards failed:", err);
     status.textContent = "Something went wrong loading cards: " + (err.message || err);
