@@ -111,6 +111,20 @@ tr:hover { background:#25324a; }
     </div>
   </div>
 
+  <!-- ===================== POSTS ===================== -->
+  <div class="panel" id="panel-posts">
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h2 style="margin:0;">Posts (job titles)</h2>
+        <button onclick="openPostModal()">+ Add Post</button>
+      </div>
+      <table style="margin-top:10px;">
+        <thead><tr><th>Name</th><th>Active</th></tr></thead>
+        <tbody id="postTableBody"><tr><td colspan="2" class="small">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- ===================== ID CARDS ===================== -->
   <div class="panel" id="panel-idcards">
     <div class="card no-print">
