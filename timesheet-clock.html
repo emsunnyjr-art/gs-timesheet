@@ -514,17 +514,26 @@ function checkRosterMatch(employeeId) {
 // makes the roster's predetermined shift time matter in practice -- the
 // person doesn't choose in/out themselves, the system infers it from
 // whether they're already clocked in.
+// Live check (not the locally-cached openEntryEmployeeIds set) for whether
+// this employee currently has an open entry. Used both to auto-detect the
+// action and, more importantly, as a hard gate right before a Time Out
+// actually saves -- so it can't go stale between when the badge was shown
+// and when the person taps confirm.
+async function hasOpenEntry(employeeId) {
+  const { data, error } = await supabase
+    .from("timesheet_entries")
+    .select("id")
+    .eq("employee_id", employeeId)
+    .is("time_out", null)
+    .order("time_in", { ascending: false })
+    .limit(1);
+  if (error) throw error;
+  return !!(data && data.length);
+}
+
 async function detectClockAction(employeeId) {
   try {
-    const { data, error } = await supabase
-      .from("timesheet_entries")
-      .select("id")
-      .eq("employee_id", employeeId)
-      .is("time_out", null)
-      .order("time_in", { ascending: false })
-      .limit(1);
-    if (error) throw error;
-    return (data && data.length) ? "out" : "in";
+    return (await hasOpenEntry(employeeId)) ? "out" : "in";
   } catch (err) {
     console.error("detectClockAction failed, defaulting to Time In:", err);
     return "in"; // safest default if the lookup fails
@@ -616,11 +625,44 @@ document.getElementById("cancelBtn").addEventListener("click", () => {
 
 async function submitEntry(type) {
   const employee_id = selectedEmployeeId;
+  const employee_name = selectedEmployeeName;
   const branch_id = document.getElementById("branchSelect").value;
   if (!employee_id || !branch_id) {
     logMsg("Confirm identity and select branch first.", "queued");
     return;
   }
+
+  // Hard rule: never record a Time Out for someone with no open entry --
+  // even if the manual override link was used to force this action, or the
+  // badge shown earlier has since gone stale. Checked live, right here,
+  // not from any cached state.
+  if (type === "out") {
+    if (navigator.onLine) {
+      let stillOpen;
+      try {
+        stillOpen = await hasOpenEntry(employee_id);
+      } catch (err) {
+        logMsg("Could not verify clock-in status — try again. (" + (err.message || err) + ")", "queued");
+        return;
+      }
+      if (!stillOpen) {
+        logMsg(`⚠ ${employee_name} is not currently clocked in — can't Time Out. Please select or scan the correct TM.`, "queued");
+        openEntryEmployeeIds.delete(employee_id); // correct any stale local state
+        renderTodayRoster();
+        resetSelection();
+        setMode(mode);
+        return;
+      }
+    } else if (!openEntryEmployeeIds.has(employee_id)) {
+      // Offline: can't do a live check, so fall back to the last-known
+      // local state rather than blocking Time Out entirely while offline.
+      logMsg(`⚠ ${employee_name} doesn't appear to be clocked in — can't Time Out. Please select or scan the correct TM.`, "queued");
+      resetSelection();
+      setMode(mode);
+      return;
+    }
+  }
+
   const entry = {
     id: crypto.randomUUID(),
     employee_id, branch_id, type,
