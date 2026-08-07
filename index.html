@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<title>A's Fuel — GS Apps</title>
+
+<!-- PWA: lets this be added to a phone's home screen and open without browser chrome -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0f172a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="GS Apps">
+<link rel="apple-touch-icon" href="logo-256.png">
+<link rel="icon" href="logo-128.png">
+
+<style>
+  :root { --bg:#0f172a; --card:#1e293b; --accent:#22c55e; --text:#f1f5f9; --muted:#94a3b8; --border:#334155; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { height:100%; }
+  body {
+    margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background: radial-gradient(circle at 50% 0%, #1e293b 0%, #0f172a 60%);
+    color:var(--text); min-height:100vh;
+    display:flex; flex-direction:column; align-items:center;
+    padding: max(32px, env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom));
+  }
+  .brand { text-align:center; margin-bottom:36px; }
+  .brand img { width:88px; height:88px; border-radius:22px; box-shadow:0 8px 24px rgba(0,0,0,.4); }
+  .brand h1 { font-size:20px; margin:14px 0 2px; font-weight:700; }
+  .brand p { font-size:13px; color:var(--muted); margin:0; }
+
+  .grid {
+    display:grid; grid-template-columns:repeat(3, 1fr); gap:20px;
+    width:100%; max-width:460px;
+  }
+  @media (max-width:420px) { .grid { grid-template-columns:repeat(3, 1fr); gap:14px; } }
+
+  .app-tile {
+    display:flex; flex-direction:column; align-items:center; gap:8px;
+    text-decoration:none; color:var(--text);
+    -webkit-user-select:none; user-select:none;
+  }
+  .icon {
+    width:100%; aspect-ratio:1; border-radius:22%;
+    background:linear-gradient(160deg, #263349, #16202f);
+    border:1px solid var(--border);
+    display:flex; align-items:center; justify-content:center;
+    font-size:34px;
+    box-shadow:0 6px 16px rgba(0,0,0,.35);
+    transition:transform .12s ease;
+  }
+  .app-tile:active .icon { transform:scale(0.92); }
+  .icon img { width:56%; height:56%; object-fit:contain; border-radius:50%; }
+  .label { font-size:12.5px; text-align:center; line-height:1.25; color:var(--text); font-weight:500; }
+
+  .footer { margin-top:auto; padding-top:40px; text-align:center; }
+  .footer .small { font-size:11px; color:var(--muted); }
+</style>
+</head>
+<body>
+
+  <div class="brand">
+    <img src="logo.png" alt="A's Fuel">
+    <h1>A's Fuel</h1>
+    <p>GS Operations</p>
+  </div>
+
+  <div class="grid">
+    <a class="app-tile" href="roster-admin.html">
+      <div class="icon"><img src="logo.png" alt=""></div>
+      <div class="label">Roster</div>
+    </a>
+    <a class="app-tile" href="timesheet-admin.html">
+      <div class="icon"><img src="logo.png" alt=""></div>
+      <div class="label">Timesheet<br>Admin</div>
+    </a>
+    <a class="app-tile" href="timesheet-clock.html">
+      <div class="icon"><img src="logo.png" alt=""></div>
+      <div class="label">Clock<br>In / Out</div>
+    </a>
+  </div>
+
+  <div class="footer">
+    <div class="small">Tip: use your browser's "Add to Home Screen" on this page for a one-tap app icon.</div>
+  </div>
+
+<script>
+// Register a minimal service worker only so iOS/Android treat this as an
+// installable app (required for "Add to Home Screen" to behave like a real
+// app rather than a bookmark on some Android/Chrome versions). No offline
+// caching logic -- these apps need a live connection to Supabase anyway.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+</script>
+</body>
+</html>

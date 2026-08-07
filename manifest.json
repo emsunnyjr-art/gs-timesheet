@@ -1,0 +1,16 @@
+{
+  "name": "A's Fuel — GS Apps",
+  "short_name": "GS Apps",
+  "description": "A's Fuel operations apps: Roster, Timesheet Admin, Clock In/Out",
+  "start_url": "index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "icons": [
+    { "src": "logo-128.png", "sizes": "128x128", "type": "image/png" },
+    { "src": "logo-256.png", "sizes": "256x256", "type": "image/png" },
+    { "src": "logo-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
