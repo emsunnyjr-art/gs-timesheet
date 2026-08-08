@@ -73,6 +73,7 @@
     <select id="homeShift"></select>
     <div class="grid-menu">
       <div class="menu-btn" onclick="openPanel('dipstick')"><span class="emoji">🪄</span><span class="lbl">Dipstick Check</span></div>
+      <div class="menu-btn" onclick="openPanel('delivery')"><span class="emoji">🚛</span><span class="lbl">Log Delivery</span></div>
       <div class="menu-btn" onclick="openPanel('meter')"><span class="emoji">⛽</span><span class="lbl">Pump Meter</span></div>
       <div class="menu-btn" onclick="openPanel('expense')"><span class="emoji">🧾</span><span class="lbl">Log Expense</span></div>
       <div class="menu-btn" onclick="openPanel('companyfuel')"><span class="emoji">🚚</span><span class="lbl">Company Fuel</span></div>
@@ -99,6 +100,62 @@
     <button class="btn-secondary" id="dsPhoto_snapBtn" style="display:none;" onclick="snapStillPhoto('dsPhoto')">Capture</button>
     <button class="btn-primary" onclick="saveDipstick()">Save Dipstick Check</button>
     <div class="status" id="dsStatus"></div>
+  </div>
+
+  <!-- DELIVERY -->
+  <div class="card panel" id="panel-delivery">
+    <a class="backlink" href="#" onclick="openPanel('home'); return false;">← Back</a>
+    <h1>Log Delivery</h1>
+    <p class="small">If a delivery arrives after the shift closed, leave Shift as "No active shift" below — this still saves correctly and links to the branch and date.</p>
+    <label>Product</label>
+    <select id="dlProduct" onchange="loadTanksForDelivery()"></select>
+    <label>Tank</label>
+    <select id="dlTank"></select>
+    <label>Shift</label>
+    <select id="dlShift"><option value="">No active shift (delivery after shift closed)</option></select>
+    <label>Vendor</label>
+    <select id="dlVendor"><option value="">—</option></select>
+    <label>Driver</label>
+    <select id="dlDriver"><option value="">—</option></select>
+    <label>Plate Number</label>
+    <input type="text" id="dlPlate">
+    <label>Invoice #</label>
+    <input type="text" id="dlInvoice">
+    <label>Check # (issued to supplier)</label>
+    <input type="text" id="dlCheck">
+    <label>Invoiced Liters</label>
+    <input type="number" step="0.01" id="dlLiters">
+    <label>Cost / Liter (actual paid)</label>
+    <input type="number" step="0.0001" id="dlCost">
+    <label>Market Reference Price / Liter</label>
+    <input type="number" step="0.0001" id="dlMarket" placeholder="for monitoring only">
+
+    <label>Dipstick BEFORE unloading — Liters</label>
+    <input type="number" step="0.01" id="dlBeforeL">
+    <button class="btn-secondary" onclick="openStillCamera('dlBeforePhoto')">📷 Photo — Before</button>
+    <video id="dlBeforePhoto_video" autoplay playsinline muted></video>
+    <canvas id="dlBeforePhoto_canvas" style="display:none;"></canvas>
+    <img id="dlBeforePhoto_preview" class="preview">
+    <button class="btn-secondary" id="dlBeforePhoto_snapBtn" style="display:none;" onclick="snapStillPhoto('dlBeforePhoto')">Capture</button>
+
+    <label>Dipstick AFTER unloading — Liters</label>
+    <input type="number" step="0.01" id="dlAfterL">
+    <button class="btn-secondary" onclick="openStillCamera('dlAfterPhoto')">📷 Photo — After</button>
+    <video id="dlAfterPhoto_video" autoplay playsinline muted></video>
+    <canvas id="dlAfterPhoto_canvas" style="display:none;"></canvas>
+    <img id="dlAfterPhoto_preview" class="preview">
+    <button class="btn-secondary" id="dlAfterPhoto_snapBtn" style="display:none;" onclick="snapStillPhoto('dlAfterPhoto')">Capture</button>
+
+    <label>Invoice / Delivery Slip Photo</label>
+    <button class="btn-secondary" onclick="openStillCamera('dlInvoicePhoto')">📷 Photo — Invoice</button>
+    <video id="dlInvoicePhoto_video" autoplay playsinline muted></video>
+    <canvas id="dlInvoicePhoto_canvas" style="display:none;"></canvas>
+    <img id="dlInvoicePhoto_preview" class="preview">
+    <button class="btn-secondary" id="dlInvoicePhoto_snapBtn" style="display:none;" onclick="snapStillPhoto('dlInvoicePhoto')">Capture</button>
+
+    <label style="display:flex; align-items:center; gap:8px; margin-top:14px;"><input type="checkbox" id="dlPaid" style="width:auto;"> Paid</label>
+    <button class="btn-primary" onclick="saveDelivery()">Save Delivery</button>
+    <div class="status" id="dlStatus"></div>
   </div>
 
   <!-- METER -->
@@ -310,11 +367,14 @@ function openPanel(name) {
   document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
   document.getElementById("panel-" + name).classList.add("active");
   if (name === "dipstick") loadTanksForDipstick();
+  if (name === "delivery") loadDeliveryForm();
   if (name === "meter") loadPumpsForMeter();
   if (name === "cashrecon") loadCashReconPreview();
 }
 
 // ---------- Init ----------
+let products = [], vendors = [], drivers = [];
+
 async function initApp() {
   const { data: br } = await supabase.from("branches").select("*").order("code");
   branches = br || [];
@@ -326,6 +386,18 @@ async function initApp() {
 
   const { data: cc } = await supabase.from("fuel_credit_customers").select("*").order("name");
   creditCustomers = cc || [];
+
+  const { data: pr } = await supabase.from("fuel_products").select("*").eq("active", true).order("code");
+  products = pr || [];
+  document.getElementById("dlProduct").innerHTML = products.map(p => `<option value="${p.id}">${p.name}</option>`).join("");
+
+  const { data: vd } = await supabase.from("fuel_vendors").select("*").order("name");
+  vendors = vd || [];
+  document.getElementById("dlVendor").innerHTML = "<option value=''>—</option>" + vendors.map(v => `<option value="${v.id}">${v.name}</option>`).join("");
+
+  const { data: dr } = await supabase.from("fuel_delivery_drivers").select("*").order("name");
+  drivers = dr || [];
+  document.getElementById("dlDriver").innerHTML = "<option value=''>—</option>" + drivers.map(d => `<option value="${d.id}">${d.name}</option>`).join("");
 
   await loadShiftsForBranch();
 }
@@ -418,6 +490,60 @@ async function runOcrAssist(key, blob) {
   } catch (err) {
     statusEl.textContent = "OCR unavailable — please type the number manually.";
   }
+}
+
+// ============================================================
+// DELIVERY
+// ============================================================
+async function loadDeliveryForm() {
+  document.getElementById("dlShift").innerHTML = "<option value=''>No active shift (delivery after shift closed)</option>" +
+    (currentShift ? `<option value="${currentShift}" selected>Current shift</option>` : "");
+  loadTanksForDelivery();
+}
+function loadTanksForDelivery() {
+  const productId = document.getElementById("dlProduct").value;
+  const opts = tanks.filter(t => t.product_id === productId && t.branch_id === currentBranch)
+    .map(t => `<option value="${t.id}">${t.tank_label}</option>`).join("");
+  document.getElementById("dlTank").innerHTML = opts || "<option value=''>No tank set up — add one in Sales Admin</option>";
+}
+document.getElementById("dlProduct")?.addEventListener("change", loadTanksForDelivery);
+
+async function saveDelivery() {
+  const status = document.getElementById("dlStatus");
+  const tankId = document.getElementById("dlTank").value;
+  if (!tankId) { status.textContent = "No tank available for this product/branch."; status.className = "status err"; return; }
+
+  const [beforePhoto, afterPhoto, invoicePhoto] = await Promise.all([
+    uploadPhoto(stillBlobs["dlBeforePhoto"], "fuel-deliveries"),
+    uploadPhoto(stillBlobs["dlAfterPhoto"], "fuel-deliveries"),
+    uploadPhoto(stillBlobs["dlInvoicePhoto"], "fuel-deliveries")
+  ]);
+
+  const payload = {
+    branch_id: currentBranch,
+    product_id: document.getElementById("dlProduct").value,
+    tank_id: tankId,
+    vendor_id: document.getElementById("dlVendor").value || null,
+    driver_id: document.getElementById("dlDriver").value || null,
+    plate_number: document.getElementById("dlPlate").value || null,
+    invoice_number: document.getElementById("dlInvoice").value || null,
+    check_number: document.getElementById("dlCheck").value || null,
+    shift_id: document.getElementById("dlShift").value || null,
+    delivery_date: todayIso(),
+    invoiced_liters: parseFloat(document.getElementById("dlLiters").value),
+    cost_per_liter: parseFloat(document.getElementById("dlCost").value),
+    market_reference_price_per_liter: document.getElementById("dlMarket").value ? parseFloat(document.getElementById("dlMarket").value) : null,
+    dipstick_before_liters: parseFloat(document.getElementById("dlBeforeL").value),
+    dipstick_after_liters: parseFloat(document.getElementById("dlAfterL").value),
+    dipstick_before_photo_url: beforePhoto,
+    dipstick_after_photo_url: afterPhoto,
+    invoice_photo_url: invoicePhoto,
+    paid: document.getElementById("dlPaid").checked
+  };
+  const { error } = await supabase.from("fuel_deliveries").insert(payload);
+  if (error) { status.textContent = "Error: " + error.message; status.className = "status err"; return; }
+  status.textContent = "Delivery saved ✓"; status.className = "status ok";
+  ["dlLiters","dlCost","dlMarket","dlBeforeL","dlAfterL","dlPlate","dlInvoice","dlCheck"].forEach(id => document.getElementById(id).value = "");
 }
 
 // ============================================================

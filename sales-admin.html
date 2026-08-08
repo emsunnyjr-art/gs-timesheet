@@ -150,11 +150,12 @@
           <div><label>Dipstick AFTER — Liters</label><input type="number" step="0.01" id="dlvAfterL"></div>
         </div>
         <label style="display:flex; align-items:center; gap:8px; margin-top:14px;"><input type="checkbox" id="dlvPaid" style="width:auto;"> Paid</label>
-        <button onclick="saveDelivery()">Save Delivery</button>
+        <button onclick="saveDelivery()" id="dlvSaveBtn">Save Delivery</button>
+        <button class="secondary" onclick="cancelEditDelivery()" id="dlvCancelBtn" style="display:none;">Cancel Edit</button>
         <div class="msg" id="dlvMsg"></div>
       </div>
       <div class="card">
-        <h2>Recent Deliveries</h2>
+        <h2>Recent Deliveries <span class="small">(click a row to edit)</span></h2>
         <table id="deliveriesTable"><thead><tr><th>Date</th><th>Product</th><th>Vendor</th><th>Liters</th><th>Cost/L</th><th>WAC After</th><th>Delivered vs Invoiced</th><th>Paid</th></tr></thead><tbody></tbody></table>
       </div>
     </div>
@@ -592,13 +593,17 @@ async function loadDashboard() {
 // ============================================================
 // DELIVERIES
 // ============================================================
+let deliveriesCache = [];
+let editingDeliveryId = null;
+
 async function loadDeliveries() {
   if (!currentBranch) return;
   await loadShiftOptions("dlvShift");
   const { data } = await supabase.from("fuel_deliveries").select("*, fuel_products(name), fuel_vendors(name)")
     .eq("branch_id", currentBranch).order("created_at", { ascending: false }).limit(20);
-  document.getElementById("deliveriesTable").querySelector("tbody").innerHTML = (data || []).map(d => `
-    <tr>
+  deliveriesCache = data || [];
+  document.getElementById("deliveriesTable").querySelector("tbody").innerHTML = (data || []).map((d,i) => `
+    <tr style="cursor:pointer;" onclick="editDelivery(${i})">
       <td>${d.delivery_date}</td><td>${d.fuel_products?.name || ""}</td><td>${d.fuel_vendors?.name || "—"}</td>
       <td>${liters(d.invoiced_liters)}</td><td>${peso(d.cost_per_liter)}</td><td>${peso(d.wac_after)}</td>
       <td style="${d.variance_liters != 0 ? 'color:var(--danger); font-weight:700;' : ''}">${d.variance_liters > 0 ? "+" : ""}${d.variance_liters} L</td>
@@ -606,12 +611,49 @@ async function loadDeliveries() {
     </tr>`).join("") || "<tr><td colspan='8' class='small'>No deliveries yet.</td></tr>";
 }
 
+function editDelivery(i) {
+  const d = deliveriesCache[i];
+  editingDeliveryId = d.id;
+  document.getElementById("dlvProduct").value = d.product_id;
+  populateTankSelectForDelivery();
+  document.getElementById("dlvTank").value = d.tank_id;
+  document.getElementById("dlvVendor").value = d.vendor_id || "";
+  document.getElementById("dlvDriver").value = d.driver_id || "";
+  document.getElementById("dlvPlate").value = d.plate_number || "";
+  document.getElementById("dlvShift").value = d.shift_id || "";
+  document.getElementById("dlvInvoice").value = d.invoice_number || "";
+  document.getElementById("dlvCheck").value = d.check_number || "";
+  document.getElementById("dlvDate").value = d.delivery_date;
+  document.getElementById("dlvLiters").value = d.invoiced_liters;
+  document.getElementById("dlvCost").value = d.cost_per_liter;
+  document.getElementById("dlvMarket").value = d.market_reference_price_per_liter || "";
+  document.getElementById("dlvBeforeCm").value = d.dipstick_before_cm || "";
+  document.getElementById("dlvBeforeL").value = d.dipstick_before_liters;
+  document.getElementById("dlvAfterCm").value = d.dipstick_after_cm || "";
+  document.getElementById("dlvAfterL").value = d.dipstick_after_liters;
+  document.getElementById("dlvPaid").checked = d.paid;
+  document.getElementById("dlvSaveBtn").textContent = "Update Delivery (recalculates WAC chain)";
+  document.getElementById("dlvCancelBtn").style.display = "block";
+  document.getElementById("dlvMsg").textContent = "";
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function cancelEditDelivery() {
+  editingDeliveryId = null;
+  document.getElementById("dlvSaveBtn").textContent = "Save Delivery";
+  document.getElementById("dlvCancelBtn").style.display = "none";
+  ["dlvPlate","dlvInvoice","dlvCheck","dlvLiters","dlvCost","dlvMarket","dlvBeforeCm","dlvBeforeL","dlvAfterCm","dlvAfterL"].forEach(id => document.getElementById(id).value = "");
+  document.getElementById("dlvPaid").checked = false;
+  document.getElementById("dlvDate").value = todayIso();
+}
+
 async function saveDelivery() {
   const msg = document.getElementById("dlvMsg");
   msg.textContent = ""; msg.className = "msg";
+  const productId = document.getElementById("dlvProduct").value;
   const payload = {
     branch_id: currentBranch,
-    product_id: document.getElementById("dlvProduct").value,
+    product_id: productId,
     tank_id: document.getElementById("dlvTank").value,
     vendor_id: document.getElementById("dlvVendor").value || null,
     driver_id: document.getElementById("dlvDriver").value || null,
@@ -630,9 +672,19 @@ async function saveDelivery() {
     paid: document.getElementById("dlvPaid").checked
   };
   if (!payload.tank_id) { msg.textContent = "No tank set up for this product/branch — add one in Setup first."; msg.className = "msg err"; return; }
-  const { error } = await supabase.from("fuel_deliveries").insert(payload);
-  if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
-  msg.textContent = "Delivery saved."; msg.className = "msg ok";
+
+  if (editingDeliveryId) {
+    const { error } = await supabase.from("fuel_deliveries").update(payload).eq("id", editingDeliveryId);
+    if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+    const { error: rpcErr } = await supabase.rpc("fn_fuel_recompute_wac_chain", { p_branch_id: currentBranch, p_product_id: productId });
+    if (rpcErr) { msg.textContent = "Saved, but WAC recompute failed: " + rpcErr.message; msg.className = "msg err"; return; }
+    msg.textContent = "Delivery updated — WAC chain recalculated for every delivery of this product."; msg.className = "msg ok";
+    cancelEditDelivery();
+  } else {
+    const { error } = await supabase.from("fuel_deliveries").insert(payload);
+    if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+    msg.textContent = "Delivery saved."; msg.className = "msg ok";
+  }
   loadDeliveries();
 }
 
