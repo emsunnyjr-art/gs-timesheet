@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Sales — On Shift</title>
+<style>
+  :root { --bg:#0f172a; --card:#1e293b; --accent:#22c55e; --accent-out:#ef4444; --text:#f1f5f9; --muted:#94a3b8; --border:#334155; --orange:#f59e0b; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; padding:16px; }
+  .card { background:var(--card); border-radius:16px; padding:20px; max-width:480px; margin:0 auto 16px; }
+  h1 { font-size:18px; margin:0 0 6px; }
+  h2 { font-size:15px; margin:0 0 12px; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; }
+  label { display:block; font-size:13px; color:var(--muted); margin-bottom:6px; margin-top:12px; }
+  select, input[type=text], input[type=number], input[type=search], textarea {
+    width:100%; padding:12px; border-radius:10px; border:1px solid var(--border); background:#0f172a; color:var(--text); font-size:16px;
+  }
+  textarea { resize:vertical; min-height:60px; }
+  button { padding:16px; border-radius:12px; border:none; font-size:16px; font-weight:600; cursor:pointer; width:100%; margin-top:14px; }
+  .btn-primary { background:var(--accent); color:#052e16; }
+  .btn-secondary { background:#334155; color:var(--text); }
+  .btn-danger { background:var(--accent-out); color:#450a0a; }
+  button:disabled { opacity:0.4; cursor:not-allowed; }
+  .status { font-size:13px; color:var(--muted); margin-top:10px; min-height:16px; }
+  .status.ok { color:var(--accent); }
+  .status.err { color:var(--danger, #ef4444); }
+  video, canvas, img.preview { width:100%; border-radius:10px; display:none; margin-top:10px; }
+  .nav-links { font-size:12px; margin-bottom:14px; }
+  .nav-links a { color:var(--muted); text-decoration:none; margin-right:14px; }
+  .grid-menu { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:16px; }
+  .menu-btn { background:#0f172a; border:1px solid var(--border); border-radius:14px; padding:18px 10px; text-align:center; cursor:pointer; }
+  .menu-btn .emoji { font-size:28px; display:block; margin-bottom:6px; }
+  .menu-btn .lbl { font-size:12.5px; font-weight:600; }
+  .panel { display:none; }
+  .panel.active { display:block; }
+  .backlink { color:var(--muted); text-decoration:none; font-size:13px; }
+  .stat-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:8px; }
+  .stat { background:#0f172a; border:1px solid var(--border); border-radius:10px; padding:10px; }
+  .stat .k { font-size:10.5px; color:var(--muted); text-transform:uppercase; }
+  .stat .v { font-size:16px; font-weight:700; margin-top:2px; }
+  .verified-box { margin-top:10px; padding:10px; border-radius:10px; background:#052e1680; border:1px solid var(--accent); display:none; }
+  .verified-box img { width:56px; height:56px; border-radius:8px; object-fit:cover; float:left; margin-right:10px; }
+  .pin-screen { max-width:340px; margin:60px auto; text-align:center; }
+  .small { font-size:12px; color:var(--muted); }
+</style>
+</head>
+<body>
+
+<div id="pinScreen" class="pin-screen">
+  <img src="logo.png" alt="A's Fuel" style="width:72px; height:72px; border-radius:50%; margin-bottom:8px;">
+  <h1>Sales — On Shift</h1>
+  <p class="small">This device stays signed in for the shift. Sign in once with a manager account.</p>
+  <label>Email</label>
+  <input type="text" id="loginEmail" placeholder="you@example.com">
+  <label>Password</label>
+  <input type="text" id="loginPassword" placeholder="Password" style="-webkit-text-security:disc;">
+  <button class="btn-primary" onclick="doLogin()">Sign in</button>
+  <div id="pinError" class="status err"></div>
+</div>
+
+<div id="app" style="display:none;">
+
+  <!-- HOME -->
+  <div class="card panel active" id="panel-home">
+    <div class="nav-links"><a href="index.html">🏠 Home</a><a href="sales-admin.html">Sales Admin</a></div>
+    <div style="display:flex; align-items:center; gap:10px;">
+      <img src="logo.png" alt="A's Fuel" style="width:36px; height:36px; border-radius:50%;">
+      <h1 style="margin:0;">On Shift</h1>
+    </div>
+    <label>Branch</label>
+    <select id="homeBranch" onchange="onBranchChange()"></select>
+    <label>Shift</label>
+    <select id="homeShift"></select>
+    <div class="grid-menu">
+      <div class="menu-btn" onclick="openPanel('dipstick')"><span class="emoji">🪄</span><span class="lbl">Dipstick Check</span></div>
+      <div class="menu-btn" onclick="openPanel('meter')"><span class="emoji">⛽</span><span class="lbl">Pump Meter</span></div>
+      <div class="menu-btn" onclick="openPanel('expense')"><span class="emoji">🧾</span><span class="lbl">Log Expense</span></div>
+      <div class="menu-btn" onclick="openPanel('companyfuel')"><span class="emoji">🚚</span><span class="lbl">Company Fuel</span></div>
+      <div class="menu-btn" onclick="openPanel('takeaway')"><span class="emoji">💼</span><span class="lbl">Mgt Takeaway</span></div>
+      <div class="menu-btn" onclick="openPanel('cashrecon')"><span class="emoji">💵</span><span class="lbl">Close Shift / Cash</span></div>
+    </div>
+    <div class="small" style="margin-top:16px; text-align:center;"><a href="#" onclick="doLogout(); return false;" style="color:var(--muted);">Sign out this device</a></div>
+  </div>
+
+  <!-- DIPSTICK -->
+  <div class="card panel" id="panel-dipstick">
+    <a class="backlink" href="#" onclick="openPanel('home'); return false;">← Back</a>
+    <h1>Dipstick Check</h1>
+    <label>Tank</label>
+    <select id="dsTank"></select>
+    <label>Height (cm) — optional</label>
+    <input type="number" step="0.01" id="dsHeightCm">
+    <label>Liters</label>
+    <input type="number" step="0.01" id="dsLiters">
+    <button class="btn-secondary" onclick="openStillCamera('dsPhoto')">📷 Take Photo of Stick</button>
+    <video id="dsPhoto_video" autoplay playsinline muted></video>
+    <canvas id="dsPhoto_canvas" style="display:none;"></canvas>
+    <img id="dsPhoto_preview" class="preview">
+    <button class="btn-secondary" id="dsPhoto_snapBtn" style="display:none;" onclick="snapStillPhoto('dsPhoto')">Capture</button>
+    <button class="btn-primary" onclick="saveDipstick()">Save Dipstick Check</button>
+    <div class="status" id="dsStatus"></div>
+  </div>
+
+  <!-- METER -->
+  <div class="card panel" id="panel-meter">
+    <a class="backlink" href="#" onclick="openPanel('home'); return false;">← Back</a>
+    <h1>Pump Meter</h1>
+    <label>Pump</label>
+    <select id="mtPump" onchange="loadMeterState()"></select>
+    <div id="mtState" class="status"></div>
+
+    <div id="mtOpenBox" style="display:none;">
+      <hr style="border-color:var(--border); margin:14px 0;">
+      <h2>Open New Period</h2>
+      <label>Opening Liters Meter</label>
+      <input type="number" step="0.01" id="mtOpenLiters">
+      <label>Opening Peso Meter (if pump has one)</label>
+      <input type="number" step="0.01" id="mtOpenPesos">
+      <label>Selling Price / Liter</label>
+      <input type="number" step="0.01" id="mtOpenPrice">
+      <button class="btn-secondary" onclick="openStillCamera('mtOpenPhoto')">📷 Photo of Meter</button>
+      <video id="mtOpenPhoto_video" autoplay playsinline muted></video>
+      <canvas id="mtOpenPhoto_canvas" style="display:none;"></canvas>
+      <img id="mtOpenPhoto_preview" class="preview">
+      <button class="btn-secondary" id="mtOpenPhoto_snapBtn" style="display:none;" onclick="snapStillPhoto('mtOpenPhoto')">Capture</button>
+      <div class="small" id="mtOpenOcrStatus"></div>
+      <button class="btn-primary" onclick="openPeriod()">Open Period</button>
+    </div>
+
+    <div id="mtCloseBox" style="display:none;">
+      <hr style="border-color:var(--border); margin:14px 0;">
+      <h2>Close This Period</h2>
+      <div class="stat-grid">
+        <div class="stat"><div class="k">Price</div><div class="v" id="mtActivePrice">—</div></div>
+        <div class="stat"><div class="k">Opened</div><div class="v" id="mtActiveOpened">—</div></div>
+      </div>
+      <label>Closing Liters Meter</label>
+      <input type="number" step="0.01" id="mtCloseLiters">
+      <label>Closing Peso Meter (if pump has one)</label>
+      <input type="number" step="0.01" id="mtClosePesos">
+      <label>Reason</label>
+      <select id="mtCloseReason">
+        <option value="shift_boundary">End of shift</option>
+        <option value="price_change">Price change</option>
+        <option value="calibration_check">Calibration check</option>
+        <option value="delivery">Delivery arrived</option>
+        <option value="other">Other</option>
+      </select>
+      <button class="btn-secondary" onclick="openStillCamera('mtClosePhoto')">📷 Photo of Meter</button>
+      <video id="mtClosePhoto_video" autoplay playsinline muted></video>
+      <canvas id="mtClosePhoto_canvas" style="display:none;"></canvas>
+      <img id="mtClosePhoto_preview" class="preview">
+      <button class="btn-secondary" id="mtClosePhoto_snapBtn" style="display:none;" onclick="snapStillPhoto('mtClosePhoto')">Capture</button>
+      <div class="small" id="mtCloseOcrStatus"></div>
+      <button class="btn-primary" onclick="closePeriod()">Close Period</button>
+    </div>
+
+    <div id="mtAllocBox" style="display:none;">
+      <hr style="border-color:var(--border); margin:14px 0;">
+      <h2>Label Dispensed Liters</h2>
+      <p class="small">Total: <strong id="mtTargetLiters">0</strong> L. Remaining to label: <strong id="mtRemaining">0</strong> L</p>
+      <label>Category</label>
+      <select id="allocCategory" onchange="onAllocCatChange()">
+        <option value="cash_sale">Cash Sale</option>
+        <option value="credit_sale">Credit / PO Sale</option>
+        <option value="calibration">Calibration</option>
+        <option value="company_use">Company Use (needs QR)</option>
+        <option value="machine_error">Machine Error</option>
+        <option value="given_away">Given Away</option>
+        <option value="other">Other</option>
+      </select>
+      <label>Liters</label>
+      <input type="number" step="0.01" id="allocLiters">
+      <div id="allocCreditWrap" style="display:none;"><label>Credit Customer</label><select id="allocCreditCustomer"></select></div>
+      <div id="allocCompanyWrap" style="display:none;">
+        <p class="small" style="color:var(--orange);">Scan the TM's ID to authorize this company fuel take-out.</p>
+        <button class="btn-secondary" type="button" onclick="startQrFor('company')">📷 Scan TM ID</button>
+        <div class="verified-box" id="companyVerifiedBox"><img id="companyVerifiedPhoto"><div><strong id="companyVerifiedName"></strong><br><span class="small">Verified ✓</span></div></div>
+        <label>Vehicle</label><input type="text" id="allocVehicle" placeholder="e.g. plate / vehicle name">
+      </div>
+      <button class="btn-primary" onclick="addAllocation()">Add</button>
+      <div class="status" id="allocStatus"></div>
+    </div>
+  </div>
+
+  <!-- EXPENSE -->
+  <div class="card panel" id="panel-expense">
+    <a class="backlink" href="#" onclick="openPanel('home'); return false;">← Back</a>
+    <h1>Log Expense</h1>
+    <label>Category</label>
+    <select id="exCategory">
+      <option value="fuel_allowance">Fuel Allowance</option>
+      <option value="office_supplies">Office Supplies</option>
+      <option value="salary">Salary / Wage</option>
+      <option value="advance">Advance / Utang</option>
+      <option value="other">Other</option>
+    </select>
+    <label>Amount</label>
+    <input type="number" step="0.01" id="exAmount">
+    <label>Details</label>
+    <input type="text" id="exDetails" placeholder="e.g. K. Edwin — Unleaded">
+    <button class="btn-secondary" onclick="openStillCamera('exPhoto')">📷 Receipt Photo (optional)</button>
+    <video id="exPhoto_video" autoplay playsinline muted></video>
+    <canvas id="exPhoto_canvas" style="display:none;"></canvas>
+    <img id="exPhoto_preview" class="preview">
+    <button class="btn-secondary" id="exPhoto_snapBtn" style="display:none;" onclick="snapStillPhoto('exPhoto')">Capture</button>
+    <button class="btn-primary" onclick="saveExpense()">Save Expense</button>
+    <div class="status" id="exStatus"></div>
+  </div>
+
+  <!-- COMPANY FUEL (standalone quick entry, same as alloc flow but from home) -->
+  <div class="card panel" id="panel-companyfuel">
+    <a class="backlink" href="#" onclick="openPanel('home'); return false;">← Back</a>
+    <h1>Company Fuel Take-out</h1>
+    <p class="small">Go to <strong>Pump Meter</strong> and use "Company Use" when labeling dispensed liters — the QR verification happens there, tied to the actual pump period. This screen is a shortcut back to that flow.</p>
+    <button class="btn-primary" onclick="openPanel('meter')">Go to Pump Meter</button>
+  </div>
+
+  <!-- MANAGEMENT TAKEAWAY -->
+  <div class="card panel" id="panel-takeaway">
+    <a class="backlink" href="#" onclick="openPanel('home'); return false;">← Back</a>
+    <h1>Management Takeaway</h1>
+    <p class="small">Scan the manager's ID to authorize.</p>
+    <button class="btn-secondary" type="button" onclick="startQrFor('takeaway')">📷 Scan Manager ID</button>
+    <div class="verified-box" id="takeawayVerifiedBox"><img id="takeawayVerifiedPhoto"><div><strong id="takeawayVerifiedName"></strong><br><span class="small">Verified ✓</span></div></div>
+    <label>Amount</label>
+    <input type="number" step="0.01" id="twAmount">
+    <label>Details / Reason</label>
+    <input type="text" id="twDetails">
+    <button class="btn-primary" onclick="saveTakeaway()">Save Takeaway</button>
+    <div class="status" id="twStatus"></div>
+  </div>
+
+  <!-- Shared QR scan overlay used by company-fuel and takeaway -->
+  <div class="card panel" id="panel-qrscan">
+    <a class="backlink" href="#" onclick="cancelQr(); return false;">← Cancel</a>
+    <h1>Scan Employee ID</h1>
+    <video id="qrVideo" autoplay playsinline muted style="display:block;"></video>
+    <canvas id="qrCanvas" style="display:none;"></canvas>
+    <div class="status" id="qrStatus">Point camera at employee ID QR code</div>
+  </div>
+
+  <!-- CASH RECONCILIATION -->
+  <div class="card panel" id="panel-cashrecon">
+    <a class="backlink" href="#" onclick="openPanel('home'); return false;">← Back</a>
+    <h1>Close Shift / Cash</h1>
+    <div class="stat-grid">
+      <div class="stat"><div class="k">Cash Sales (auto)</div><div class="v" id="crCash">—</div></div>
+      <div class="stat"><div class="k">Credit Sales (auto)</div><div class="v" id="crCredit">—</div></div>
+      <div class="stat"><div class="k">Expenses (auto)</div><div class="v" id="crExpAuto">—</div></div>
+      <div class="stat"><div class="k">Mgt Takeaway (auto)</div><div class="v" id="crTakeAuto">—</div></div>
+    </div>
+    <label>Beginning Cash Float</label>
+    <input type="number" step="0.01" id="crBegin" value="0">
+    <label>Cash Injected</label>
+    <input type="number" step="0.01" id="crInjected" value="0">
+    <label>Bank Deposit</label>
+    <input type="number" step="0.01" id="crDeposit" value="0">
+    <label>Actual Cash Counted</label>
+    <input type="number" step="0.01" id="crActual">
+    <label>Checker</label>
+    <input type="text" id="crChecker">
+    <button class="btn-primary" onclick="saveCashRecon()">Save Reconciliation</button>
+    <div class="status" id="crStatus"></div>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script>
+const SUPABASE_URL = "https://cztkovsjxuaiburaudgk.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_eBOzdnFAdfFavl2QAYY6bA_lfAIJUhh";
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let branches = [], tanks = [], pumps = [], creditCustomers = [], employees = [];
+let currentBranch = null, currentShift = null;
+let activePeriod = null;
+let sharedStream = null, qrLoopActive = false, qrTarget = null; // qrTarget: 'company' | 'takeaway'
+let verifiedCompanyEmployee = null, verifiedTakeawayEmployee = null;
+
+function isoDate(d) { const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,"0"),day=String(d.getDate()).padStart(2,"0"); return `${y}-${m}-${day}`; }
+function todayIso() { return isoDate(new Date()); }
+function peso(n) { return "₱" + Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
+
+// ---------- Auth ----------
+async function doLogin() {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  document.getElementById("pinError").textContent = "";
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) { document.getElementById("pinError").textContent = "Sign in failed: " + error.message; return; }
+  await afterLogin();
+}
+async function doLogout() { await supabase.auth.signOut(); location.reload(); }
+async function afterLogin() {
+  document.getElementById("pinScreen").style.display = "none";
+  document.getElementById("app").style.display = "block";
+  await initApp();
+}
+(async function checkSession() {
+  const { data } = await supabase.auth.getSession();
+  if (data && data.session) await afterLogin();
+})();
+
+// ---------- Panels ----------
+function openPanel(name) {
+  stopCamera();
+  document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+  document.getElementById("panel-" + name).classList.add("active");
+  if (name === "dipstick") loadTanksForDipstick();
+  if (name === "meter") loadPumpsForMeter();
+  if (name === "cashrecon") loadCashReconPreview();
+}
+
+// ---------- Init ----------
+async function initApp() {
+  const { data: br } = await supabase.from("branches").select("*").order("code");
+  branches = br || [];
+  document.getElementById("homeBranch").innerHTML = branches.map(b => `<option value="${b.id}">${b.code} — ${b.name}</option>`).join("");
+  currentBranch = branches[0]?.id || null;
+
+  const { data: emp } = await supabase.from("employees").select("id, full_name, tm_number, photo_url").eq("status","active");
+  employees = emp || [];
+
+  const { data: cc } = await supabase.from("fuel_credit_customers").select("*").order("name");
+  creditCustomers = cc || [];
+
+  await loadShiftsForBranch();
+}
+
+async function onBranchChange() {
+  currentBranch = document.getElementById("homeBranch").value;
+  await loadShiftsForBranch();
+}
+
+async function loadShiftsForBranch() {
+  const { data } = await supabase.from("shifts").select("*").eq("branch_id", currentBranch)
+    .order("shift_date", { ascending: false }).limit(10);
+  const sel = document.getElementById("homeShift");
+  sel.innerHTML = (data || []).map(s => `<option value="${s.id}">${s.shift_date} — ${s.shift_label}</option>`).join("");
+  currentShift = data && data[0] ? data[0].id : null;
+  sel.onchange = () => { currentShift = sel.value; };
+
+  const { data: tk } = await supabase.from("fuel_tanks").select("*, fuel_products(name)").eq("branch_id", currentBranch);
+  tanks = tk || [];
+  const { data: pm } = await supabase.from("fuel_pumps").select("*, fuel_products(name)").eq("branch_id", currentBranch);
+  pumps = pm || [];
+}
+
+// ============================================================
+// Generic still-camera capture (photo evidence, no scanning)
+// key = id prefix, e.g. "dsPhoto" -> dsPhoto_video, dsPhoto_canvas, dsPhoto_preview, dsPhoto_snapBtn
+// ============================================================
+let stillBlobs = {}; // key -> Blob
+async function openStillCamera(key) {
+  const video = document.getElementById(key + "_video");
+  const snapBtn = document.getElementById(key + "_snapBtn");
+  try {
+    sharedStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+  } catch (err) { alert("Camera error: " + err.message); return; }
+  video.srcObject = sharedStream;
+  video.style.display = "block";
+  snapBtn.style.display = "block";
+}
+async function snapStillPhoto(key) {
+  const video = document.getElementById(key + "_video");
+  const canvas = document.getElementById(key + "_canvas");
+  const preview = document.getElementById(key + "_preview");
+  canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+  canvas.getContext("2d").drawImage(video, 0, 0);
+  const blob = await new Promise(res => canvas.toBlob(res, "image/jpeg", 0.85));
+  stillBlobs[key] = blob;
+  preview.src = URL.createObjectURL(blob);
+  preview.style.display = "block";
+  video.style.display = "none";
+  document.getElementById(key + "_snapBtn").style.display = "none";
+  stopCamera();
+
+  // Best-effort OCR for meter photos only
+  if (key === "mtOpenPhoto" || key === "mtClosePhoto") {
+    runOcrAssist(key, blob);
+  }
+}
+function stopCamera() {
+  qrLoopActive = false;
+  if (sharedStream) { sharedStream.getTracks().forEach(t => t.stop()); sharedStream = null; }
+}
+async function uploadPhoto(blob, folder) {
+  if (!blob) return null;
+  const path = `${folder}/${crypto.randomUUID()}.jpg`;
+  const { error } = await supabase.storage.from("photos").upload(path, blob);
+  if (error) { console.error(error); return null; }
+  return supabase.storage.from("photos").getPublicUrl(path).data.publicUrl;
+}
+
+// Best-effort OCR — meter displays are often unclear, so this only ever
+// pre-fills the number; the cashier always confirms or corrects it.
+async function runOcrAssist(key, blob) {
+  const statusId = key === "mtOpenPhoto" ? "mtOpenOcrStatus" : "mtCloseOcrStatus";
+  const inputId = key === "mtOpenPhoto" ? "mtOpenLiters" : "mtCloseLiters";
+  const statusEl = document.getElementById(statusId);
+  statusEl.textContent = "Reading numbers from photo…";
+  try {
+    const result = await Tesseract.recognize(blob, "eng", { tessedit_char_whitelist: "0123456789." });
+    const raw = (result.data.text || "").trim();
+    const digitsOnly = raw.replace(/[^0-9.]/g, "");
+    if (digitsOnly && !isNaN(parseFloat(digitsOnly))) {
+      document.getElementById(inputId).value = digitsOnly;
+      statusEl.textContent = `Detected: "${digitsOnly}" — please check it's correct, edit if not.`;
+      window["_ocrRaw_" + key] = raw;
+      window["_ocrCorrected_" + key] = false;
+      document.getElementById(inputId).oninput = () => { window["_ocrCorrected_" + key] = true; };
+    } else {
+      statusEl.textContent = "Couldn't read the number clearly — please type it manually.";
+    }
+  } catch (err) {
+    statusEl.textContent = "OCR unavailable — please type the number manually.";
+  }
+}
+
+// ============================================================
+// DIPSTICK
+// ============================================================
+async function loadTanksForDipstick() {
+  document.getElementById("dsTank").innerHTML = tanks.map(t => `<option value="${t.id}" data-branch="${t.branch_id}" data-product="${t.product_id}">${t.fuel_products?.name} — ${t.tank_label}</option>`).join("");
+}
+async function saveDipstick() {
+  const status = document.getElementById("dsStatus");
+  const tankSel = document.getElementById("dsTank");
+  const opt = tankSel.options[tankSel.selectedIndex];
+  const photoUrl = await uploadPhoto(stillBlobs["dsPhoto"], "fuel-dipstick");
+  const { error } = await supabase.from("fuel_dipstick_checks").insert({
+    tank_id: tankSel.value,
+    branch_id: opt.dataset.branch,
+    product_id: opt.dataset.product,
+    shift_id: currentShift,
+    height_cm: document.getElementById("dsHeightCm").value ? parseFloat(document.getElementById("dsHeightCm").value) : null,
+    liters: parseFloat(document.getElementById("dsLiters").value),
+    photo_url: photoUrl
+  });
+  if (error) { status.textContent = "Error: " + error.message; status.className = "status err"; return; }
+  status.textContent = "Saved ✓"; status.className = "status ok";
+  document.getElementById("dsLiters").value = ""; document.getElementById("dsHeightCm").value = "";
+}
+
+// ============================================================
+// PUMP METER
+// ============================================================
+async function loadPumpsForMeter() {
+  document.getElementById("mtPump").innerHTML = pumps.map(p => `<option value="${p.id}">${p.pump_label} (${p.fuel_products?.name})</option>`).join("");
+  await loadMeterState();
+}
+async function loadMeterState() {
+  const pumpId = document.getElementById("mtPump").value;
+  document.getElementById("mtOpenBox").style.display = "none";
+  document.getElementById("mtCloseBox").style.display = "none";
+  document.getElementById("mtAllocBox").style.display = "none";
+  if (!pumpId) return;
+  const { data } = await supabase.from("fuel_meter_periods").select("*").eq("pump_id", pumpId).is("closing_reading_id", null).order("created_at",{ascending:false}).limit(1);
+  activePeriod = (data && data[0]) || null;
+  if (activePeriod) {
+    document.getElementById("mtState").textContent = "Open period found — you can close it below.";
+    document.getElementById("mtCloseBox").style.display = "block";
+    document.getElementById("mtActivePrice").textContent = peso(activePeriod.selling_price);
+    const { data: openR } = await supabase.from("fuel_meter_readings").select("*").eq("id", activePeriod.opening_reading_id).single();
+    document.getElementById("mtActiveOpened").textContent = openR ? openR.meter_value : "—";
+    if (activePeriod.total_liters_dispensed !== null) await showAllocBox();
+  } else {
+    document.getElementById("mtState").textContent = "No open period on this pump.";
+    document.getElementById("mtOpenBox").style.display = "block";
+    const pump = pumps.find(p => p.id === pumpId);
+    if (pump) {
+      const { data: pr } = await supabase.from("fuel_product_price_history").select("selling_price").eq("product_id", pump.product_id).order("effective_date",{ascending:false}).limit(1).single();
+      if (pr) document.getElementById("mtOpenPrice").value = pr.selling_price;
+    }
+  }
+}
+async function openPeriod() {
+  const pumpId = document.getElementById("mtPump").value;
+  const pump = pumps.find(p => p.id === pumpId);
+  const photoUrl = await uploadPhoto(stillBlobs["mtOpenPhoto"], "fuel-meters");
+  const { data: reading, error: e1 } = await supabase.from("fuel_meter_readings").insert({
+    pump_id: pumpId, shift_id: currentShift, reading_type: "opening",
+    meter_value: parseFloat(document.getElementById("mtOpenLiters").value),
+    sales_meter_value: document.getElementById("mtOpenPesos").value ? parseFloat(document.getElementById("mtOpenPesos").value) : null,
+    photo_url: photoUrl,
+    ocr_raw_text: window["_ocrRaw_mtOpenPhoto"] || null,
+    was_corrected: !!window["_ocrCorrected_mtOpenPhoto"]
+  }).select().single();
+  if (e1) { alert(e1.message); return; }
+  const { error: e2 } = await supabase.from("fuel_meter_periods").insert({
+    pump_id: pumpId, branch_id: currentBranch, product_id: pump.product_id, shift_id: currentShift,
+    opening_reading_id: reading.id, selling_price: parseFloat(document.getElementById("mtOpenPrice").value)
+  });
+  if (e2) { alert(e2.message); return; }
+  await loadMeterState();
+}
+async function closePeriod() {
+  const pumpId = document.getElementById("mtPump").value;
+  const reason = document.getElementById("mtCloseReason").value;
+  const readingType = reason === "shift_boundary" ? "closing" : "interim";
+  const photoUrl = await uploadPhoto(stillBlobs["mtClosePhoto"], "fuel-meters");
+  const { data: reading, error: e1 } = await supabase.from("fuel_meter_readings").insert({
+    pump_id: pumpId, shift_id: currentShift, reading_type: readingType, reason,
+    meter_value: parseFloat(document.getElementById("mtCloseLiters").value),
+    sales_meter_value: document.getElementById("mtClosePesos").value ? parseFloat(document.getElementById("mtClosePesos").value) : null,
+    photo_url: photoUrl,
+    ocr_raw_text: window["_ocrRaw_mtClosePhoto"] || null,
+    was_corrected: !!window["_ocrCorrected_mtClosePhoto"]
+  }).select().single();
+  if (e1) { alert(e1.message); return; }
+  const { error: e2 } = await supabase.rpc("fn_fuel_close_meter_period", { p_period_id: activePeriod.id, p_closing_reading_id: reading.id });
+  if (e2) { alert(e2.message); return; }
+  await loadMeterState();
+  if (reason !== "shift_boundary") {
+    document.getElementById("mtOpenLiters").value = document.getElementById("mtCloseLiters").value;
+    document.getElementById("mtOpenBox").style.display = "block";
+  }
+}
+async function showAllocBox() {
+  const { data: period } = await supabase.from("fuel_meter_periods").select("*").eq("id", activePeriod.id).single();
+  activePeriod = period;
+  document.getElementById("mtAllocBox").style.display = "block";
+  document.getElementById("mtOpenBox").style.display = "none";
+  document.getElementById("mtTargetLiters").textContent = period.total_liters_dispensed;
+  document.getElementById("allocCreditCustomer").innerHTML = creditCustomers.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
+  const { data: allocs } = await supabase.from("fuel_dispense_allocations").select("liters").eq("meter_period_id", period.id);
+  const sum = (allocs||[]).reduce((a,r)=>a+Number(r.liters),0);
+  document.getElementById("mtRemaining").textContent = (Number(period.total_liters_dispensed) - sum).toFixed(2);
+}
+function onAllocCatChange() {
+  const cat = document.getElementById("allocCategory").value;
+  document.getElementById("allocCreditWrap").style.display = cat === "credit_sale" ? "block" : "none";
+  document.getElementById("allocCompanyWrap").style.display = cat === "company_use" ? "block" : "none";
+}
+async function addAllocation() {
+  const status = document.getElementById("allocStatus");
+  const category = document.getElementById("allocCategory").value;
+  const litersVal = parseFloat(document.getElementById("allocLiters").value);
+  let creditTxnId = null;
+
+  if (category === "credit_sale") {
+    const customerId = document.getElementById("allocCreditCustomer").value;
+    const { data: txn, error } = await supabase.from("fuel_credit_transactions").insert({
+      credit_customer_id: customerId, branch_id: currentBranch, shift_id: currentShift,
+      transaction_type: "credit_sale", product_id: activePeriod.product_id, liters: litersVal, price_per_liter: activePeriod.selling_price
+    }).select().single();
+    if (error) { status.textContent = "Error: " + error.message; status.className = "status err"; return; }
+    creditTxnId = txn.id;
+  }
+  if (category === "company_use" && !verifiedCompanyEmployee) {
+    status.textContent = "Scan the TM's ID first."; status.className = "status err"; return;
+  }
+
+  const { error } = await supabase.from("fuel_dispense_allocations").insert({
+    meter_period_id: activePeriod.id, category, liters: litersVal, credit_transaction_id: creditTxnId,
+    company_use_employee_id: category === "company_use" ? verifiedCompanyEmployee.id : null,
+    company_use_vehicle: category === "company_use" ? document.getElementById("allocVehicle").value : null,
+    verified_at: category === "company_use" ? new Date().toISOString() : null
+  });
+  if (error) { status.textContent = "Error: " + error.message; status.className = "status err"; return; }
+  status.textContent = "Added ✓"; status.className = "status ok";
+  document.getElementById("allocLiters").value = "";
+  verifiedCompanyEmployee = null;
+  document.getElementById("companyVerifiedBox").style.display = "none";
+  await showAllocBox();
+}
+
+// ============================================================
+// EXPENSE
+// ============================================================
+async function saveExpense() {
+  const status = document.getElementById("exStatus");
+  const photoUrl = await uploadPhoto(stillBlobs["exPhoto"], "fuel-expenses");
+  const { error } = await supabase.from("fuel_shift_expenses").insert({
+    shift_id: currentShift, branch_id: currentBranch,
+    category: document.getElementById("exCategory").value,
+    amount: parseFloat(document.getElementById("exAmount").value),
+    details: document.getElementById("exDetails").value || null,
+    photo_url: photoUrl
+  });
+  if (error) { status.textContent = "Error: " + error.message; status.className = "status err"; return; }
+  status.textContent = "Saved ✓"; status.className = "status ok";
+  document.getElementById("exAmount").value = ""; document.getElementById("exDetails").value = "";
+}
+
+// ============================================================
+// QR SCANNING (shared by company-fuel allocation + management takeaway)
+// ============================================================
+async function startQrFor(target) {
+  qrTarget = target;
+  document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+  document.getElementById("panel-qrscan").classList.add("active");
+  const video = document.getElementById("qrVideo");
+  try { sharedStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }); }
+  catch (err) { document.getElementById("qrStatus").textContent = "Camera error: " + err.message; return; }
+  video.srcObject = sharedStream;
+  qrLoopActive = true;
+  requestAnimationFrame(qrTick);
+}
+function cancelQr() {
+  stopCamera();
+  openPanel(qrTarget === "takeaway" ? "takeaway" : "meter");
+}
+function qrTick() {
+  if (!qrLoopActive) return;
+  const video = document.getElementById("qrVideo");
+  const canvas = document.getElementById("qrCanvas");
+  if (video.readyState === video.HAVE_ENOUGH_DATA) {
+    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const code = jsQR(imageData.data, imageData.width, imageData.height);
+    if (code && code.data) {
+      const emp = matchEmployeeFromQr(code.data.trim());
+      if (emp) {
+        qrLoopActive = false;
+        stopCamera();
+        onQrVerified(emp);
+        return;
+      } else {
+        document.getElementById("qrStatus").textContent = "QR read but no matching active employee.";
+      }
+    }
+  }
+  requestAnimationFrame(qrTick);
+}
+function matchEmployeeFromQr(raw) {
+  const candidate = raw.startsWith("EMP:") ? raw.slice(4).trim() : raw;
+  return employees.find(e => e.tm_number === candidate) || employees.find(e => e.id === candidate) || null;
+}
+function onQrVerified(emp) {
+  if (qrTarget === "company") {
+    verifiedCompanyEmployee = emp;
+    document.getElementById("companyVerifiedName").textContent = emp.full_name;
+    document.getElementById("companyVerifiedPhoto").src = emp.photo_url || "logo.png";
+    document.getElementById("companyVerifiedBox").style.display = "block";
+    openPanel("meter");
+    document.getElementById("mtAllocBox").style.display = "block";
+  } else if (qrTarget === "takeaway") {
+    verifiedTakeawayEmployee = emp;
+    document.getElementById("takeawayVerifiedName").textContent = emp.full_name;
+    document.getElementById("takeawayVerifiedPhoto").src = emp.photo_url || "logo.png";
+    document.getElementById("takeawayVerifiedBox").style.display = "block";
+    openPanel("takeaway");
+  }
+}
+
+// ============================================================
+// MANAGEMENT TAKEAWAY
+// ============================================================
+async function saveTakeaway() {
+  const status = document.getElementById("twStatus");
+  if (!verifiedTakeawayEmployee) { status.textContent = "Scan the manager's ID first."; status.className = "status err"; return; }
+  const { error } = await supabase.from("fuel_management_takeaways").insert({
+    shift_id: currentShift, branch_id: currentBranch, employee_id: verifiedTakeawayEmployee.id,
+    amount: parseFloat(document.getElementById("twAmount").value),
+    details: document.getElementById("twDetails").value || null
+  });
+  if (error) { status.textContent = "Error: " + error.message; status.className = "status err"; return; }
+  status.textContent = "Saved ✓"; status.className = "status ok";
+  document.getElementById("twAmount").value = ""; document.getElementById("twDetails").value = "";
+  verifiedTakeawayEmployee = null;
+  document.getElementById("takeawayVerifiedBox").style.display = "none";
+}
+
+// ============================================================
+// CASH RECONCILIATION
+// ============================================================
+async function loadCashReconPreview() {
+  const { data: cashRows } = await supabase.from("fuel_cash_sales_by_shift").select("total_cash_amount").eq("shift_id", currentShift);
+  const { data: creditRows } = await supabase.from("fuel_credit_sales_by_shift").select("total_credit_amount").eq("shift_id", currentShift);
+  const { data: expRows } = await supabase.from("fuel_shift_expenses").select("amount").eq("shift_id", currentShift);
+  const { data: twRows } = await supabase.from("fuel_management_takeaways").select("amount").eq("shift_id", currentShift);
+  document.getElementById("crCash").textContent = peso((cashRows||[]).reduce((a,r)=>a+Number(r.total_cash_amount),0));
+  document.getElementById("crCredit").textContent = peso((creditRows||[]).reduce((a,r)=>a+Number(r.total_credit_amount),0));
+  document.getElementById("crExpAuto").textContent = peso((expRows||[]).reduce((a,r)=>a+Number(r.amount),0));
+  document.getElementById("crTakeAuto").textContent = peso((twRows||[]).reduce((a,r)=>a+Number(r.amount),0));
+}
+async function saveCashRecon() {
+  const status = document.getElementById("crStatus");
+  const { data, error } = await supabase.from("fuel_shift_cash_reconciliation").insert({
+    shift_id: currentShift, branch_id: currentBranch,
+    beginning_cash_float: parseFloat(document.getElementById("crBegin").value) || 0,
+    cash_injected: parseFloat(document.getElementById("crInjected").value) || 0,
+    bank_deposit_amount: parseFloat(document.getElementById("crDeposit").value) || 0,
+    actual_cash_counted: parseFloat(document.getElementById("crActual").value),
+    checker: document.getElementById("crChecker").value || null
+    // cash_expenses_paid and management_takeaway left at default 0 -> auto-filled from the ledgers by the DB trigger
+  }).select().single();
+  if (error) { status.textContent = "Error: " + error.message; status.className = "status err"; return; }
+  status.textContent = `Saved. Variance: ${peso(data.variance)} (${data.variance_flag.replace("_"," ")})`;
+  status.className = data.variance_flag === "balanced" ? "status ok" : "status err";
+}
+</script>
+</body>
+</html>
