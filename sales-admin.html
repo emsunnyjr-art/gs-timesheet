@@ -173,7 +173,8 @@
       <div class="card" id="dspOpenCard" style="display:none;">
         <h2>Open a New Price Period</h2>
         <div class="row">
-          <div><label>Opening Meter Reading</label><input type="number" step="0.01" id="dspOpenMeter"></div>
+          <div><label>Opening Liters Meter</label><input type="number" step="0.01" id="dspOpenMeter"></div>
+          <div><label>Opening Peso (Sales) Meter</label><input type="number" step="0.01" id="dspOpenSalesMeter" placeholder="if pump has one"></div>
           <div><label>Selling Price / Liter</label><input type="number" step="0.01" id="dspOpenPrice"></div>
         </div>
         <button onclick="openPeriod()">Open Period</button>
@@ -191,7 +192,8 @@
         <hr class="divider">
         <h2>Close This Period</h2>
         <div class="row">
-          <div><label>Closing Meter Reading</label><input type="number" step="0.01" id="dspCloseMeter"></div>
+          <div><label>Closing Liters Meter</label><input type="number" step="0.01" id="dspCloseMeter"></div>
+          <div><label>Closing Peso (Sales) Meter</label><input type="number" step="0.01" id="dspCloseSalesMeter" placeholder="if pump has one"></div>
           <div><label>Reason</label>
             <select id="dspCloseReason">
               <option value="shift_boundary">End of shift</option>
@@ -209,6 +211,11 @@
       <div class="card" id="dspAllocCard" style="display:none;">
         <h2>Label Dispensed Liters</h2>
         <p class="small">Total dispensed this period: <strong id="dspTargetLiters">0</strong> L. Every liter must be labeled before this period is reconciled.</p>
+        <div class="stat-grid" id="dspPesoReconGrid" style="display:none;">
+          <div class="stat"><div class="k">Computed (liters × price)</div><div class="v" id="dspComputedSales">—</div></div>
+          <div class="stat"><div class="k">Actual (pump peso meter)</div><div class="v" id="dspActualSales">—</div></div>
+          <div class="stat" id="dspSalesVarianceStat"><div class="k">Peso Meter Variance</div><div class="v" id="dspSalesVariance">—</div></div>
+        </div>
         <div class="row">
           <div><label>Category</label>
             <select id="allocCategory" onchange="onAllocCategoryChange()">
@@ -700,11 +707,13 @@ async function openPeriod() {
   const shiftId = document.getElementById("dspShift").value;
   if (!shiftId) { msg.textContent = "Select a shift first."; msg.className = "msg err"; return; }
   const meterValue = parseFloat(document.getElementById("dspOpenMeter").value);
+  const salesMeterRaw = document.getElementById("dspOpenSalesMeter").value;
   const price = parseFloat(document.getElementById("dspOpenPrice").value);
   const pump = pumps.find(p => p.id === pumpId);
 
   const { data: reading, error: e1 } = await supabase.from("fuel_meter_readings").insert({
-    pump_id: pumpId, shift_id: shiftId, reading_type: "opening", meter_value: meterValue
+    pump_id: pumpId, shift_id: shiftId, reading_type: "opening", meter_value: meterValue,
+    sales_meter_value: salesMeterRaw ? parseFloat(salesMeterRaw) : null
   }).select().single();
   if (e1) { msg.textContent = "Error: " + e1.message; msg.className = "msg err"; return; }
 
@@ -722,11 +731,13 @@ async function closePeriod() {
   const pumpId = document.getElementById("dspPump").value;
   const shiftId = document.getElementById("dspShift").value;
   const meterValue = parseFloat(document.getElementById("dspCloseMeter").value);
+  const salesMeterRaw = document.getElementById("dspCloseSalesMeter").value;
   const reason = document.getElementById("dspCloseReason").value;
   const readingType = reason === "shift_boundary" ? "closing" : "interim";
 
   const { data: reading, error: e1 } = await supabase.from("fuel_meter_readings").insert({
-    pump_id: pumpId, shift_id: shiftId, reading_type: readingType, reason, meter_value: meterValue
+    pump_id: pumpId, shift_id: shiftId, reading_type: readingType, reason, meter_value: meterValue,
+    sales_meter_value: salesMeterRaw ? parseFloat(salesMeterRaw) : null
   }).select().single();
   if (e1) { msg.textContent = "Error: " + e1.message; msg.className = "msg err"; return; }
 
@@ -750,6 +761,18 @@ async function showAllocationPanel() {
   document.getElementById("dspAllocCard").style.display = "block";
   document.getElementById("dspOpenCard").style.display = "none";
   document.getElementById("dspTargetLiters").textContent = period.total_liters_dispensed;
+
+  if (period.actual_sales_amount !== null) {
+    document.getElementById("dspPesoReconGrid").style.display = "grid";
+    document.getElementById("dspComputedSales").textContent = peso(period.computed_sales_amount);
+    document.getElementById("dspActualSales").textContent = peso(period.actual_sales_amount);
+    const varEl = document.getElementById("dspSalesVariance");
+    const stat = document.getElementById("dspSalesVarianceStat");
+    varEl.textContent = (period.sales_variance > 0 ? "+" : "") + peso(period.sales_variance);
+    stat.className = "stat" + (Math.abs(period.sales_variance) > 0 ? " warn" : "");
+  } else {
+    document.getElementById("dspPesoReconGrid").style.display = "none";
+  }
 
   document.getElementById("allocCustomer").innerHTML = creditCustomers.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
 
