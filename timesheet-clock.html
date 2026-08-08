@@ -357,26 +357,9 @@ function renderTodayRoster() {
   box.querySelectorAll(".roster-person-btn").forEach(el => {
     el.addEventListener("click", () => {
       const emp = allEmployees.find(e => e.id === el.dataset.id);
-      if (emp) startClockFlowFor(emp.id, `${emp.full_name} (${emp.tm_number})`);
+      if (emp) startVerifyScanFor(emp);
     });
   });
-}
-
-// Shared entry point for Manual Select and the roster-button tap: opens the
-// camera, captures a frame, and hands off to the confirm/auto-detect flow.
-async function startClockFlowFor(employeeId, employeeName) {
-  selectedEmployeeId = employeeId;
-  selectedEmployeeName = employeeName;
-  verifiedViaQr = false;
-  try {
-    await openCamera();
-    setTimeout(async () => {
-      const blob = await captureFrame();
-      showConfirm(blob);
-    }, 400);
-  } catch (err) {
-    logMsg("Camera error: " + err.message, "queued");
-  }
 }
 
 function fmtTimeOnly(t) {
