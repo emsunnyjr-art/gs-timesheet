@@ -1,0 +1,1008 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>A's Fuel — Sales Admin</title>
+<style>
+  :root { --bg:#0f172a; --card:#1e293b; --accent:#22c55e; --danger:#ef4444; --text:#f1f5f9; --muted:#94a3b8; --border:#334155; --orange:#f59e0b; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; padding:16px; }
+  .wrap { max-width:980px; margin:0 auto; }
+  h1 { font-size:20px; margin:0 0 16px; }
+  .tabs { display:flex; gap:6px; margin-bottom:16px; overflow-x:auto; }
+  .tab { padding:10px 14px; border-radius:10px; background:var(--card); color:var(--muted); cursor:pointer; white-space:nowrap; font-size:14px; }
+  .tab.active { background:var(--accent); color:#052e16; font-weight:600; }
+  .panel { display:none; }
+  .panel.active { display:block; }
+  .card { background:var(--card); border-radius:14px; padding:18px; margin-bottom:14px; }
+  .card h2 { font-size:15px; margin:0 0 12px; color:var(--muted); text-transform:uppercase; letter-spacing:0.03em; }
+  label { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; margin-top:10px; }
+  input, select, textarea { width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); background:#0f172a; color:var(--text); font-size:14px; }
+  textarea { resize:vertical; min-height:50px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; }
+  .row > * { flex:1; min-width:140px; }
+  button { margin-top:14px; padding:12px 16px; border-radius:10px; border:none; background:var(--accent); color:#052e16; font-weight:600; font-size:14px; cursor:pointer; }
+  button.secondary { background:#334155; color:var(--text); }
+  button.danger { background:var(--danger); color:#450a0a; }
+  button.small { padding:6px 10px; font-size:12px; margin-top:0; }
+  button:disabled { background:#1e293b !important; color:#475569 !important; cursor:not-allowed; opacity:0.6; }
+  table { width:100%; border-collapse:collapse; margin-top:10px; font-size:13px; }
+  th, td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--border); }
+  th { color:var(--muted); font-weight:500; }
+  .msg { font-size:13px; margin-top:10px; min-height:16px; }
+  .msg.ok { color:var(--accent); }
+  .msg.err { color:var(--danger); }
+  .nav-links { font-size:12px; margin-bottom:14px; }
+  .nav-links a { color:var(--muted); text-decoration:none; margin-right:14px; }
+  .nav-links a:hover { color:var(--accent); }
+  .badge { display:inline-block; padding:3px 9px; border-radius:6px; font-size:11px; font-weight:600; }
+  .badge.balanced { background:#22c55e33; color:var(--accent); }
+  .badge.orange { background:#f59e0b33; color:var(--orange); }
+  .badge.red { background:#ef444433; color:var(--danger); }
+  .badge.red_bold { background:var(--danger); color:#fff; font-weight:800; box-shadow:0 0 0 2px #ef444455; }
+  .stat-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-top:8px; }
+  .stat { background:#0f172a; border:1px solid var(--border); border-radius:10px; padding:12px; }
+  .stat .k { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; }
+  .stat .v { font-size:18px; font-weight:700; margin-top:4px; }
+  .stat.warn .v { color:var(--danger); }
+  .product-card { border:1px solid var(--border); border-radius:12px; padding:14px; margin-bottom:10px; }
+  .product-card h3 { margin:0 0 8px; font-size:14px; }
+  .pin-screen { max-width:340px; margin:60px auto; text-align:center; }
+  .pin-screen input { margin-top:6px; }
+  .small { font-size:12px; color:var(--muted); }
+  .divider { border:none; border-top:1px solid var(--border); margin:16px 0; }
+  .subtabs { display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap; }
+  .subtab { padding:6px 12px; border-radius:8px; background:#0f172a; border:1px solid var(--border); color:var(--muted); cursor:pointer; font-size:12px; }
+  .subtab.active { background:var(--accent); color:#052e16; border-color:var(--accent); font-weight:600; }
+  .subpanel { display:none; }
+  .subpanel.active { display:block; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div id="pinScreen" class="pin-screen">
+    <img src="logo.png" alt="A's Fuel" style="width:72px; height:72px; border-radius:50%; margin-bottom:8px;">
+    <h1>Sales — Fuel Ops</h1>
+    <p class="small">Sign in with your manager account</p>
+    <label>Email</label>
+    <input type="email" id="loginEmail" placeholder="you@example.com">
+    <label>Password</label>
+    <input type="password" id="loginPassword" placeholder="Password">
+    <button style="width:100%;" onclick="doLogin()">Sign in</button>
+    <div id="pinError" class="small" style="color:var(--danger); margin-top:8px;"></div>
+  </div>
+
+  <div id="app" style="display:none;">
+    <div class="nav-links"><a href="index.html">🏠 Home</a><a href="hr-admin.html">HR Admin</a><a href="timesheet-admin.html">Timesheet Admin</a><a href="roster-admin.html">Roster</a></div>
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <img src="logo.png" alt="A's Fuel" style="width:44px; height:44px; border-radius:50%;">
+        <h1 style="margin:0;">Sales — Fuel Ops</h1>
+      </div>
+      <div class="small" style="text-align:right;">
+        <div id="whoAmI"></div>
+        <a href="#" onclick="doLogout(); return false;" style="color:var(--muted);">Sign out</a>
+      </div>
+    </div>
+
+    <div class="row" style="margin:14px 0;">
+      <div><label>Branch</label><select id="globalBranch" onchange="onBranchChange()"></select></div>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active" data-tab="dashboard">Dashboard</div>
+      <div class="tab" data-tab="deliveries">Deliveries</div>
+      <div class="tab" data-tab="dispensing">Dispensing</div>
+      <div class="tab" data-tab="credit">Credit / PO</div>
+      <div class="tab" data-tab="cashrecon">Cash Reconciliation</div>
+      <div class="tab" data-tab="setup">Setup</div>
+    </div>
+
+    <!-- ============ DASHBOARD ============ -->
+    <div class="panel active" id="panel-dashboard">
+      <div class="card">
+        <h2>Stock Reconciliation — current batch per product</h2>
+        <p class="small">Starting stock (tank before + delivered), everything dispensed since, expected remaining, and the latest actual dipstick check. Any gap between expected and actual shows here immediately.</p>
+        <div id="stockCards"></div>
+      </div>
+      <div class="card">
+        <h2>Profit — today (cumulative)</h2>
+        <div id="profitCards"></div>
+      </div>
+      <div class="card">
+        <h2>Shifts flagged for cash discrepancy</h2>
+        <table id="flaggedShiftsTable"><thead><tr><th>Date</th><th>Shift</th><th>Expected</th><th>Actual</th><th>Variance</th><th>Flag</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <!-- ============ DELIVERIES ============ -->
+    <div class="panel" id="panel-deliveries">
+      <div class="card">
+        <h2>Log a Delivery</h2>
+        <div class="row">
+          <div><label>Product</label><select id="dlvProduct"></select></div>
+          <div><label>Tank</label><select id="dlvTank"></select></div>
+          <div><label>Vendor</label><select id="dlvVendor"></select></div>
+        </div>
+        <div class="row">
+          <div><label>Driver</label><select id="dlvDriver"></select></div>
+          <div><label>Plate Number</label><input id="dlvPlate"></div>
+          <div><label>Shift (optional)</label><select id="dlvShift"></select></div>
+        </div>
+        <div class="row">
+          <div><label>Invoice #</label><input id="dlvInvoice"></div>
+          <div><label>Check # (issued to supplier)</label><input id="dlvCheck"></div>
+          <div><label>Delivery Date</label><input type="date" id="dlvDate"></div>
+        </div>
+        <div class="row">
+          <div><label>Invoiced Liters</label><input type="number" step="0.01" id="dlvLiters"></div>
+          <div><label>Cost / Liter (actual paid)</label><input type="number" step="0.0001" id="dlvCost"></div>
+          <div><label>Market Reference Price / Liter</label><input type="number" step="0.0001" id="dlvMarket" placeholder="for monitoring only"></div>
+        </div>
+        <div class="row">
+          <div><label>Dipstick BEFORE unloading — cm</label><input type="number" step="0.01" id="dlvBeforeCm"></div>
+          <div><label>Dipstick BEFORE — Liters</label><input type="number" step="0.01" id="dlvBeforeL"></div>
+        </div>
+        <div class="row">
+          <div><label>Dipstick AFTER unloading — cm</label><input type="number" step="0.01" id="dlvAfterCm"></div>
+          <div><label>Dipstick AFTER — Liters</label><input type="number" step="0.01" id="dlvAfterL"></div>
+        </div>
+        <label style="display:flex; align-items:center; gap:8px; margin-top:14px;"><input type="checkbox" id="dlvPaid" style="width:auto;"> Paid</label>
+        <button onclick="saveDelivery()">Save Delivery</button>
+        <div class="msg" id="dlvMsg"></div>
+      </div>
+      <div class="card">
+        <h2>Recent Deliveries</h2>
+        <table id="deliveriesTable"><thead><tr><th>Date</th><th>Product</th><th>Vendor</th><th>Liters</th><th>Cost/L</th><th>WAC After</th><th>Delivered vs Invoiced</th><th>Paid</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <!-- ============ DISPENSING ============ -->
+    <div class="panel" id="panel-dispensing">
+      <div class="card">
+        <h2>Select Shift & Pump</h2>
+        <div class="row">
+          <div><label>Shift</label><select id="dspShift" onchange="loadPumpsForShift()"></select></div>
+          <div><label>Pump</label><select id="dspPump" onchange="loadOpenPeriod()"></select></div>
+        </div>
+        <div id="dspStatus" class="small" style="margin-top:8px;"></div>
+      </div>
+
+      <div class="card" id="dspOpenCard" style="display:none;">
+        <h2>Open a New Price Period</h2>
+        <div class="row">
+          <div><label>Opening Meter Reading</label><input type="number" step="0.01" id="dspOpenMeter"></div>
+          <div><label>Selling Price / Liter</label><input type="number" step="0.01" id="dspOpenPrice"></div>
+        </div>
+        <button onclick="openPeriod()">Open Period</button>
+        <div class="msg" id="dspOpenMsg"></div>
+      </div>
+
+      <div class="card" id="dspActiveCard" style="display:none;">
+        <h2>Active Period</h2>
+        <div class="stat-grid">
+          <div class="stat"><div class="k">Selling Price</div><div class="v" id="dspActivePrice">—</div></div>
+          <div class="stat"><div class="k">WAC at Open</div><div class="v" id="dspActiveWac">—</div></div>
+          <div class="stat"><div class="k">Latest Delivery Cost</div><div class="v" id="dspActiveLatestCost">—</div></div>
+          <div class="stat"><div class="k">Opening Meter</div><div class="v" id="dspActiveOpenMeter">—</div></div>
+        </div>
+        <hr class="divider">
+        <h2>Close This Period</h2>
+        <div class="row">
+          <div><label>Closing Meter Reading</label><input type="number" step="0.01" id="dspCloseMeter"></div>
+          <div><label>Reason</label>
+            <select id="dspCloseReason">
+              <option value="shift_boundary">End of shift</option>
+              <option value="price_change">Price change</option>
+              <option value="calibration_check">Calibration check</option>
+              <option value="delivery">Delivery arrived</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+        </div>
+        <button onclick="closePeriod()">Close Period</button>
+        <div class="msg" id="dspCloseMsg"></div>
+      </div>
+
+      <div class="card" id="dspAllocCard" style="display:none;">
+        <h2>Label Dispensed Liters</h2>
+        <p class="small">Total dispensed this period: <strong id="dspTargetLiters">0</strong> L. Every liter must be labeled before this period is reconciled.</p>
+        <div class="row">
+          <div><label>Category</label>
+            <select id="allocCategory" onchange="onAllocCategoryChange()">
+              <option value="cash_sale">Cash Sale</option>
+              <option value="credit_sale">Credit / PO Sale</option>
+              <option value="calibration">Calibration</option>
+              <option value="company_use">Company Use</option>
+              <option value="machine_error">Machine Error</option>
+              <option value="given_away">Given Away</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div><label>Liters</label><input type="number" step="0.01" id="allocLiters"></div>
+          <div id="allocCustomerWrap" style="display:none;"><label>Credit Customer</label><select id="allocCustomer"></select></div>
+        </div>
+        <label>Notes (optional)</label>
+        <input id="allocNotes">
+        <button onclick="addAllocation()">Add Allocation</button>
+        <div class="msg" id="allocMsg"></div>
+        <table id="allocTable" style="margin-top:14px;"><thead><tr><th>Category</th><th>Liters</th><th>Notes</th></tr></thead><tbody></tbody></table>
+        <div class="stat-grid" style="margin-top:10px;">
+          <div class="stat"><div class="k">Allocated</div><div class="v" id="allocSum">0</div></div>
+          <div class="stat"><div class="k">Remaining</div><div class="v" id="allocRemaining">0</div></div>
+          <div class="stat"><div class="k">Status</div><div class="v" id="allocStatus">—</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ CREDIT / PO ============ -->
+    <div class="panel" id="panel-credit">
+      <div class="card">
+        <h2>Add Credit Customer</h2>
+        <div class="row">
+          <div><label>Name</label><input id="ccName"></div>
+          <div><label>Contact</label><input id="ccContact"></div>
+          <div><label>Credit Limit</label><input type="number" step="0.01" id="ccLimit"></div>
+        </div>
+        <button onclick="saveCreditCustomer()">Save Customer</button>
+        <div class="msg" id="ccMsg"></div>
+      </div>
+      <div class="card">
+        <h2>Record a Payment</h2>
+        <div class="row">
+          <div><label>Customer</label><select id="payCustomer"></select></div>
+          <div><label>Amount</label><input type="number" step="0.01" id="payAmount"></div>
+          <div><label>Method</label>
+            <select id="payMethod"><option value="cash">Cash</option><option value="check">Check</option><option value="bank_transfer">Bank Transfer</option></select>
+          </div>
+        </div>
+        <div class="row">
+          <div><label>Shift</label><select id="payShift"></select></div>
+          <div><label>Reference</label><input id="payRef"></div>
+        </div>
+        <button onclick="savePayment()">Record Payment</button>
+        <div class="msg" id="payMsg"></div>
+      </div>
+      <div class="card">
+        <h2>Customer Balances</h2>
+        <table id="ccBalanceTable"><thead><tr><th>Customer</th><th>Total Charged</th><th>Total Paid</th><th>Running Balance</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <!-- ============ CASH RECONCILIATION ============ -->
+    <div class="panel" id="panel-cashrecon">
+      <div class="card">
+        <h2>Reconcile a Shift</h2>
+        <div class="row">
+          <div><label>Shift</label><select id="crShift" onchange="previewCashRecon()"></select></div>
+        </div>
+        <div class="stat-grid">
+          <div class="stat"><div class="k">Cash Sales (fuel)</div><div class="v" id="crPreviewCash">—</div></div>
+          <div class="stat"><div class="k">Credit Sales (PO)</div><div class="v" id="crPreviewCredit">—</div></div>
+        </div>
+        <hr class="divider">
+        <div class="row">
+          <div><label>Beginning Cash Float</label><input type="number" step="0.01" id="crBegin" value="0"></div>
+          <div><label>Cash Injected</label><input type="number" step="0.01" id="crInjected" value="0"></div>
+          <div><label>Injected By</label><input id="crInjectedBy"></div>
+        </div>
+        <div class="row">
+          <div><label>Cash Expenses Paid</label><input type="number" step="0.01" id="crExpenses" value="0"></div>
+          <div><label>Management Takeaway</label><input type="number" step="0.01" id="crTakeaway" value="0"></div>
+          <div><label>Bank Deposit</label><input type="number" step="0.01" id="crDeposit" value="0"></div>
+        </div>
+        <div class="row">
+          <div><label>Deposited By</label><input id="crDepositedBy"></div>
+          <div><label>Checker</label><input id="crChecker"></div>
+          <div><label>Actual Cash Counted</label><input type="number" step="0.01" id="crActual"></div>
+        </div>
+        <label>Notes</label>
+        <textarea id="crNotes"></textarea>
+        <button onclick="saveCashRecon()">Save Reconciliation</button>
+        <div class="msg" id="crMsg"></div>
+      </div>
+      <div class="card">
+        <h2>Recent Reconciliations</h2>
+        <table id="crTable"><thead><tr><th>Date/Shift</th><th>Expected</th><th>Actual</th><th>Variance</th><th>Flag</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <!-- ============ SETUP ============ -->
+    <div class="panel" id="panel-setup">
+      <div class="subtabs">
+        <div class="subtab active" data-sub="products">Products & Price</div>
+        <div class="subtab" data-sub="vendors">Vendors</div>
+        <div class="subtab" data-sub="drivers">Drivers</div>
+        <div class="subtab" data-sub="tanks">Tanks & Calibration</div>
+        <div class="subtab" data-sub="pumps">Pumps</div>
+      </div>
+
+      <div class="subpanel active" id="sub-products">
+        <div class="card">
+          <h2>Products</h2>
+          <div id="productsList"></div>
+        </div>
+        <div class="card">
+          <h2>Change Selling Price</h2>
+          <div class="row">
+            <div><label>Product</label><select id="priceProduct"></select></div>
+            <div><label>New Selling Price / Liter</label><input type="number" step="0.01" id="priceValue"></div>
+            <div><label>Set By</label><input id="priceSetBy"></div>
+          </div>
+          <button onclick="savePrice()">Save New Price</button>
+          <div class="msg" id="priceMsg"></div>
+        </div>
+      </div>
+
+      <div class="subpanel" id="sub-vendors">
+        <div class="card">
+          <h2>Add Vendor</h2>
+          <div class="row">
+            <div><label>Name</label><input id="vName"></div>
+            <div><label>Representative</label><input id="vRep"></div>
+            <div><label>Contact</label><input id="vContact"></div>
+          </div>
+          <button onclick="saveVendor()">Save Vendor</button>
+          <div class="msg" id="vMsg"></div>
+          <table id="vendorsTable" style="margin-top:14px;"><thead><tr><th>Name</th><th>Rep</th><th>Contact</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+
+      <div class="subpanel" id="sub-drivers">
+        <div class="card">
+          <h2>Add Delivery Driver</h2>
+          <div class="row">
+            <div><label>Name</label><input id="drName"></div>
+            <div><label>Area</label><input id="drArea"></div>
+          </div>
+          <button onclick="saveDriver()">Save Driver</button>
+          <div class="msg" id="drMsg"></div>
+          <table id="driversTable" style="margin-top:14px;"><thead><tr><th>Name</th><th>Area</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+
+      <div class="subpanel" id="sub-tanks">
+        <div class="card">
+          <h2>Add Tank</h2>
+          <div class="row">
+            <div><label>Product</label><select id="tkProduct"></select></div>
+            <div><label>Tank Label</label><input id="tkLabel" placeholder="e.g. Main"></div>
+          </div>
+          <button onclick="saveTank()">Save Tank</button>
+          <div class="msg" id="tkMsg"></div>
+          <table id="tanksTable" style="margin-top:14px;"><thead><tr><th>Product</th><th>Label</th></tr></thead><tbody></tbody></table>
+        </div>
+        <div class="card">
+          <h2>Tank Calibration (Height → Liters)</h2>
+          <div class="row">
+            <div><label>Tank</label><select id="calTank"></select></div>
+            <div><label>Height (cm)</label><input type="number" step="0.01" id="calHeight"></div>
+            <div><label>Liters</label><input type="number" step="0.01" id="calLiters"></div>
+          </div>
+          <button onclick="saveCalibration()">Add Calibration Point</button>
+          <div class="msg" id="calMsg"></div>
+        </div>
+      </div>
+
+      <div class="subpanel" id="sub-pumps">
+        <div class="card">
+          <h2>Add Pump</h2>
+          <div class="row">
+            <div><label>Product</label><select id="pmProduct"></select></div>
+            <div><label>Pump Label</label><input id="pmLabel" placeholder="e.g. Pump 1"></div>
+          </div>
+          <button onclick="savePump()">Save Pump</button>
+          <div class="msg" id="pmMsg"></div>
+          <table id="pumpsTable" style="margin-top:14px;"><thead><tr><th>Product</th><th>Label</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+// ============================================================
+// CONFIG — same Supabase project as gs-timesheet / hr-admin / roster
+// ============================================================
+const SUPABASE_URL = "https://cztkovsjxuaiburaudgk.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_eBOzdnFAdfFavl2QAYY6bA_lfAIJUhh";
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let myRoles = [], isOwner = false, myBranchIds = [];
+let branches = [], products = [], vendors = [], drivers = [], tanks = [], pumps = [], creditCustomers = [];
+let currentBranch = null;
+let activePeriod = null; // currently open fuel_meter_periods row for selected pump
+
+// ---------- Date helper: NEVER use toISOString().slice(0,10) — shifts date back for UTC+8 ----------
+function isoDate(d) {
+  const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,"0"), day = String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${day}`;
+}
+function todayIso() { return isoDate(new Date()); }
+function peso(n) { return "₱" + Number(n||0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}); }
+function liters(n) { return Number(n||0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) + " L"; }
+
+// ---------- Auth ----------
+async function doLogin() {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  document.getElementById("pinError").textContent = "";
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) { document.getElementById("pinError").textContent = "Sign in failed: " + error.message; return; }
+  await afterLogin(data.user);
+}
+async function doLogout() { await supabase.auth.signOut(); location.reload(); }
+
+async function afterLogin(user) {
+  const { data: roles, error } = await supabase.from("user_branch_roles").select("*").eq("user_id", user.id);
+  if (error) { document.getElementById("pinError").textContent = "Could not load branch access: " + error.message; return; }
+  myRoles = roles || [];
+  if (!myRoles.length) {
+    document.getElementById("pinError").textContent = "This account has no branch access configured yet. Ask an admin to add you.";
+    await supabase.auth.signOut();
+    return;
+  }
+  isOwner = myRoles.some(r => r.branch_id === null);
+  myBranchIds = myRoles.filter(r => r.branch_id !== null).map(r => r.branch_id);
+  document.getElementById("whoAmI").textContent = `${user.email} · ${isOwner ? "All branches" : "Branch access: " + myRoles.length}`;
+  document.getElementById("pinScreen").style.display = "none";
+  document.getElementById("app").style.display = "block";
+  await initApp();
+}
+(async function checkExistingSession() {
+  const { data } = await supabase.auth.getSession();
+  if (data && data.session && data.session.user) await afterLogin(data.session.user);
+})();
+
+// ---------- Tabs ----------
+document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => {
+  document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+  document.querySelectorAll(".panel").forEach(x => x.classList.remove("active"));
+  t.classList.add("active");
+  document.getElementById("panel-" + t.dataset.tab).classList.add("active");
+  onTabShown(t.dataset.tab);
+}));
+document.querySelectorAll(".subtab").forEach(t => t.addEventListener("click", () => {
+  document.querySelectorAll(".subtab").forEach(x => x.classList.remove("active"));
+  document.querySelectorAll(".subpanel").forEach(x => x.classList.remove("active"));
+  t.classList.add("active");
+  document.getElementById("sub-" + t.dataset.sub).classList.add("active");
+}));
+
+function onTabShown(tab) {
+  if (tab === "dashboard") loadDashboard();
+  if (tab === "deliveries") loadDeliveries();
+  if (tab === "dispensing") loadShiftsForDispensing();
+  if (tab === "credit") loadCreditTab();
+  if (tab === "cashrecon") loadCashReconTab();
+  if (tab === "setup") loadSetupTab();
+}
+
+// ---------- Init ----------
+async function initApp() {
+  const { data: br } = await supabase.from("branches").select("*").order("code");
+  branches = (br || []).filter(b => isOwner || myBranchIds.includes(b.id));
+  const branchSel = document.getElementById("globalBranch");
+  branchSel.innerHTML = branches.map(b => `<option value="${b.id}">${b.code} — ${b.name}</option>`).join("");
+  currentBranch = branches[0]?.id || null;
+
+  const { data: pr } = await supabase.from("fuel_products").select("*").eq("active", true).order("code");
+  products = pr || [];
+
+  const { data: vd } = await supabase.from("fuel_vendors").select("*").order("name");
+  vendors = vd || [];
+  const { data: dr } = await supabase.from("fuel_delivery_drivers").select("*").order("name");
+  drivers = dr || [];
+  const { data: tk } = await supabase.from("fuel_tanks").select("*, fuel_products(code,name)");
+  tanks = tk || [];
+  const { data: pm } = await supabase.from("fuel_pumps").select("*, fuel_products(code,name)");
+  pumps = pm || [];
+  const { data: cc } = await supabase.from("fuel_credit_customers").select("*").order("name");
+  creditCustomers = cc || [];
+
+  populateProductSelects();
+  populateVendorDriverSelects();
+  document.getElementById("dlvDate").value = todayIso();
+  onTabShown("dashboard");
+}
+
+function onBranchChange() {
+  currentBranch = document.getElementById("globalBranch").value;
+  onTabShown(document.querySelector(".tab.active").dataset.tab);
+}
+
+function populateProductSelects() {
+  const opts = products.map(p => `<option value="${p.id}">${p.name}</option>`).join("");
+  ["dlvProduct","priceProduct","tkProduct","pmProduct"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = opts;
+  });
+  document.getElementById("dlvProduct").onchange = populateTankSelectForDelivery;
+  populateTankSelectForDelivery();
+}
+function populateTankSelectForDelivery() {
+  const pid = document.getElementById("dlvProduct").value;
+  const opts = tanks.filter(t => t.product_id === pid && t.branch_id === currentBranch)
+    .map(t => `<option value="${t.id}">${t.tank_label}</option>`).join("");
+  document.getElementById("dlvTank").innerHTML = opts || "<option value=''>No tank set up for this product/branch</option>";
+}
+function populateVendorDriverSelects() {
+  document.getElementById("dlvVendor").innerHTML = "<option value=''>—</option>" + vendors.map(v => `<option value="${v.id}">${v.name}</option>`).join("");
+  document.getElementById("dlvDriver").innerHTML = "<option value=''>—</option>" + drivers.map(d => `<option value="${d.id}">${d.name}</option>`).join("");
+}
+
+// ============================================================
+// DASHBOARD
+// ============================================================
+async function loadDashboard() {
+  if (!currentBranch) return;
+  const { data: stock } = await supabase.from("fuel_delivery_stock_reconciliation").select("*, fuel_products(name)")
+    .eq("branch_id", currentBranch).eq("is_current_batch", true);
+  const stockDiv = document.getElementById("stockCards");
+  stockDiv.innerHTML = (stock || []).map(s => {
+    const v = s.variance_liters;
+    let vClass = "";
+    if (v !== null) { vClass = Math.abs(v) === 0 ? "" : (Math.abs(v) <= 5 ? "warn" : "warn"); }
+    return `<div class="product-card">
+      <h3>${s.fuel_products?.name || ""}</h3>
+      <div class="stat-grid">
+        <div class="stat"><div class="k">Starting Stock</div><div class="v">${liters(s.starting_stock)}</div></div>
+        <div class="stat"><div class="k">Dispensed (all)</div><div class="v">${liters(s.total_liters_dispensed)}</div></div>
+        <div class="stat"><div class="k">Sold</div><div class="v">${liters(s.total_liters_sold)}</div></div>
+        <div class="stat"><div class="k">Revenue</div><div class="v">${peso(s.total_revenue)}</div></div>
+        <div class="stat"><div class="k">Expected Remaining</div><div class="v">${liters(s.expected_remaining_stock)}</div></div>
+        <div class="stat ${vClass}"><div class="k">Latest Actual / Variance</div><div class="v">${s.latest_actual_stock !== null ? liters(s.latest_actual_stock) : "no check yet"} ${s.variance_liters !== null ? "(" + (s.variance_liters>0?"+":"") + s.variance_liters + " L)" : ""}</div></div>
+      </div>
+    </div>`;
+  }).join("") || "<p class='small'>No delivery batches yet for this branch.</p>";
+
+  const { data: profit } = await supabase.from("fuel_profit_cumulative_daily").select("*, fuel_products(name)")
+    .eq("branch_id", currentBranch).eq("shift_date", todayIso());
+  document.getElementById("profitCards").innerHTML = (profit || []).map(p => `
+    <div class="product-card">
+      <h3>${p.fuel_products?.name || ""}</h3>
+      <div class="stat-grid">
+        <div class="stat"><div class="k">Liters Sold</div><div class="v">${liters(p.liters_sold)}</div></div>
+        <div class="stat"><div class="k">Revenue</div><div class="v">${peso(p.revenue)}</div></div>
+        <div class="stat"><div class="k">Profit (WAC)</div><div class="v">${peso(p.profit_wac)}</div></div>
+        <div class="stat"><div class="k">Profit (Latest Delivery)</div><div class="v">${peso(p.profit_latest_delivery)}</div></div>
+      </div>
+    </div>`).join("") || "<p class='small'>No sales recorded yet today.</p>";
+
+  const { data: flagged } = await supabase.from("fuel_shift_cash_reconciliation")
+    .select("*, shifts(shift_date, shift_label)").eq("branch_id", currentBranch).neq("variance_flag","balanced")
+    .order("created_at", { ascending: false }).limit(10);
+  document.getElementById("flaggedShiftsTable").querySelector("tbody").innerHTML = (flagged || []).map(f => `
+    <tr><td>${f.shifts?.shift_date || ""}</td><td>${f.shifts?.shift_label || ""}</td><td>${peso(f.expected_cash)}</td><td>${peso(f.actual_cash_counted)}</td><td>${peso(f.variance)}</td>
+    <td><span class="badge ${f.variance_flag}">${f.variance_flag.replace("_"," ")}</span></td></tr>`).join("") ||
+    "<tr><td colspan='6' class='small'>No flagged shifts.</td></tr>";
+}
+
+// ============================================================
+// DELIVERIES
+// ============================================================
+async function loadDeliveries() {
+  if (!currentBranch) return;
+  await loadShiftOptions("dlvShift");
+  const { data } = await supabase.from("fuel_deliveries").select("*, fuel_products(name), fuel_vendors(name)")
+    .eq("branch_id", currentBranch).order("created_at", { ascending: false }).limit(20);
+  document.getElementById("deliveriesTable").querySelector("tbody").innerHTML = (data || []).map(d => `
+    <tr>
+      <td>${d.delivery_date}</td><td>${d.fuel_products?.name || ""}</td><td>${d.fuel_vendors?.name || "—"}</td>
+      <td>${liters(d.invoiced_liters)}</td><td>${peso(d.cost_per_liter)}</td><td>${peso(d.wac_after)}</td>
+      <td style="${d.variance_liters != 0 ? 'color:var(--danger); font-weight:700;' : ''}">${d.variance_liters > 0 ? "+" : ""}${d.variance_liters} L</td>
+      <td>${d.paid ? "✅" : "—"}</td>
+    </tr>`).join("") || "<tr><td colspan='8' class='small'>No deliveries yet.</td></tr>";
+}
+
+async function saveDelivery() {
+  const msg = document.getElementById("dlvMsg");
+  msg.textContent = ""; msg.className = "msg";
+  const payload = {
+    branch_id: currentBranch,
+    product_id: document.getElementById("dlvProduct").value,
+    tank_id: document.getElementById("dlvTank").value,
+    vendor_id: document.getElementById("dlvVendor").value || null,
+    driver_id: document.getElementById("dlvDriver").value || null,
+    plate_number: document.getElementById("dlvPlate").value || null,
+    invoice_number: document.getElementById("dlvInvoice").value || null,
+    check_number: document.getElementById("dlvCheck").value || null,
+    shift_id: document.getElementById("dlvShift").value || null,
+    delivery_date: document.getElementById("dlvDate").value,
+    invoiced_liters: parseFloat(document.getElementById("dlvLiters").value),
+    cost_per_liter: parseFloat(document.getElementById("dlvCost").value),
+    market_reference_price_per_liter: document.getElementById("dlvMarket").value ? parseFloat(document.getElementById("dlvMarket").value) : null,
+    dipstick_before_cm: document.getElementById("dlvBeforeCm").value ? parseFloat(document.getElementById("dlvBeforeCm").value) : null,
+    dipstick_before_liters: parseFloat(document.getElementById("dlvBeforeL").value),
+    dipstick_after_cm: document.getElementById("dlvAfterCm").value ? parseFloat(document.getElementById("dlvAfterCm").value) : null,
+    dipstick_after_liters: parseFloat(document.getElementById("dlvAfterL").value),
+    paid: document.getElementById("dlvPaid").checked
+  };
+  if (!payload.tank_id) { msg.textContent = "No tank set up for this product/branch — add one in Setup first."; msg.className = "msg err"; return; }
+  const { error } = await supabase.from("fuel_deliveries").insert(payload);
+  if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+  msg.textContent = "Delivery saved."; msg.className = "msg ok";
+  loadDeliveries();
+}
+
+// ============================================================
+// DISPENSING
+// ============================================================
+async function loadShiftOptions(selectId, includeAll) {
+  const { data } = await supabase.from("shifts").select("*").eq("branch_id", currentBranch)
+    .order("shift_date", { ascending: false }).limit(30);
+  const opts = (data || []).map(s => `<option value="${s.id}">${s.shift_date} — ${s.shift_label}</option>`).join("");
+  const el = document.getElementById(selectId);
+  el.innerHTML = (includeAll === false ? "" : "<option value=''>—</option>") + opts;
+  return data || [];
+}
+
+async function loadShiftsForDispensing() {
+  if (!currentBranch) return;
+  await loadShiftOptions("dspShift", false);
+  document.getElementById("dspStatus").textContent = "";
+  document.getElementById("dspOpenCard").style.display = "none";
+  document.getElementById("dspActiveCard").style.display = "none";
+  document.getElementById("dspAllocCard").style.display = "none";
+  await loadPumpsForShift();
+}
+
+async function loadPumpsForShift() {
+  const branchPumps = pumps.filter(p => p.branch_id === currentBranch);
+  document.getElementById("dspPump").innerHTML = branchPumps.map(p => `<option value="${p.id}">${p.pump_label} (${p.fuel_products?.name || ""})</option>`).join("")
+    || "<option value=''>No pumps set up — add one in Setup</option>";
+  await loadOpenPeriod();
+}
+
+async function loadOpenPeriod() {
+  const pumpId = document.getElementById("dspPump").value;
+  const shiftId = document.getElementById("dspShift").value;
+  document.getElementById("dspOpenCard").style.display = "none";
+  document.getElementById("dspActiveCard").style.display = "none";
+  document.getElementById("dspAllocCard").style.display = "none";
+  if (!pumpId) return;
+
+  const { data } = await supabase.from("fuel_meter_periods").select("*")
+    .eq("pump_id", pumpId).is("closing_reading_id", null).order("created_at", { ascending: false }).limit(1);
+  activePeriod = (data && data[0]) || null;
+
+  if (activePeriod) {
+    document.getElementById("dspStatus").textContent = "There is an open price period on this pump.";
+    document.getElementById("dspActiveCard").style.display = "block";
+    document.getElementById("dspActivePrice").textContent = peso(activePeriod.selling_price);
+    document.getElementById("dspActiveWac").textContent = peso(activePeriod.wac_at_open);
+    document.getElementById("dspActiveLatestCost").textContent = peso(activePeriod.latest_delivery_cost_per_liter);
+    const { data: openReading } = await supabase.from("fuel_meter_readings").select("meter_value").eq("id", activePeriod.opening_reading_id).single();
+    document.getElementById("dspActiveOpenMeter").textContent = openReading ? openReading.meter_value : "—";
+    if (activePeriod.total_liters_dispensed !== null) {
+      await showAllocationPanel();
+    }
+  } else {
+    document.getElementById("dspStatus").textContent = "No open period on this pump — open one to start recording sales.";
+    document.getElementById("dspOpenCard").style.display = "block";
+    // prefill price with latest price for this pump's product
+    const pump = pumps.find(p => p.id === pumpId);
+    if (pump) {
+      const { data: priceRow } = await supabase.from("fuel_product_price_history").select("selling_price")
+        .eq("product_id", pump.product_id).order("effective_date", { ascending: false }).order("created_at", { ascending: false }).limit(1).single();
+      if (priceRow) document.getElementById("dspOpenPrice").value = priceRow.selling_price;
+    }
+  }
+}
+
+async function openPeriod() {
+  const msg = document.getElementById("dspOpenMsg");
+  const pumpId = document.getElementById("dspPump").value;
+  const shiftId = document.getElementById("dspShift").value;
+  if (!shiftId) { msg.textContent = "Select a shift first."; msg.className = "msg err"; return; }
+  const meterValue = parseFloat(document.getElementById("dspOpenMeter").value);
+  const price = parseFloat(document.getElementById("dspOpenPrice").value);
+  const pump = pumps.find(p => p.id === pumpId);
+
+  const { data: reading, error: e1 } = await supabase.from("fuel_meter_readings").insert({
+    pump_id: pumpId, shift_id: shiftId, reading_type: "opening", meter_value: meterValue
+  }).select().single();
+  if (e1) { msg.textContent = "Error: " + e1.message; msg.className = "msg err"; return; }
+
+  const { error: e2 } = await supabase.from("fuel_meter_periods").insert({
+    pump_id: pumpId, branch_id: currentBranch, product_id: pump.product_id, shift_id: shiftId,
+    opening_reading_id: reading.id, selling_price: price
+  });
+  if (e2) { msg.textContent = "Error: " + e2.message; msg.className = "msg err"; return; }
+  msg.textContent = "Period opened."; msg.className = "msg ok";
+  loadOpenPeriod();
+}
+
+async function closePeriod() {
+  const msg = document.getElementById("dspCloseMsg");
+  const pumpId = document.getElementById("dspPump").value;
+  const shiftId = document.getElementById("dspShift").value;
+  const meterValue = parseFloat(document.getElementById("dspCloseMeter").value);
+  const reason = document.getElementById("dspCloseReason").value;
+  const readingType = reason === "shift_boundary" ? "closing" : "interim";
+
+  const { data: reading, error: e1 } = await supabase.from("fuel_meter_readings").insert({
+    pump_id: pumpId, shift_id: shiftId, reading_type: readingType, reason, meter_value: meterValue
+  }).select().single();
+  if (e1) { msg.textContent = "Error: " + e1.message; msg.className = "msg err"; return; }
+
+  const { error: e2 } = await supabase.rpc("fn_fuel_close_meter_period", { p_period_id: activePeriod.id, p_closing_reading_id: reading.id });
+  if (e2) { msg.textContent = "Error: " + e2.message; msg.className = "msg err"; return; }
+
+  msg.textContent = "Period closed. Now label the dispensed liters below.";
+  msg.className = "msg ok";
+  await loadOpenPeriod();
+
+  if (reason !== "shift_boundary") {
+    // Prompt to immediately open the next period at the same meter value
+    document.getElementById("dspOpenMeter").value = meterValue;
+    document.getElementById("dspOpenCard").style.display = "block";
+  }
+}
+
+async function showAllocationPanel() {
+  const { data: period } = await supabase.from("fuel_meter_periods").select("*").eq("id", activePeriod.id).single();
+  activePeriod = period;
+  document.getElementById("dspAllocCard").style.display = "block";
+  document.getElementById("dspOpenCard").style.display = "none";
+  document.getElementById("dspTargetLiters").textContent = period.total_liters_dispensed;
+
+  document.getElementById("allocCustomer").innerHTML = creditCustomers.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
+
+  const { data: allocs } = await supabase.from("fuel_dispense_allocations").select("*").eq("meter_period_id", period.id);
+  const sum = (allocs || []).reduce((a,r) => a + Number(r.liters), 0);
+  document.getElementById("allocTable").querySelector("tbody").innerHTML = (allocs || []).map(a =>
+    `<tr><td>${a.category.replace("_"," ")}</td><td>${liters(a.liters)}</td><td>${a.notes || ""}</td></tr>`
+  ).join("");
+  document.getElementById("allocSum").textContent = sum.toFixed(2) + " L";
+  const remaining = Number(period.total_liters_dispensed) - sum;
+  document.getElementById("allocRemaining").textContent = remaining.toFixed(2) + " L";
+  document.getElementById("allocStatus").textContent = period.reconciled ? "✅ Reconciled" : "Pending";
+}
+
+function onAllocCategoryChange() {
+  document.getElementById("allocCustomerWrap").style.display = document.getElementById("allocCategory").value === "credit_sale" ? "block" : "none";
+}
+
+async function addAllocation() {
+  const msg = document.getElementById("allocMsg");
+  const category = document.getElementById("allocCategory").value;
+  const litersVal = parseFloat(document.getElementById("allocLiters").value);
+  const notes = document.getElementById("allocNotes").value || null;
+  let creditTxnId = null;
+
+  if (category === "credit_sale") {
+    const customerId = document.getElementById("allocCustomer").value;
+    if (!customerId) { msg.textContent = "Select a credit customer."; msg.className = "msg err"; return; }
+    const { data: txn, error: e1 } = await supabase.from("fuel_credit_transactions").insert({
+      credit_customer_id: customerId, branch_id: currentBranch, shift_id: activePeriod.shift_id,
+      transaction_type: "credit_sale", product_id: activePeriod.product_id, liters: litersVal, price_per_liter: activePeriod.selling_price
+    }).select().single();
+    if (e1) { msg.textContent = "Error: " + e1.message; msg.className = "msg err"; return; }
+    creditTxnId = txn.id;
+  }
+
+  const { error } = await supabase.from("fuel_dispense_allocations").insert({
+    meter_period_id: activePeriod.id, category, liters: litersVal, credit_transaction_id: creditTxnId, notes
+  });
+  if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+  msg.textContent = "Allocation added."; msg.className = "msg ok";
+  document.getElementById("allocLiters").value = "";
+  document.getElementById("allocNotes").value = "";
+  showAllocationPanel();
+}
+
+// ============================================================
+// CREDIT / PO
+// ============================================================
+async function loadCreditTab() {
+  const { data: cc } = await supabase.from("fuel_credit_customers").select("*").order("name");
+  creditCustomers = cc || [];
+  document.getElementById("payCustomer").innerHTML = creditCustomers.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
+  await loadShiftOptions("payShift", false);
+
+  const { data: balances } = await supabase.from("fuel_credit_customer_balances").select("*").order("name");
+  document.getElementById("ccBalanceTable").querySelector("tbody").innerHTML = (balances || []).map(b => `
+    <tr><td>${b.name}</td><td>${peso(b.total_charged)}</td><td>${peso(b.total_paid)}</td>
+    <td style="${b.running_balance > 0 ? 'color:var(--orange); font-weight:700;' : ''}">${peso(b.running_balance)}</td></tr>`
+  ).join("") || "<tr><td colspan='4' class='small'>No credit customers yet.</td></tr>";
+}
+
+async function saveCreditCustomer() {
+  const msg = document.getElementById("ccMsg");
+  const payload = {
+    name: document.getElementById("ccName").value.trim(),
+    contact: document.getElementById("ccContact").value || null,
+    credit_limit: document.getElementById("ccLimit").value ? parseFloat(document.getElementById("ccLimit").value) : null
+  };
+  if (!payload.name) { msg.textContent = "Name required."; msg.className = "msg err"; return; }
+  const { error } = await supabase.from("fuel_credit_customers").insert(payload);
+  if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+  msg.textContent = "Customer saved."; msg.className = "msg ok";
+  document.getElementById("ccName").value = ""; document.getElementById("ccContact").value = ""; document.getElementById("ccLimit").value = "";
+  loadCreditTab();
+}
+
+async function savePayment() {
+  const msg = document.getElementById("payMsg");
+  const shiftId = document.getElementById("payShift").value;
+  if (!shiftId) { msg.textContent = "Select a shift (payments must tie to a shift too)."; msg.className = "msg err"; return; }
+  const payload = {
+    credit_customer_id: document.getElementById("payCustomer").value,
+    branch_id: currentBranch,
+    shift_id: shiftId,
+    transaction_type: "payment",
+    amount: parseFloat(document.getElementById("payAmount").value),
+    payment_method: document.getElementById("payMethod").value,
+    reference: document.getElementById("payRef").value || null
+  };
+  const { error } = await supabase.from("fuel_credit_transactions").insert(payload);
+  if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+  msg.textContent = "Payment recorded."; msg.className = "msg ok";
+  document.getElementById("payAmount").value = ""; document.getElementById("payRef").value = "";
+  loadCreditTab();
+}
+
+// ============================================================
+// CASH RECONCILIATION
+// ============================================================
+async function loadCashReconTab() {
+  await loadShiftOptions("crShift", false);
+  const { data } = await supabase.from("fuel_shift_cash_reconciliation").select("*, shifts(shift_date, shift_label)")
+    .eq("branch_id", currentBranch).order("created_at", { ascending: false }).limit(20);
+  document.getElementById("crTable").querySelector("tbody").innerHTML = (data || []).map(r => `
+    <tr><td>${r.shifts?.shift_date || ""} — ${r.shifts?.shift_label || ""}</td><td>${peso(r.expected_cash)}</td><td>${peso(r.actual_cash_counted)}</td><td>${peso(r.variance)}</td>
+    <td><span class="badge ${r.variance_flag}">${r.variance_flag.replace("_"," ")}</span></td></tr>`
+  ).join("") || "<tr><td colspan='5' class='small'>No reconciliations yet.</td></tr>";
+}
+
+async function previewCashRecon() {
+  const shiftId = document.getElementById("crShift").value;
+  if (!shiftId) { return; }
+  const { data: cashRows } = await supabase.from("fuel_cash_sales_by_shift").select("total_cash_amount").eq("shift_id", shiftId);
+  const { data: creditRows } = await supabase.from("fuel_credit_sales_by_shift").select("total_credit_amount").eq("shift_id", shiftId);
+  const cashTotal = (cashRows || []).reduce((a,r) => a + Number(r.total_cash_amount), 0);
+  const creditTotal = (creditRows || []).reduce((a,r) => a + Number(r.total_credit_amount), 0);
+  document.getElementById("crPreviewCash").textContent = peso(cashTotal);
+  document.getElementById("crPreviewCredit").textContent = peso(creditTotal);
+}
+
+async function saveCashRecon() {
+  const msg = document.getElementById("crMsg");
+  const shiftId = document.getElementById("crShift").value;
+  if (!shiftId) { msg.textContent = "Select a shift."; msg.className = "msg err"; return; }
+  const payload = {
+    shift_id: shiftId,
+    branch_id: currentBranch,
+    beginning_cash_float: parseFloat(document.getElementById("crBegin").value) || 0,
+    cash_injected: parseFloat(document.getElementById("crInjected").value) || 0,
+    injected_by: document.getElementById("crInjectedBy").value || null,
+    cash_expenses_paid: parseFloat(document.getElementById("crExpenses").value) || 0,
+    management_takeaway: parseFloat(document.getElementById("crTakeaway").value) || 0,
+    bank_deposit_amount: parseFloat(document.getElementById("crDeposit").value) || 0,
+    deposited_by: document.getElementById("crDepositedBy").value || null,
+    checker: document.getElementById("crChecker").value || null,
+    actual_cash_counted: parseFloat(document.getElementById("crActual").value),
+    notes: document.getElementById("crNotes").value || null
+  };
+  const { data, error } = await supabase.from("fuel_shift_cash_reconciliation").insert(payload).select().single();
+  if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+  msg.textContent = `Saved. Variance: ${peso(data.variance)} (${data.variance_flag.replace("_"," ")})`;
+  msg.className = data.variance_flag === "balanced" ? "msg ok" : "msg err";
+  loadCashReconTab();
+}
+
+// ============================================================
+// SETUP
+// ============================================================
+async function loadSetupTab() {
+  const { data: pr } = await supabase.from("fuel_products").select("*, fuel_product_price_history(selling_price, effective_date)").order("code");
+  products = pr || [];
+  document.getElementById("productsList").innerHTML = products.map(p => `
+    <div class="product-card"><h3>${p.name} (${p.code})</h3><p class="small">${p.description || ""}</p></div>
+  `).join("");
+  populateProductSelects();
+
+  const { data: vd } = await supabase.from("fuel_vendors").select("*").order("name");
+  vendors = vd || [];
+  document.getElementById("vendorsTable").querySelector("tbody").innerHTML = vendors.map(v =>
+    `<tr><td>${v.name}</td><td>${v.representative || "—"}</td><td>${v.contact || "—"}</td></tr>`).join("");
+  populateVendorDriverSelects();
+
+  const { data: dr } = await supabase.from("fuel_delivery_drivers").select("*").order("name");
+  drivers = dr || [];
+  document.getElementById("driversTable").querySelector("tbody").innerHTML = drivers.map(d =>
+    `<tr><td>${d.name}</td><td>${d.area || "—"}</td></tr>`).join("");
+
+  const { data: tk } = await supabase.from("fuel_tanks").select("*, fuel_products(name)").eq("branch_id", currentBranch);
+  tanks = tk || [];
+  document.getElementById("tanksTable").querySelector("tbody").innerHTML = tanks.map(t =>
+    `<tr><td>${t.fuel_products?.name || ""}</td><td>${t.tank_label}</td></tr>`).join("");
+  document.getElementById("calTank").innerHTML = tanks.map(t => `<option value="${t.id}">${t.fuel_products?.name} — ${t.tank_label}</option>`).join("");
+
+  const { data: pm } = await supabase.from("fuel_pumps").select("*, fuel_products(name)").eq("branch_id", currentBranch);
+  pumps = pm || [];
+  document.getElementById("pumpsTable").querySelector("tbody").innerHTML = pumps.map(p =>
+    `<tr><td>${p.fuel_products?.name || ""}</td><td>${p.pump_label}</td></tr>`).join("");
+}
+
+async function savePrice() {
+  const msg = document.getElementById("priceMsg");
+  const { error } = await supabase.from("fuel_product_price_history").insert({
+    product_id: document.getElementById("priceProduct").value,
+    selling_price: parseFloat(document.getElementById("priceValue").value),
+    set_by: document.getElementById("priceSetBy").value || null
+  });
+  if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+  msg.textContent = "Price updated."; msg.className = "msg ok";
+}
+
+async function saveVendor() {
+  const msg = document.getElementById("vMsg");
+  const { error } = await supabase.from("fuel_vendors").insert({
+    name: document.getElementById("vName").value.trim(),
+    representative: document.getElementById("vRep").value || null,
+    contact: document.getElementById("vContact").value || null
+  });
+  if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+  msg.textContent = "Vendor saved."; msg.className = "msg ok";
+  document.getElementById("vName").value = ""; document.getElementById("vRep").value = ""; document.getElementById("vContact").value = "";
+  loadSetupTab();
+}
+
+async function saveDriver() {
+  const msg = document.getElementById("drMsg");
+  const { error } = await supabase.from("fuel_delivery_drivers").insert({
+    name: document.getElementById("drName").value.trim(),
+    area: document.getElementById("drArea").value || null
+  });
+  if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+  msg.textContent = "Driver saved."; msg.className = "msg ok";
+  document.getElementById("drName").value = ""; document.getElementById("drArea").value = "";
+  loadSetupTab();
+}
+
+async function saveTank() {
+  const msg = document.getElementById("tkMsg");
+  const { error } = await supabase.from("fuel_tanks").insert({
+    branch_id: currentBranch,
+    product_id: document.getElementById("tkProduct").value,
+    tank_label: document.getElementById("tkLabel").value.trim() || "Main"
+  });
+  if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+  msg.textContent = "Tank saved."; msg.className = "msg ok";
+  document.getElementById("tkLabel").value = "";
+  loadSetupTab();
+}
+
+async function saveCalibration() {
+  const msg = document.getElementById("calMsg");
+  const { error } = await supabase.from("fuel_tank_calibration").insert({
+    tank_id: document.getElementById("calTank").value,
+    height_cm: parseFloat(document.getElementById("calHeight").value),
+    liters: parseFloat(document.getElementById("calLiters").value)
+  });
+  if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+  msg.textContent = "Calibration point added."; msg.className = "msg ok";
+  document.getElementById("calHeight").value = ""; document.getElementById("calLiters").value = "";
+}
+
+async function savePump() {
+  const msg = document.getElementById("pmMsg");
+  const { error } = await supabase.from("fuel_pumps").insert({
+    branch_id: currentBranch,
+    product_id: document.getElementById("pmProduct").value,
+    pump_label: document.getElementById("pmLabel").value.trim()
+  });
+  if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+  msg.textContent = "Pump saved."; msg.className = "msg ok";
+  document.getElementById("pmLabel").value = "";
+  loadSetupTab();
+}
+</script>
+</body>
+</html>
