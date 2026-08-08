@@ -58,6 +58,9 @@
     <video id="qrVideo" autoplay playsinline muted style="width:100%; border-radius:10px; display:block;"></video>
     <canvas id="qrCanvas" style="display:none;"></canvas>
     <div id="scanStatus" style="text-align:center; margin-top:8px; color:var(--muted); font-size:13px;">Point camera at employee ID QR code</div>
+    <div id="backToSearchRow" style="display:none; text-align:center; margin-top:8px;">
+      <a href="#" id="backToSearchLink" style="color:var(--muted); font-size:13px;">← Back to search</a>
+    </div>
   </div>
 
   <div id="manualPanel" style="display:none;">
@@ -72,7 +75,7 @@
     <label style="display:flex; align-items:center; gap:6px; margin-top:6px; font-size:13px; color:var(--muted);">
       <input type="checkbox" id="showAllEmployees" style="width:auto;"> Show all employees (cross-branch shift today)
     </label>
-    <button type="button" id="manualUsePhotoBtn" style="margin-top:10px; width:100%; padding:10px; border-radius:8px; border:1px solid #334155; background:#0f172a; color:var(--text);">Take Attendance Photo & Continue</button>
+    <button type="button" id="manualUsePhotoBtn" style="margin-top:10px; width:100%; padding:10px; border-radius:8px; border:1px solid #334155; background:#0f172a; color:var(--text);">Continue — Scan Their ID to Verify</button>
   </div>
 
   <div id="confirmPanel" style="display:none; margin-top:14px; padding:12px; border:1px solid #334155; border-radius:10px;">
@@ -80,6 +83,10 @@
     <div id="confirmName" style="color:var(--accent); font-size:15px; margin-bottom:8px;"></div>
     <div id="rosterWarning" style="display:none; color:#f59e0b; font-size:12px; margin-bottom:8px; padding:6px 8px; background:#f59e0b1a; border-radius:6px;"></div>
     <div id="actionBadge" style="font-size:13px; font-weight:600; margin-bottom:8px; padding:6px 8px; border-radius:6px;"></div>
+    <div id="shiftPickerRow" style="display:none; margin-bottom:8px;">
+      <label style="margin-top:0; font-size:12px; color:var(--muted);">Shift (not on today's roster — pick which shift this is)</label>
+      <select id="manualShiftSelect" style="margin-bottom:0;"></select>
+    </div>
     <img id="confirmPhoto" style="width:100%; border-radius:8px; display:block;">
     <div style="font-size:11px; color:var(--muted); margin-top:6px;">Attendance photo for this time in/out only — it does not change your profile photo. Profile photos can only be replaced by an admin.</div>
     <div id="overrideRow" style="display:none; margin-top:8px; font-size:12px; text-align:center;">
@@ -346,6 +353,7 @@ function renderTodayRoster() {
 async function startClockFlowFor(employeeId, employeeName) {
   selectedEmployeeId = employeeId;
   selectedEmployeeName = employeeName;
+  verifiedViaQr = false;
   try {
     await openCamera();
     setTimeout(async () => {
@@ -385,6 +393,10 @@ let selectedEmployeeName = null;
 let capturedPhotoBlob = null;
 let detectedAction = null; // "in" | "out" -- auto-determined, not chosen by the user
 let lastPushError = null;  // most recent Supabase error message, shown on failure
+let manualShiftId = null;  // for a non-rostered clock-in: which of today's shifts this counts against
+let manualVerifyExpected = null; // when set, QR scan must match this employee (manual-search-then-verify flow)
+let verifiedViaQr = false; // true only when identity came from an actual QR scan -- gates auto-save
+let autoSaveTimer = null;  // pending auto-save timeout, cancellable by Cancel/Retake/Override
 
 const scanModeBtn = document.getElementById("scanModeBtn");
 const manualModeBtn = document.getElementById("manualModeBtn");
@@ -414,17 +426,23 @@ function setMode(m) {
 }
 
 function resetSelection() {
+  cancelAutoSave();
   selectedEmployeeId = null;
   selectedEmployeeName = null;
   capturedPhotoBlob = null;
   detectedAction = null;
   manualSelectedEmployeeId = null;
+  manualShiftId = null;
+  manualVerifyExpected = null;
+  verifiedViaQr = false;
+  document.getElementById("backToSearchRow").style.display = "none";
   document.getElementById("confirmBtn").disabled = true;
   document.getElementById("confirmBtn").textContent = "Checking…";
   document.getElementById("overrideRow").style.display = "none";
   document.getElementById("employeeInput").value = "";
   document.getElementById("employeeSuggestions").style.display = "none";
   document.getElementById("manualPhotoPreview").style.display = "none";
+  document.getElementById("shiftPickerRow").style.display = "none";
 }
 
 // ---------- Camera (shared by scan + manual capture) ----------
@@ -477,8 +495,16 @@ function qrTick() {
       const raw = code.data.trim();
       const emp = matchEmployeeFromQr(raw);
       if (emp) {
-        onEmployeeIdentified(emp.id, emp.full_name);
-        return; // stop the loop, don't schedule another frame
+        if (manualVerifyExpected && emp.id !== manualVerifyExpected.id) {
+          // Scanned a real employee's ID, but not the one that was picked
+          // by search -- the QR is the source of truth here, so refuse
+          // rather than silently accepting a mismatch.
+          scanStatus.textContent = `⚠ That's ${emp.full_name}'s ID — you selected ${manualVerifyExpected.full_name}. Scan the correct ID, or go back and search again.`;
+        } else {
+          manualVerifyExpected = null;
+          onEmployeeIdentified(emp.id, emp.full_name);
+          return; // stop the loop, don't schedule another frame
+        }
       } else {
         scanStatus.textContent = `QR read (${raw}) but no active employee matches it`;
       }
@@ -540,24 +566,58 @@ async function detectClockAction(employeeId) {
   }
 }
 
+let currentConfirmBaseLabel = "";
+
 function renderActionBadge() {
   const badge = document.getElementById("actionBadge");
   const btn = document.getElementById("confirmBtn");
   const overrideRow = document.getElementById("overrideRow");
   const overrideLink = document.getElementById("overrideLink");
+  let baseLabel;
   if (detectedAction === "in") {
     badge.textContent = "Will record: TIME IN";
     badge.style.background = "#052e1680"; badge.style.color = "var(--accent)";
-    btn.textContent = "Confirm — Time In"; btn.style.background = "var(--accent)"; btn.style.color = "#052e16";
+    baseLabel = "Confirm — Time In";
+    btn.style.background = "var(--accent)"; btn.style.color = "#052e16";
     overrideLink.textContent = "Not right? Switch to Time Out instead";
   } else {
     badge.textContent = "Will record: TIME OUT";
     badge.style.background = "#450a0a80"; badge.style.color = "var(--accent-out)";
-    btn.textContent = "Confirm — Time Out"; btn.style.background = "var(--accent-out)"; btn.style.color = "#450a0a";
+    baseLabel = "Confirm — Time Out";
+    btn.style.background = "var(--accent-out)"; btn.style.color = "#450a0a";
     overrideLink.textContent = "Not right? Switch to Time In instead";
   }
+  currentConfirmBaseLabel = baseLabel;
+  btn.textContent = baseLabel;
   overrideRow.style.display = "block";
   btn.disabled = false;
+
+  // Auto-save only applies when identity came from an actual QR scan (Scan
+  // ID mode, or manual-search-then-verify) -- a roster-button tap has no
+  // independent verification, so it still waits for a manual tap.
+  cancelAutoSave();
+  if (verifiedViaQr) scheduleAutoSave(baseLabel);
+}
+
+function scheduleAutoSave(baseLabel) {
+  const btn = document.getElementById("confirmBtn");
+  let secondsLeft = 2;
+  btn.textContent = `${baseLabel} (auto-saving in ${secondsLeft}…)`;
+  autoSaveTimer = setInterval(() => {
+    secondsLeft--;
+    if (secondsLeft <= 0) {
+      cancelAutoSave();
+      const action = detectedAction || "in";
+      confirmPanel.style.display = "none";
+      submitEntry(action);
+    } else {
+      btn.textContent = `${baseLabel} (auto-saving in ${secondsLeft}…)`;
+    }
+  }, 1000);
+}
+
+function cancelAutoSave() {
+  if (autoSaveTimer) { clearInterval(autoSaveTimer); autoSaveTimer = null; }
 }
 
 document.getElementById("overrideLink").addEventListener("click", (e) => {
@@ -570,6 +630,7 @@ async function onEmployeeIdentified(id, name) {
   qrLoopActive = false;
   selectedEmployeeId = id;
   selectedEmployeeName = name;
+  verifiedViaQr = true;
   const blob = await captureFrame();
   showConfirm(blob);
 }
@@ -578,7 +639,82 @@ async function onEmployeeIdentified(id, name) {
 document.getElementById("manualUsePhotoBtn").addEventListener("click", async () => {
   const emp = findEmployeeByManualInput(document.getElementById("employeeInput").value);
   if (!emp) { logMsg("Type a few letters of the name or TM #, then pick one from the list.", "queued"); return; }
-  await startClockFlowFor(emp.id, `${emp.full_name} (${emp.tm_number})`);
+  await startVerifyScanFor(emp);
+});
+
+// Manual-search-then-verify: the search just narrows down who's expected;
+// the physical ID scan is what actually confirms it's them, same as if
+// they'd started from Scan ID directly. Reuses the scan panel/QR loop, just
+// constrained to only accept that one specific employee's card.
+async function startVerifyScanFor(emp) {
+  manualVerifyExpected = emp;
+  manualPanel.style.display = "none";
+  scanPanel.style.display = "block";
+  document.getElementById("backToSearchRow").style.display = "block";
+  try {
+    await startQrScan(); // this sets its own status text as it goes
+  } catch (err) {
+    logMsg("Camera error: " + err.message, "queued");
+    return;
+  }
+  scanStatus.textContent = `Scan ${emp.full_name}'s ID to verify…`;
+}
+
+document.getElementById("backToSearchLink").addEventListener("click", (e) => {
+  e.preventDefault();
+  manualVerifyExpected = null;
+  stopCamera();
+  document.getElementById("backToSearchRow").style.display = "none";
+  scanPanel.style.display = "none";
+  manualPanel.style.display = "block";
+});
+
+// Finds which of a branch's shifts "now" actually falls inside -- checking
+// both today's and yesterday's shift rows, since an overnight shift (e.g.
+// GY starting 8pm) is dated by its START day, so if it's 2am right now the
+// active shift row is still dated "yesterday". Falls back to whichever
+// shift starts soonest if the current moment doesn't land inside any of
+// them (a gap between shifts, or none configured yet).
+async function detectCurrentShiftForBranch(branchId) {
+  const now = new Date();
+  const todayISO = now.toISOString().slice(0, 10);
+  const y = new Date(now); y.setDate(y.getDate() - 1);
+  const yesterdayISO = y.toISOString().slice(0, 10);
+
+  const { data, error } = await supabase.from("shifts")
+    .select("id, shift_label, scheduled_time_in, scheduled_time_out, shift_date")
+    .eq("branch_id", branchId)
+    .in("shift_date", [todayISO, yesterdayISO]);
+  if (error || !data || !data.length) return { current: null, todaysShifts: [] };
+
+  function toAbsRange(dateISO, timeIn, timeOut) {
+    const start = new Date(`${dateISO}T${timeIn}`);
+    let end = new Date(`${dateISO}T${timeOut}`);
+    if (end <= start) end.setDate(end.getDate() + 1);
+    return { start, end };
+  }
+
+  let current = null;
+  for (const s of data) {
+    const { start, end } = toAbsRange(s.shift_date, s.scheduled_time_in, s.scheduled_time_out);
+    if (now >= start && now < end) { current = s; break; }
+  }
+  if (!current) {
+    let best = null, bestDist = Infinity;
+    for (const s of data) {
+      const { start } = toAbsRange(s.shift_date, s.scheduled_time_in, s.scheduled_time_out);
+      const dist = Math.abs(start - now);
+      if (dist < bestDist) { bestDist = dist; best = s; }
+    }
+    current = best;
+  }
+  const todaysShifts = data.filter(s => s.shift_date === todayISO)
+    .sort((a, b) => a.scheduled_time_in.localeCompare(b.scheduled_time_in));
+  return { current, todaysShifts };
+}
+
+document.getElementById("manualShiftSelect").addEventListener("change", function () {
+  manualShiftId = this.value || null;
 });
 
 // ---------- Confirm panel ----------
@@ -603,22 +739,48 @@ async function showConfirm(blob) {
   document.getElementById("overrideRow").style.display = "none";
   detectedAction = await detectClockAction(selectedEmployeeId);
   // Guard against a stale response if the person cancelled/switched while the lookup was in flight.
+  if (selectedEmployeeId === null) return;
+
+  // For a fresh clock-in with no roster assignment, figure out (and let
+  // them confirm/override) which of today's shifts this actually counts
+  // against -- same idea as the old AppSheet "Shift" picker defaulting to
+  // whichever shift comes next.
+  const shiftPickerRow = document.getElementById("shiftPickerRow");
+  const branchId = document.getElementById("branchSelect").value;
+  const rosterMatch = activeAssignments.find(a => a.employee_id === selectedEmployeeId && a.branch_id === branchId);
+  if (detectedAction === "in" && !rosterMatch) {
+    const { current, todaysShifts } = await detectCurrentShiftForBranch(branchId);
+    manualShiftId = current ? current.id : null;
+    const sel = document.getElementById("manualShiftSelect");
+    sel.innerHTML = todaysShifts.map(s =>
+      `<option value="${s.id}" ${s.id === manualShiftId ? "selected" : ""}>${escapeHtml(s.shift_label)} (${fmtTimeOnly(s.scheduled_time_in)})</option>`
+    ).join("");
+    shiftPickerRow.style.display = todaysShifts.length ? "block" : "none";
+  } else {
+    manualShiftId = null;
+    shiftPickerRow.style.display = "none";
+  }
+
   if (selectedEmployeeId !== null) renderActionBadge();
 }
 
 document.getElementById("retakeBtn").addEventListener("click", async () => {
+  cancelAutoSave();
   const blob = await captureFrame();
   capturedPhotoBlob = blob;
   document.getElementById("confirmPhoto").src = URL.createObjectURL(blob);
+  if (verifiedViaQr) scheduleAutoSave(currentConfirmBaseLabel);
 });
 
 document.getElementById("confirmBtn").addEventListener("click", () => {
+  cancelAutoSave();
   const action = detectedAction || "in";
   confirmPanel.style.display = "none";
   submitEntry(action);
 });
 
 document.getElementById("cancelBtn").addEventListener("click", () => {
+  cancelAutoSave();
   logMsg("Cancelled — no entry recorded.", "queued");
   setMode(mode); // resets selection and restarts scan/manual for the current mode
 });
@@ -713,7 +875,7 @@ async function pushEntry(entry, photoBlob) {
       const { error } = await supabase.from("timesheet_entries").insert({
         employee_id: entry.employee_id,
         branch_id: entry.branch_id,
-        shift_id: rosterMatch ? rosterMatch.shift_id : null,
+        shift_id: rosterMatch ? rosterMatch.shift_id : manualShiftId,
         post_id: rosterMatch ? rosterMatch.post_id : null,
         reliever: rosterMatch ? rosterMatch.status === "reliever" : false,
         is_double_pump: rosterMatch ? !!rosterMatch.double_pump : false,
