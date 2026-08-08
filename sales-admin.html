@@ -155,7 +155,7 @@
         <div class="msg" id="dlvMsg"></div>
       </div>
       <div class="card">
-        <h2>Recent Deliveries <span class="small">(click a row to edit)</span></h2>
+        <h2>Recent Deliveries <span class="small" id="deliveriesEditHint"></span></h2>
         <table id="deliveriesTable"><thead><tr><th>Date</th><th>Product</th><th>Vendor</th><th>Liters</th><th>Cost/L</th><th>WAC After</th><th>Delivered vs Invoiced</th><th>Paid</th></tr></thead><tbody></tbody></table>
       </div>
     </div>
@@ -602,8 +602,9 @@ async function loadDeliveries() {
   const { data } = await supabase.from("fuel_deliveries").select("*, fuel_products(name), fuel_vendors(name)")
     .eq("branch_id", currentBranch).order("created_at", { ascending: false }).limit(20);
   deliveriesCache = data || [];
+  document.getElementById("deliveriesEditHint").textContent = isOwner ? "(click a row to edit)" : "(only the owner can edit a saved delivery)";
   document.getElementById("deliveriesTable").querySelector("tbody").innerHTML = (data || []).map((d,i) => `
-    <tr style="cursor:pointer;" onclick="editDelivery(${i})">
+    <tr ${isOwner ? `style="cursor:pointer;" onclick="editDelivery(${i})"` : ""}>
       <td>${d.delivery_date}</td><td>${d.fuel_products?.name || ""}</td><td>${d.fuel_vendors?.name || "—"}</td>
       <td>${liters(d.invoiced_liters)}</td><td>${peso(d.cost_per_liter)}</td><td>${peso(d.wac_after)}</td>
       <td style="${d.variance_liters != 0 ? 'color:var(--danger); font-weight:700;' : ''}">${d.variance_liters > 0 ? "+" : ""}${d.variance_liters} L</td>
@@ -612,6 +613,7 @@ async function loadDeliveries() {
 }
 
 function editDelivery(i) {
+  if (!isOwner) return;
   const d = deliveriesCache[i];
   editingDeliveryId = d.id;
   document.getElementById("dlvProduct").value = d.product_id;
