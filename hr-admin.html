@@ -354,6 +354,17 @@ const SUPABASE_URL = "https://cztkovsjxuaiburaudgk.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_eBOzdnFAdfFavl2QAYY6bA_lfAIJUhh";
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+// Correct "local calendar date as YYYY-MM-DD" -- never use
+// date.toISOString().slice(0,10), which converts to UTC first and silently
+// shifts the date backward for UTC+ timezones like the Philippines (UTC+8).
+function localDateStr(d) {
+  d = d || new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 let branches = [];
 let posts = [];
 let employees = [];
@@ -607,7 +618,7 @@ async function quickToggleStatus(id) {
   if (error) { toast("Error: " + error.message); return; }
   await supabase.from("employee_rate_history").insert({
     employee_id: id, post_id: e.post_id, branch_id: e.home_branch_id, daily_rate: e.daily_rate,
-    status: newStatus, reason_left: reason || null, effective_date: new Date().toISOString().slice(0,10),
+    status: newStatus, reason_left: reason || null, effective_date: localDateStr(),
   });
   toast(`${e.full_name || e.tm_number} marked ${newStatus}.`);
   await loadEmployees();
@@ -845,7 +856,7 @@ async function saveEmployee() {
       branch_id: payload.home_branch_id,
       daily_rate: payload.daily_rate,
       status: payload.status,
-      effective_date: new Date().toISOString().slice(0,10),
+      effective_date: localDateStr(),
     });
   }
 

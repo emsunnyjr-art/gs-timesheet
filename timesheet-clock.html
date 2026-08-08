@@ -151,6 +151,20 @@ window.addEventListener("online", updateNetStatus);
 window.addEventListener("offline", updateNetStatus);
 
 // ---------- Load employees & branches ----------
+// Correct "local calendar date as YYYY-MM-DD". NEVER use
+// date.toISOString().slice(0,10) for this -- toISOString() converts to UTC
+// first, which silently shifts the date backward for any UTC+ timezone
+// (Philippines is UTC+8) whenever local time is early morning (before the
+// UTC offset catches up) or when the Date was zeroed to local midnight.
+// getFullYear/getMonth/getDate are local-timezone-based, so this is safe.
+function localDateStr(d) {
+  d = d || new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 let allEmployees = [];
 let activeAssignments = []; // today's roster_assignments rows: [{employee_id, branch_id, shift_id, post_id, status, double_pump, emergency_roster}]
 let openEntryEmployeeIds = new Set(); // employees who currently have an open (time_out is null) entry
@@ -167,7 +181,7 @@ async function loadOpenEntries() {
 
 async function loadDropdowns() {
   const branchSelect = document.getElementById("branchSelect");
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   try {
     const { data: employees, error: empErr } = await supabase
       .from("employees").select("id, full_name, tm_number, home_branch_id, photo_url").eq("status", "active").order("full_name");
@@ -677,9 +691,9 @@ document.getElementById("backToSearchLink").addEventListener("click", (e) => {
 // them (a gap between shifts, or none configured yet).
 async function detectCurrentShiftForBranch(branchId) {
   const now = new Date();
-  const todayISO = now.toISOString().slice(0, 10);
+  const todayISO = localDateStr(now);
   const y = new Date(now); y.setDate(y.getDate() - 1);
-  const yesterdayISO = y.toISOString().slice(0, 10);
+  const yesterdayISO = localDateStr(y);
 
   const { data, error } = await supabase.from("shifts")
     .select("id, shift_label, scheduled_time_in, scheduled_time_out, shift_date")
@@ -975,7 +989,7 @@ function logMsg(msg, cls) {
 // ------------------------------------------------------------
 async function ensureTodayShift(branchId) {
   if (!branchId) return;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr();
   try {
     const { data: templates } = await supabase.from("shift_templates").select("*");
     if (!templates || !templates.length) return; // nothing configured yet

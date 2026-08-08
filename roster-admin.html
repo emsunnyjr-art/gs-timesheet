@@ -310,7 +310,18 @@ function toast(msg) {
 function closeModal(id) { document.getElementById(id).style.display = "none"; }
 
 // ---------- Date helpers ----------
-function isoDate(d) { return d.toISOString().slice(0, 10); }
+// Correct "local calendar date as YYYY-MM-DD". NEVER use
+// date.toISOString().slice(0,10) for this -- toISOString() converts to UTC
+// first, which silently shifts the date backward for any UTC+ timezone
+// (Philippines is UTC+8), especially for a Date zeroed to local midnight
+// like mondayOf() produces below. getFullYear/getMonth/getDate are
+// local-timezone-based, so this is safe.
+function isoDate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
 function mondayOf(d) {
   const x = new Date(d);
   const day = x.getDay(); // 0=Sun..6=Sat
@@ -449,7 +460,7 @@ function renderGrid(branchId, dates) {
       const shift = shiftsWeek.find(s => s.shift_date === iso && s.shift_label === t.shift_label);
       const isOverride = shift && (shift.scheduled_time_in !== t.scheduled_time_in || shift.scheduled_time_out !== t.scheduled_time_out);
       const overrideBadge = isOverride
-        ? `<div class="flags" style="color:var(--warn); margin-bottom:4px;">⚙ ${fmtTime(shift.scheduled_time_in)}–${fmtTime(shift.scheduled_time_out)} today</div>`
+        ? `<div class="flags" style="color:var(--warn); margin-bottom:4px;">⚙ ${fmtTime(shift.scheduled_time_in)}–${fmtTime(shift.scheduled_time_out)} (override)</div>`
         : "";
       const cellAssignments = shift ? assignmentsWeek.filter(a => a.shift_id === shift.id) : [];
       const chips = cellAssignments.map(a => {
