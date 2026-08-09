@@ -50,6 +50,16 @@
     <div id="pinError" class="msg err"></div>
   </div>
 
+  <div id="pinGateScreen" class="pin-screen" style="display:none;">
+    <img src="logo.png" alt="A's Fuel" style="width:72px; height:72px; border-radius:50%; margin-bottom:8px;">
+    <h1>Enroll — PIN</h1>
+    <p class="small">Signed in as owner. Enter the Enroll PIN to continue.</p>
+    <label>PIN</label>
+    <input type="password" id="enrollPinInput" inputmode="numeric" maxlength="12">
+    <button onclick="checkEnrollPin()">Unlock</button>
+    <div id="pinGateError" class="msg err"></div>
+  </div>
+
   <div id="app" style="display:none;">
     <div class="nav-links"><a href="index.html">🏠 Home</a><a href="hr-admin.html">HR Admin</a><a href="sales-admin.html">Sales</a><a href="roster-admin.html">Roster</a></div>
     <h1>Enroll a TM</h1>
@@ -87,6 +97,16 @@
       <h2>Existing Accounts</h2>
       <table id="existingTable"><thead><tr><th>Email</th><th>Branches</th><th>Apps</th></tr></thead><tbody></tbody></table>
     </div>
+
+    <div class="card">
+      <h2>Change Enroll PIN</h2>
+      <label>Current PIN</label>
+      <input type="password" id="currentPinCheck" inputmode="numeric">
+      <label>New PIN</label>
+      <input type="password" id="newPinValue" inputmode="numeric">
+      <button class="secondary" onclick="changeEnrollPin()">Update PIN</button>
+      <div class="msg" id="changePinMsg"></div>
+    </div>
   </div>
 </div>
 
@@ -116,8 +136,30 @@ async function afterLogin(user) {
   }
   currentSession = (await supabase.auth.getSession()).data.session;
   document.getElementById("pinScreen").style.display = "none";
+  document.getElementById("pinGateScreen").style.display = "block";
+}
+async function checkEnrollPin() {
+  const pin = document.getElementById("enrollPinInput").value.trim();
+  const errEl = document.getElementById("pinGateError");
+  errEl.textContent = "";
+  const { data, error } = await supabase.rpc("verify_enroll_pin", { input_pin: pin });
+  if (error) { errEl.textContent = "Error: " + error.message; return; }
+  if (!data) { errEl.textContent = "Incorrect PIN."; document.getElementById("enrollPinInput").value = ""; return; }
+  document.getElementById("pinGateScreen").style.display = "none";
   document.getElementById("app").style.display = "block";
   await initApp();
+}
+async function changeEnrollPin() {
+  const msg = document.getElementById("changePinMsg");
+  const current = document.getElementById("currentPinCheck").value.trim();
+  const next = document.getElementById("newPinValue").value.trim();
+  const { data: ok } = await supabase.rpc("verify_enroll_pin", { input_pin: current });
+  if (!ok) { msg.textContent = "Current PIN is incorrect."; msg.className = "msg err"; return; }
+  if (!next || next.length < 4) { msg.textContent = "New PIN must be at least 4 characters."; msg.className = "msg err"; return; }
+  const { error } = await supabase.rpc("set_enroll_pin", { new_pin: next });
+  if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+  msg.textContent = "PIN updated."; msg.className = "msg ok";
+  document.getElementById("currentPinCheck").value = ""; document.getElementById("newPinValue").value = "";
 }
 (async function checkSession() {
   const { data } = await supabase.auth.getSession();
