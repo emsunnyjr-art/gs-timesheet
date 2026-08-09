@@ -403,7 +403,17 @@
           </div>
           <button onclick="savePump()">Save Pump</button>
           <div class="msg" id="pmMsg"></div>
-          <table id="pumpsTable" style="margin-top:14px;"><thead><tr><th>Product</th><th>Label</th></tr></thead><tbody></tbody></table>
+        </div>
+        <div class="card">
+          <h2>Standard Layout</h2>
+          <p class="small">Sets up the usual 8-nozzle layout for this branch (2×Unleaded + 2×Diesel on Pump1, 2×Unleaded + 2×Premium on Pump2). Safe to click even if some already exist — skips duplicates.</p>
+          <button onclick="initStandardPumpLayout()">Initialize Standard Layout for This Branch</button>
+          <div class="msg" id="pmInitMsg"></div>
+        </div>
+        <div class="card">
+          <h2>Pumps at This Branch</h2>
+          <p class="small">A deactivated nozzle stays in history (past readings are preserved) but won't appear as an option on the On Shift app — use this if a physical nozzle is removed or repurposed.</p>
+          <table id="pumpsTable"><thead><tr><th>Product</th><th>Label</th><th>Status</th><th></th></tr></thead><tbody></tbody></table>
         </div>
       </div>
     </div>
@@ -713,7 +723,7 @@ async function loadShiftsForDispensing() {
 }
 
 async function loadPumpsForShift() {
-  const branchPumps = pumps.filter(p => p.branch_id === currentBranch);
+  const branchPumps = pumps.filter(p => p.branch_id === currentBranch && p.active);
   document.getElementById("dspPump").innerHTML = branchPumps.map(p => `<option value="${p.id}">${p.pump_label} (${p.fuel_products?.name || ""})</option>`).join("")
     || "<option value=''>No pumps set up — add one in Setup</option>";
   await loadOpenPeriod();
@@ -1001,10 +1011,14 @@ async function loadSetupTab() {
     `<tr><td>${t.fuel_products?.name || ""}</td><td>${t.tank_label}</td></tr>`).join("");
   document.getElementById("calTank").innerHTML = tanks.map(t => `<option value="${t.id}">${t.fuel_products?.name} — ${t.tank_label}</option>`).join("");
 
-  const { data: pm } = await supabase.from("fuel_pumps").select("*, fuel_products(name)").eq("branch_id", currentBranch);
+  const { data: pm } = await supabase.from("fuel_pumps").select("*, fuel_products(name)").eq("branch_id", currentBranch).order("pump_label");
   pumps = pm || [];
-  document.getElementById("pumpsTable").querySelector("tbody").innerHTML = pumps.map(p =>
-    `<tr><td>${p.fuel_products?.name || ""}</td><td>${p.pump_label}</td></tr>`).join("");
+  document.getElementById("pumpsTable").querySelector("tbody").innerHTML = pumps.map(p => `
+    <tr>
+      <td>${p.fuel_products?.name || ""}</td><td>${p.pump_label}</td>
+      <td>${p.active ? "✅ Active" : "⛔ Inactive"}</td>
+      <td><button class="small secondary" style="margin:0; padding:6px 10px;" onclick="togglePumpActive('${p.id}', ${!p.active})">${p.active ? "Deactivate" : "Reactivate"}</button></td>
+    </tr>`).join("") || "<tr><td colspan='4' class='small'>No pumps yet — use Standard Layout above or add one manually.</td></tr>";
 }
 
 async function savePrice() {
@@ -1078,6 +1092,31 @@ async function savePump() {
   if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
   msg.textContent = "Pump saved."; msg.className = "msg ok";
   document.getElementById("pmLabel").value = "";
+  loadSetupTab();
+}
+
+async function initStandardPumpLayout() {
+  const msg = document.getElementById("pmInitMsg");
+  const byCode = {};
+  products.forEach(p => byCode[p.code] = p.id);
+  const layout = [
+    ["UNLEADED","Pump1-Unleaded-A"], ["UNLEADED","Pump1-Unleaded-B"],
+    ["DIESEL","Pump1-Diesel-A"], ["DIESEL","Pump1-Diesel-B"],
+    ["UNLEADED","Pump2-Unleaded-A"], ["UNLEADED","Pump2-Unleaded-B"],
+    ["PREMIUM","Pump2-Premium-A"], ["PREMIUM","Pump2-Premium-B"]
+  ];
+  const rows = layout
+    .filter(([code]) => byCode[code])
+    .map(([code, label]) => ({ branch_id: currentBranch, product_id: byCode[code], pump_label: label, active: true }));
+  const { error } = await supabase.from("fuel_pumps").upsert(rows, { onConflict: "branch_id,pump_label", ignoreDuplicates: true });
+  if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+  msg.textContent = "Standard layout applied."; msg.className = "msg ok";
+  loadSetupTab();
+}
+
+async function togglePumpActive(pumpId, newState) {
+  const { error } = await supabase.from("fuel_pumps").update({ active: newState }).eq("id", pumpId);
+  if (error) { alert("Error: " + error.message); return; }
   loadSetupTab();
 }
 </script>

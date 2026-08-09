@@ -417,7 +417,7 @@ async function loadShiftsForBranch() {
 
   const { data: tk } = await supabase.from("fuel_tanks").select("*, fuel_products(name)").eq("branch_id", currentBranch);
   tanks = tk || [];
-  const { data: pm } = await supabase.from("fuel_pumps").select("*, fuel_products(name)").eq("branch_id", currentBranch);
+  const { data: pm } = await supabase.from("fuel_pumps").select("*, fuel_products(name)").eq("branch_id", currentBranch).eq("active", true);
   pumps = pm || [];
 }
 
