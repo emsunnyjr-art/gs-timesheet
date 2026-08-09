@@ -87,7 +87,7 @@ tr:hover { background:#25324a; }
 </div>
 
 <div id="app" class="wrap" style="display:none;">
-  <div class="nav-links"><a href="index.html">🏠 Home</a><a href="hr-admin.html">HR Admin</a><a href="timesheet-admin.html">Timesheet Admin</a><a href="roster-admin.html">Roster</a><a href="sales-admin.html">Sales</a></div>
+  <div class="nav-links"><a href="index.html">🏠 Home</a><a href="hr-admin.html">HR Admin</a><a href="timesheet-admin.html">Timesheet Admin</a><a href="roster-admin.html">Roster</a><a href="sales-admin.html">Sales</a><a href="enroll.html">Enroll</a></div>
   <div style="display:flex; justify-content:space-between; align-items:flex-start;">
     <div style="display:flex; align-items:center; gap:12px;">
       <img src="logo.png" alt="A's Fuel" style="width:44px; height:44px; border-radius:50%;">
@@ -277,6 +277,12 @@ async function afterLogin(user) {
     return;
   }
   isOwner = myRoles.some(r => r.branch_id === null);
+  const hasRoster = myRoles.some(r => (r.apps || []).includes("roster"));
+  if (!hasRoster) {
+    document.getElementById("pinError").textContent = "This account doesn't have access to Roster. Ask the owner to grant it in Enroll.";
+    await supabase.auth.signOut();
+    return;
+  }
   myBranchIds = myRoles.filter(r => r.branch_id !== null).map(r => r.branch_id);
   document.getElementById("whoAmI").textContent = `${user.email} · ${isOwner ? "All branches" : "Branch access: " + myRoles.length}`;
   document.getElementById("templatesTab").style.display = isOwner ? "" : "none";

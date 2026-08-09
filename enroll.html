@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Enroll — A's Fuel / Adie and Ace's</title>
+<style>
+  :root { --bg:#0f172a; --card:#1e293b; --accent:#22c55e; --danger:#ef4444; --text:#f1f5f9; --muted:#94a3b8; --border:#334155; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; padding:16px; }
+  .wrap { max-width:640px; margin:0 auto; }
+  h1 { font-size:20px; margin:0 0 16px; }
+  .card { background:var(--card); border-radius:14px; padding:18px; margin-bottom:14px; }
+  .card h2 { font-size:15px; margin:0 0 12px; color:var(--muted); text-transform:uppercase; letter-spacing:0.03em; }
+  label { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; margin-top:12px; }
+  input, select { width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); background:#0f172a; color:var(--text); font-size:14px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; }
+  .row > * { flex:1; min-width:140px; }
+  button { margin-top:14px; padding:12px 16px; border-radius:10px; border:none; background:var(--accent); color:#052e16; font-weight:600; font-size:14px; cursor:pointer; }
+  button.secondary { background:#334155; color:var(--text); }
+  .msg { font-size:13px; margin-top:10px; min-height:16px; }
+  .msg.ok { color:var(--accent); }
+  .msg.err { color:var(--danger); }
+  .nav-links { font-size:12px; margin-bottom:14px; }
+  .nav-links a { color:var(--muted); text-decoration:none; margin-right:14px; }
+  .grant-row { border:1px solid var(--border); border-radius:10px; padding:12px; margin-top:10px; }
+  .grant-row .apps { display:flex; gap:14px; margin-top:8px; flex-wrap:wrap; }
+  .grant-row label.checklabel { display:flex; align-items:center; gap:6px; font-size:13px; color:var(--text); margin:0; }
+  .grant-row label.checklabel input { width:auto; }
+  .remove-grant { background:transparent; color:var(--danger); border:1px solid var(--danger); padding:4px 10px; font-size:12px; margin-top:8px; width:auto; }
+  .small { font-size:12px; color:var(--muted); }
+  table { width:100%; border-collapse:collapse; margin-top:10px; font-size:13px; }
+  th, td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--border); }
+  th { color:var(--muted); font-weight:500; }
+  .pin-screen { max-width:340px; margin:60px auto; text-align:center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div id="pinScreen" class="pin-screen">
+    <img src="logo.png" alt="A's Fuel" style="width:72px; height:72px; border-radius:50%; margin-bottom:8px;">
+    <h1>Enroll</h1>
+    <p class="small">Owner sign-in required.</p>
+    <label>Email</label>
+    <input type="email" id="loginEmail">
+    <label>Password</label>
+    <input type="password" id="loginPassword">
+    <button onclick="doLogin()">Sign in</button>
+    <div id="pinError" class="msg err"></div>
+  </div>
+
+  <div id="app" style="display:none;">
+    <div class="nav-links"><a href="index.html">🏠 Home</a><a href="hr-admin.html">HR Admin</a><a href="sales-admin.html">Sales</a><a href="roster-admin.html">Roster</a></div>
+    <h1>Enroll a TM</h1>
+    <p class="small">Creates a real login account and grants access to specific apps and branches. Owner-only — enforced by the server, not just this page.</p>
+
+    <div class="card">
+      <h2>Who</h2>
+      <label>Employee (from HR)</label>
+      <select id="empSelect" onchange="onEmployeeSelect()"></select>
+      <label>Email</label>
+      <input type="email" id="enrollEmail" placeholder="tm@example.com">
+      <label>Temporary Password</label>
+      <div class="row">
+        <input type="text" id="enrollPassword" placeholder="At least 8 characters">
+        <button type="button" class="secondary" style="width:auto; white-space:nowrap;" onclick="generatePassword()">Generate</button>
+      </div>
+      <p class="small">Share this password with the TM directly (in person or a private message) — it won't be shown again after this page reloads.</p>
+    </div>
+
+    <div class="card">
+      <h2>Access to Grant</h2>
+      <div id="grantsList"></div>
+      <button class="secondary" onclick="addGrantRow()">+ Add Another Branch/Role</button>
+    </div>
+
+    <button onclick="submitEnrollment()">Create Account & Grant Access</button>
+    <div class="msg" id="enrollMsg"></div>
+
+    <div class="card">
+      <h2>Existing Accounts</h2>
+      <table id="existingTable"><thead><tr><th>Email</th><th>Branches</th><th>Apps</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+const SUPABASE_URL = "https://cztkovsjxuaiburaudgk.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_eBOzdnFAdfFavl2QAYY6bA_lfAIJUhh";
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let branches = [], employees = [], isOwner = false, currentSession = null;
+let grantCount = 0;
+
+async function doLogin() {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) { document.getElementById("pinError").textContent = "Sign in failed: " + error.message; return; }
+  await afterLogin(data.user);
+}
+async function afterLogin(user) {
+  const { data: roles } = await supabase.from("user_branch_roles").select("*").eq("user_id", user.id);
+  isOwner = (roles || []).some(r => r.branch_id === null && r.role === "owner");
+  if (!isOwner) {
+    document.getElementById("pinError").textContent = "Only the owner account can access enrollment.";
+    await supabase.auth.signOut();
+    return;
+  }
+  currentSession = (await supabase.auth.getSession()).data.session;
+  document.getElementById("pinScreen").style.display = "none";
+  document.getElementById("app").style.display = "block";
+  await initApp();
+}
+(async function checkSession() {
+  const { data } = await supabase.auth.getSession();
+  if (data && data.session) await afterLogin(data.session.user);
+})();
+
+async function initApp() {
+  const { data: br } = await supabase.from("branches").select("*").order("code");
+  branches = br || [];
+  const { data: emp } = await supabase.from("employees").select("id, full_name, tm_number, email").eq("status","active").order("full_name");
+  employees = emp || [];
+  document.getElementById("empSelect").innerHTML = "<option value=''>— pick employee (optional) —</option>" +
+    employees.map(e => `<option value="${e.id}">${e.full_name} (TM #${e.tm_number})</option>`).join("");
+  addGrantRow();
+  await loadExisting();
+}
+
+function onEmployeeSelect() {
+  const id = document.getElementById("empSelect").value;
+  const emp = employees.find(e => e.id === id);
+  if (emp && emp.email) document.getElementById("enrollEmail").value = emp.email;
+}
+
+function generatePassword() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+  let pw = "";
+  for (let i = 0; i < 10; i++) pw += chars[Math.floor(Math.random() * chars.length)];
+  document.getElementById("enrollPassword").value = pw;
+}
+
+function addGrantRow() {
+  grantCount++;
+  const id = "grant" + grantCount;
+  const div = document.createElement("div");
+  div.className = "grant-row";
+  div.id = id;
+  div.innerHTML = `
+    <div class="row">
+      <div><label>Role</label>
+        <select class="grantRole" onchange="onGrantRoleChange('${id}')">
+          <option value="branch_manager">Branch Manager</option>
+          <option value="owner">Owner (all branches)</option>
+        </select>
+      </div>
+      <div class="grantBranchWrap"><label>Branch</label>
+        <select class="grantBranch">${branches.map(b => `<option value="${b.id}">${b.code} — ${b.name}</option>`).join("")}</select>
+      </div>
+    </div>
+    <label>Apps</label>
+    <div class="apps">
+      <label class="checklabel"><input type="checkbox" class="app-roster" value="roster"> Roster</label>
+      <label class="checklabel"><input type="checkbox" class="app-sales_admin" value="sales_admin"> Sales Admin</label>
+      <label class="checklabel"><input type="checkbox" class="app-sales_clock" value="sales_clock" checked> Sales On Shift</label>
+    </div>
+    <button type="button" class="remove-grant" onclick="document.getElementById('${id}').remove()">Remove</button>
+  `;
+  document.getElementById("grantsList").appendChild(div);
+}
+function onGrantRoleChange(id) {
+  const row = document.getElementById(id);
+  const role = row.querySelector(".grantRole").value;
+  row.querySelector(".grantBranchWrap").style.display = role === "owner" ? "none" : "block";
+}
+
+async function submitEnrollment() {
+  const msg = document.getElementById("enrollMsg");
+  msg.textContent = ""; msg.className = "msg";
+
+  const email = document.getElementById("enrollEmail").value.trim();
+  const password = document.getElementById("enrollPassword").value;
+  const employeeId = document.getElementById("empSelect").value || null;
+
+  if (!email || !password || password.length < 8) {
+    msg.textContent = "Email and a password of at least 8 characters are required.";
+    msg.className = "msg err"; return;
+  }
+
+  const grants = Array.from(document.querySelectorAll(".grant-row")).map(row => {
+    const role = row.querySelector(".grantRole").value;
+    const branchId = row.querySelector(".grantBranch").value;
+    const apps = Array.from(row.querySelectorAll(".apps input:checked")).map(c => c.value);
+    return { branch_id: role === "owner" ? null : branchId, role, apps };
+  }).filter(g => g.apps.length > 0);
+
+  if (grants.length === 0) {
+    msg.textContent = "Select at least one app for at least one grant.";
+    msg.className = "msg err"; return;
+  }
+
+  msg.textContent = "Creating account…";
+  const resp = await fetch(`${SUPABASE_URL}/functions/v1/enroll-employee`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${currentSession.access_token}`
+    },
+    body: JSON.stringify({ employee_id: employeeId, email, password, grants })
+  });
+  const result = await resp.json();
+  if (!resp.ok) { msg.textContent = "Error: " + (result.error || "Unknown error"); msg.className = "msg err"; return; }
+
+  msg.textContent = `Account created for ${email}. Share the password with them directly.`;
+  msg.className = "msg ok";
+  loadExisting();
+}
+
+async function loadExisting() {
+  const { data } = await supabase.from("user_branch_roles").select("*, branches(code)");
+  const byUser = {};
+  (data || []).forEach(r => {
+    if (!byUser[r.user_id]) byUser[r.user_id] = { email: r.email || "(no email on file)", branches: [], apps: new Set() };
+    byUser[r.user_id].branches.push(r.role === "owner" ? "ALL (owner)" : (r.branches?.code || "?"));
+    (r.apps || []).forEach(a => byUser[r.user_id].apps.add(a));
+  });
+  const rows = Object.values(byUser).map(info =>
+    `<tr><td>${info.email}</td><td>${info.branches.join(", ")}</td><td>${[...info.apps].join(", ") || "—"}</td></tr>`
+  ).join("");
+  document.getElementById("existingTable").querySelector("tbody").innerHTML = rows || "<tr><td colspan='3' class='small'>No accounts yet.</td></tr>";
+}
+</script>
+</body>
+</html>

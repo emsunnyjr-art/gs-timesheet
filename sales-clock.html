@@ -352,6 +352,17 @@ async function doLogin() {
 }
 async function doLogout() { await supabase.auth.signOut(); location.reload(); }
 async function afterLogin() {
+  const { data: userData } = await supabase.auth.getUser();
+  const user = userData?.user;
+  if (!user) { document.getElementById("pinError").textContent = "Sign-in session error, please try again."; return; }
+  const { data: roles, error } = await supabase.from("user_branch_roles").select("*").eq("user_id", user.id);
+  if (error) { document.getElementById("pinError").textContent = "Could not load access: " + error.message; return; }
+  const hasSalesClock = (roles || []).some(r => (r.apps || []).includes("sales_clock"));
+  if (!hasSalesClock) {
+    document.getElementById("pinError").textContent = "This account doesn't have access to Sales On Shift. Ask the owner to grant it in Enroll.";
+    await supabase.auth.signOut();
+    return;
+  }
   document.getElementById("pinScreen").style.display = "none";
   document.getElementById("app").style.display = "block";
   await initApp();
