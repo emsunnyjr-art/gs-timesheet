@@ -58,7 +58,12 @@
     <div class="card">
       <h2>Who</h2>
       <label>Employee (from HR)</label>
-      <select id="empSelect" onchange="onEmployeeSelect()"></select>
+      <input type="text" id="empSearch" placeholder="Type a name or TM number…" autocomplete="off" oninput="filterEmployees()" onfocus="filterEmployees()">
+      <div id="empResults" style="position:relative;">
+        <div id="empDropdown" style="display:none; position:absolute; z-index:10; width:100%; max-height:220px; overflow-y:auto; background:#0f172a; border:1px solid var(--border); border-radius:8px; margin-top:4px;"></div>
+      </div>
+      <input type="hidden" id="empSelect">
+      <div class="small" id="empSelectedLabel"></div>
       <label>Email</label>
       <input type="email" id="enrollEmail" placeholder="tm@example.com">
       <label>Temporary Password</label>
@@ -124,17 +129,43 @@ async function initApp() {
   branches = br || [];
   const { data: emp } = await supabase.from("employees").select("id, full_name, tm_number, email").eq("status","active").order("full_name");
   employees = emp || [];
-  document.getElementById("empSelect").innerHTML = "<option value=''>— pick employee (optional) —</option>" +
-    employees.map(e => `<option value="${e.id}">${e.full_name} (TM #${e.tm_number})</option>`).join("");
   addGrantRow();
   await loadExisting();
 }
 
-function onEmployeeSelect() {
-  const id = document.getElementById("empSelect").value;
-  const emp = employees.find(e => e.id === id);
-  if (emp && emp.email) document.getElementById("enrollEmail").value = emp.email;
+function filterEmployees() {
+  const q = document.getElementById("empSearch").value.trim().toLowerCase();
+  const dropdown = document.getElementById("empDropdown");
+  if (!q) { dropdown.style.display = "none"; dropdown.innerHTML = ""; return; }
+  const matches = employees.filter(e =>
+    e.full_name.toLowerCase().includes(q) || (e.tm_number || "").toLowerCase().includes(q)
+  ).slice(0, 30);
+  if (matches.length === 0) {
+    dropdown.innerHTML = `<div style="padding:10px; font-size:13px; color:var(--muted);">No matches</div>`;
+    dropdown.style.display = "block";
+    return;
+  }
+  dropdown.innerHTML = matches.map(e => `
+    <div style="padding:10px; cursor:pointer; border-bottom:1px solid var(--border); font-size:14px;"
+         onmousedown="selectEmployee('${e.id}')">
+      ${e.full_name} <span class="small">(TM #${e.tm_number})</span>
+    </div>`).join("");
+  dropdown.style.display = "block";
 }
+function selectEmployee(id) {
+  const emp = employees.find(e => e.id === id);
+  if (!emp) return;
+  document.getElementById("empSelect").value = id;
+  document.getElementById("empSearch").value = "";
+  document.getElementById("empSelectedLabel").textContent = `Selected: ${emp.full_name} (TM #${emp.tm_number})`;
+  document.getElementById("empDropdown").style.display = "none";
+  if (emp.email) document.getElementById("enrollEmail").value = emp.email;
+}
+document.addEventListener("click", (e) => {
+  if (!document.getElementById("empResults").contains(e.target) && e.target.id !== "empSearch") {
+    document.getElementById("empDropdown").style.display = "none";
+  }
+});
 
 function generatePassword() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
