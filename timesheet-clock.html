@@ -450,6 +450,20 @@ async function openCamera() {
   qrVideo.style.display = "block";
 }
 
+// Switches the shared camera to front-facing for the attendance verification
+// photo, since the QR scan itself needs the back camera (to read the ID
+// card) but the saved photo should be a selfie of the person, not whatever
+// the back camera happened to be pointed at. Brief pause after switching so
+// they have a moment to look up before the frame is grabbed.
+async function switchToSelfieCamera() {
+  stopCamera();
+  sharedStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+  qrVideo.srcObject = sharedStream;
+  qrVideo.style.display = "block";
+  scanStatus.textContent = "Look at the camera…";
+  await new Promise(resolve => setTimeout(resolve, 800));
+}
+
 function stopCamera() {
   qrLoopActive = false;
   if (sharedStream) {
@@ -628,6 +642,7 @@ async function onEmployeeIdentified(id, name) {
   selectedEmployeeId = id;
   selectedEmployeeName = name;
   verifiedViaQr = true;
+  await switchToSelfieCamera();
   const blob = await captureFrame();
   showConfirm(blob);
 }
