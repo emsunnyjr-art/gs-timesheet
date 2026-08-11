@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reports — A's Fuel</title>
+<style>
+  :root { --bg:#0f172a; --card:#1e293b; --accent:#22c55e; --danger:#ef4444; --text:#f1f5f9; --muted:#94a3b8; --border:#334155; --orange:#f59e0b; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; padding:16px; }
+  .wrap { max-width:1100px; margin:0 auto; }
+  h1 { font-size:20px; margin:0 0 16px; }
+  .card { background:var(--card); border-radius:14px; padding:18px; margin-bottom:14px; }
+  .card h2 { font-size:15px; margin:0 0 12px; color:var(--muted); text-transform:uppercase; letter-spacing:0.03em; }
+  label { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; margin-top:12px; }
+  input, select { width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); background:#0f172a; color:var(--text); font-size:14px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; }
+  .row > * { flex:1; min-width:150px; }
+  button { margin-top:14px; padding:12px 16px; border-radius:10px; border:none; background:var(--accent); color:#052e16; font-weight:600; font-size:14px; cursor:pointer; }
+  button.secondary { background:#334155; color:var(--text); }
+  .msg { font-size:13px; margin-top:10px; min-height:16px; }
+  .msg.ok { color:var(--accent); }
+  .msg.err { color:var(--danger); }
+  .nav-links { font-size:12px; margin-bottom:14px; }
+  .nav-links a { color:var(--muted); text-decoration:none; margin-right:14px; }
+  .col-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:8px; margin-top:10px; }
+  .col-check { display:flex; align-items:center; gap:6px; font-size:13px; background:#0f172a; border:1px solid var(--border); border-radius:8px; padding:8px 10px; }
+  .col-check input { width:auto; margin:0; }
+  table { width:100%; border-collapse:collapse; margin-top:14px; font-size:12.5px; }
+  th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--border); white-space:nowrap; }
+  th { color:var(--muted); font-weight:600; position:sticky; top:0; background:var(--card); }
+  .table-wrap { overflow-x:auto; max-height:520px; overflow-y:auto; }
+  .flag-orange { color:var(--orange); font-weight:700; }
+  .flag-red, .flag-red_bold { color:var(--danger); font-weight:700; }
+  .small { font-size:12px; color:var(--muted); }
+  .pin-screen { max-width:340px; margin:60px auto; text-align:center; }
+  .badge { display:inline-block; padding:6px 10px; border-radius:8px; background:#0f172a; border:1px solid var(--border); font-size:12px; margin-right:8px; margin-top:8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div id="pinScreen" class="pin-screen">
+    <img src="logo.png" alt="A's Fuel" style="width:72px; height:72px; border-radius:50%; margin-bottom:8px;">
+    <h1>Reports</h1>
+    <label>Email</label>
+    <input type="email" id="loginEmail">
+    <label>Password</label>
+    <input type="password" id="loginPassword">
+    <button onclick="doLogin()">Sign in</button>
+    <div id="pinError" class="msg err"></div>
+  </div>
+
+  <div id="app" style="display:none;">
+    <div class="nav-links"><a href="index.html">🏠 Home</a><a href="sales-admin.html">Sales</a><a href="hr-admin.html">HR Admin</a><a href="roster-admin.html">Roster</a></div>
+    <h1>Reports</h1>
+    <p class="small">Pick a report, choose your filters, tick the columns you want, then run it. Export to Excel any time after.</p>
+
+    <div class="card">
+      <h2>1. Report Type</h2>
+      <select id="templateSelect" onchange="onTemplateChange()">
+        <option value="delivery">Delivery Reconciliation (sold vs remaining vs supplier cost)</option>
+        <option value="shift_sales">Shift Sales & Profit</option>
+        <option value="cash_recon">Cash Reconciliation History</option>
+        <option value="attendance">Timesheet / Attendance</option>
+      </select>
+      <p class="small" id="templateHint"></p>
+    </div>
+
+    <div class="card">
+      <h2>2. Filters</h2>
+      <div class="row">
+        <div><label>Branch</label><select id="fBranch" onchange="onBranchFilterChange()"></select></div>
+        <div><label>From Date</label><input type="date" id="fFrom"></div>
+        <div><label>To Date</label><input type="date" id="fTo"></div>
+      </div>
+      <div class="row" id="productFilterWrap">
+        <div><label>Product (optional)</label><select id="fProduct"><option value="">All products</option></select></div>
+      </div>
+      <div class="row" id="deliveryPickWrap" style="display:none;">
+        <div><label>Or pick one specific delivery instead of a date range</label><select id="fDelivery"><option value="">— use date range above —</option></select></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>3. Columns</h2>
+      <div class="col-grid" id="columnChecks"></div>
+    </div>
+
+    <button onclick="runReport()">Run Report</button>
+    <button class="secondary" onclick="exportExcel()" id="exportBtn" disabled>⬇ Export to Excel</button>
+    <div class="msg" id="reportMsg"></div>
+
+    <div class="card" id="resultsCard" style="display:none;">
+      <h2>Results (<span id="resultCount">0</span> rows)</h2>
+      <div id="summaryBadges"></div>
+      <div class="table-wrap">
+        <table id="resultsTable"><thead></thead><tbody></tbody></table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script>
+const SUPABASE_URL = "https://cztkovsjxuaiburaudgk.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_eBOzdnFAdfFavl2QAYY6bA_lfAIJUhh";
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let branches = [], products = [];
+let currentRows = [], currentColumns = [];
+
+const TEMPLATES = {
+  delivery: {
+    hint: "One row per delivery batch. 'Total Revenue' vs 'Amount Owed Supplier' tells you directly whether that delivery's sales covered what you owe.",
+    hasProductFilter: true,
+    hasDeliveryPick: true,
+    columns: [
+      { key: "delivery_date", label: "Delivery Date", default: true },
+      { key: "product", label: "Product", default: true },
+      { key: "vendor", label: "Vendor", default: true },
+      { key: "invoiced_liters", label: "Liters Delivered", default: true },
+      { key: "cost_per_liter", label: "Cost / Liter", default: true },
+      { key: "total_cost", label: "Amount Owed Supplier", default: true },
+      { key: "paid", label: "Paid?", default: true },
+      { key: "starting_stock", label: "Starting Stock (before + delivered)", default: true },
+      { key: "total_liters_sold", label: "Liters Sold Since", default: true },
+      { key: "total_revenue", label: "Total Revenue Since", default: true },
+      { key: "revenue_vs_cost", label: "Revenue − Amount Owed", default: true },
+      { key: "expected_remaining_stock", label: "Expected Remaining", default: true },
+      { key: "latest_actual_stock", label: "Latest Actual (dipstick)", default: true },
+      { key: "variance_liters", label: "Variance (missing/surplus)", default: true },
+      { key: "is_current_batch", label: "Still Selling This Batch?", default: false }
+    ]
+  },
+  shift_sales: {
+    hint: "One row per shift per product sold.",
+    hasProductFilter: true,
+    hasDeliveryPick: false,
+    columns: [
+      { key: "shift_date", label: "Date", default: true },
+      { key: "shift_label", label: "Shift", default: true },
+      { key: "product", label: "Product", default: true },
+      { key: "liters_sold", label: "Liters Sold", default: true },
+      { key: "revenue", label: "Revenue", default: true },
+      { key: "profit_wac", label: "Profit (WAC)", default: true },
+      { key: "profit_latest_delivery", label: "Profit (Latest Delivery Cost)", default: true }
+    ]
+  },
+  cash_recon: {
+    hint: "One row per shift's cash reconciliation.",
+    hasProductFilter: false,
+    hasDeliveryPick: false,
+    columns: [
+      { key: "shift_date", label: "Date", default: true },
+      { key: "shift_label", label: "Shift", default: true },
+      { key: "cash_sales_snapshot", label: "Cash Sales", default: true },
+      { key: "credit_sales_snapshot", label: "Credit (PO) Sales", default: true },
+      { key: "cash_expenses_paid", label: "Expenses", default: true },
+      { key: "management_takeaway", label: "Mgt Takeaway", default: true },
+      { key: "expected_cash", label: "Expected Cash", default: true },
+      { key: "actual_cash_counted", label: "Actual Counted", default: true },
+      { key: "variance", label: "Variance", default: true },
+      { key: "variance_flag", label: "Flag", default: true },
+      { key: "checker", label: "Checker", default: false }
+    ]
+  },
+  attendance: {
+    hint: "One row per clock-in.",
+    hasProductFilter: false,
+    hasDeliveryPick: false,
+    columns: [
+      { key: "shift_date", label: "Date", default: true },
+      { key: "employee_name", label: "Employee", default: true },
+      { key: "tm_number", label: "TM #", default: true },
+      { key: "time_in", label: "Time In", default: true },
+      { key: "time_out", label: "Time Out", default: true },
+      { key: "total_hours", label: "Total Hours", default: true },
+      { key: "is_late", label: "Late?", default: false },
+      { key: "late_minutes", label: "Late (minutes)", default: false },
+      { key: "is_overtime", label: "Overtime?", default: false },
+      { key: "overtime_hours", label: "Overtime Hours", default: false },
+      { key: "total_wages", label: "Total Wages", default: true }
+    ]
+  }
+};
+
+async function doLogin() {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) { document.getElementById("pinError").textContent = "Sign in failed: " + error.message; return; }
+  await afterLogin(data.user);
+}
+async function afterLogin(user) {
+  const { data: roles } = await supabase.from("user_branch_roles").select("*").eq("user_id", user.id);
+  const hasReports = (roles || []).some(r => (r.apps || []).includes("reports"));
+  if (!hasReports) {
+    document.getElementById("pinError").textContent = "This account doesn't have access to Reports.";
+    await supabase.auth.signOut();
+    return;
+  }
+  document.getElementById("pinScreen").style.display = "none";
+  document.getElementById("app").style.display = "block";
+  await initApp();
+}
+(async function checkSession() {
+  const { data } = await supabase.auth.getSession();
+  if (data && data.session) await afterLogin(data.session.user);
+})();
+
+async function initApp() {
+  const { data: br } = await supabase.from("branches").select("*").order("code");
+  branches = br || [];
+  document.getElementById("fBranch").innerHTML = branches.map(b => `<option value="${b.id}">${b.code} — ${b.name}</option>`).join("");
+
+  const { data: pr } = await supabase.from("fuel_products").select("*").order("code");
+  products = pr || [];
+  document.getElementById("fProduct").innerHTML += products.map(p => `<option value="${p.id}">${p.name}</option>`).join("");
+
+  const today = new Date();
+  const monthAgo = new Date(); monthAgo.setDate(monthAgo.getDate() - 30);
+  document.getElementById("fFrom").value = isoDate(monthAgo);
+  document.getElementById("fTo").value = isoDate(today);
+
+  onTemplateChange();
+}
+function isoDate(d) { const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,"0"),day=String(d.getDate()).padStart(2,"0"); return `${y}-${m}-${day}`; }
+
+function onTemplateChange() {
+  const t = TEMPLATES[document.getElementById("templateSelect").value];
+  document.getElementById("templateHint").textContent = t.hint;
+  document.getElementById("productFilterWrap").style.display = t.hasProductFilter ? "flex" : "none";
+  document.getElementById("deliveryPickWrap").style.display = t.hasDeliveryPick ? "flex" : "none";
+  document.getElementById("columnChecks").innerHTML = t.columns.map(c => `
+    <label class="col-check"><input type="checkbox" value="${c.key}" ${c.default ? "checked" : ""}> ${c.label}</label>
+  `).join("");
+  if (t.hasDeliveryPick) loadDeliveryPicker();
+  document.getElementById("resultsCard").style.display = "none";
+  document.getElementById("exportBtn").disabled = true;
+}
+function onBranchFilterChange() {
+  if (TEMPLATES[document.getElementById("templateSelect").value].hasDeliveryPick) loadDeliveryPicker();
+}
+
+async function loadDeliveryPicker() {
+  const branchId = document.getElementById("fBranch").value;
+  if (!branchId) return;
+  const { data } = await supabase.from("fuel_deliveries").select("id, delivery_date, fuel_products(name)")
+    .eq("branch_id", branchId).order("delivery_date", { ascending: false }).limit(50);
+  document.getElementById("fDelivery").innerHTML = "<option value=''>— use date range above —</option>" +
+    (data || []).map(d => `<option value="${d.id}">${d.delivery_date} — ${d.fuel_products?.name || ""}</option>`).join("");
+}
+
+async function runReport() {
+  const msg = document.getElementById("reportMsg");
+  msg.textContent = "Running…"; msg.className = "msg";
+  const templateKey = document.getElementById("templateSelect").value;
+  const branchId = document.getElementById("fBranch").value;
+  const from = document.getElementById("fFrom").value;
+  const to = document.getElementById("fTo").value;
+  const productId = document.getElementById("fProduct")?.value || "";
+  const deliveryId = document.getElementById("fDelivery")?.value || "";
+
+  const selectedCols = Array.from(document.querySelectorAll("#columnChecks input:checked")).map(c => c.value);
+  if (selectedCols.length === 0) { msg.textContent = "Select at least one column."; msg.className = "msg err"; return; }
+  currentColumns = TEMPLATES[templateKey].columns.filter(c => selectedCols.includes(c.key));
+
+  try {
+    if (templateKey === "delivery") {
+      let q = supabase.from("fuel_delivery_stock_reconciliation").select("*").eq("branch_id", branchId);
+      if (deliveryId) q = q.eq("delivery_id", deliveryId);
+      else q = q.gte("delivery_date", from).lte("delivery_date", to);
+      if (productId) q = q.eq("product_id", productId);
+      const { data: recon, error } = await q.order("delivery_date", { ascending: false });
+      if (error) throw error;
+
+      const ids = (recon || []).map(r => r.delivery_id);
+      const { data: deliveries } = ids.length
+        ? await supabase.from("fuel_deliveries").select("id, cost_per_liter, total_cost, paid, product_id, fuel_products(name), fuel_vendors(name)").in("id", ids)
+        : { data: [] };
+      const byId = {}; (deliveries || []).forEach(d => byId[d.id] = d);
+
+      currentRows = (recon || []).map(r => {
+        const d = byId[r.delivery_id] || {};
+        return {
+          delivery_date: r.delivery_date,
+          product: d.fuel_products?.name || "",
+          vendor: d.fuel_vendors?.name || "—",
+          invoiced_liters: r.liters_delivered,
+          cost_per_liter: d.cost_per_liter,
+          total_cost: d.total_cost,
+          paid: d.paid ? "Yes" : "No",
+          starting_stock: r.starting_stock,
+          total_liters_sold: r.total_liters_sold,
+          total_revenue: r.total_revenue,
+          revenue_vs_cost: (Number(r.total_revenue||0) - Number(d.total_cost||0)).toFixed(2),
+          expected_remaining_stock: r.expected_remaining_stock,
+          latest_actual_stock: r.latest_actual_stock ?? "no check yet",
+          variance_liters: r.variance_liters ?? "—",
+          is_current_batch: r.is_current_batch ? "Yes" : "No"
+        };
+      });
+
+    } else if (templateKey === "shift_sales") {
+      let q = supabase.from("fuel_profit_by_shift").select("*, fuel_products(name)").eq("branch_id", branchId)
+        .gte("shift_date", from).lte("shift_date", to);
+      if (productId) q = q.eq("product_id", productId);
+      const { data, error } = await q.order("shift_date", { ascending: false });
+      if (error) throw error;
+      currentRows = (data || []).map(r => ({
+        shift_date: r.shift_date, shift_label: r.shift_label, product: r.fuel_products?.name || "",
+        liters_sold: r.liters_sold, revenue: r.revenue, profit_wac: r.profit_wac, profit_latest_delivery: r.profit_latest_delivery
+      }));
+
+    } else if (templateKey === "cash_recon") {
+      const { data, error } = await supabase.from("fuel_shift_cash_reconciliation").select("*, shifts(shift_date, shift_label)")
+        .eq("branch_id", branchId).order("created_at", { ascending: false });
+      if (error) throw error;
+      currentRows = (data || []).filter(r => r.shifts && r.shifts.shift_date >= from && r.shifts.shift_date <= to).map(r => ({
+        shift_date: r.shifts?.shift_date, shift_label: r.shifts?.shift_label,
+        cash_sales_snapshot: r.cash_sales_snapshot, credit_sales_snapshot: r.credit_sales_snapshot,
+        cash_expenses_paid: r.cash_expenses_paid, management_takeaway: r.management_takeaway,
+        expected_cash: r.expected_cash, actual_cash_counted: r.actual_cash_counted,
+        variance: r.variance, variance_flag: r.variance_flag, checker: r.checker || "—"
+      }));
+
+    } else if (templateKey === "attendance") {
+      const { data, error } = await supabase.from("timesheet_entries")
+        .select("*, employees(full_name, tm_number), shifts(shift_date)")
+        .eq("branch_id", branchId).order("time_in", { ascending: false }).limit(500);
+      if (error) throw error;
+      currentRows = (data || [])
+        .filter(r => r.shifts?.shift_date >= from && r.shifts?.shift_date <= to)
+        .map(r => ({
+          shift_date: r.shifts?.shift_date, employee_name: r.employees?.full_name || "",
+          tm_number: r.employees?.tm_number || "", time_in: r.time_in, time_out: r.time_out || "—",
+          total_hours: r.total_hours, is_late: r.is_late ? "Yes" : "No", late_minutes: r.late_minutes,
+          is_overtime: r.is_overtime ? "Yes" : "No", overtime_hours: r.overtime_hours, total_wages: r.total_wages
+        }));
+    }
+
+    renderResults();
+    msg.textContent = `Done — ${currentRows.length} rows.`; msg.className = "msg ok";
+    document.getElementById("exportBtn").disabled = currentRows.length === 0;
+  } catch (err) {
+    msg.textContent = "Error: " + err.message; msg.className = "msg err";
+  }
+}
+
+function renderResults() {
+  const card = document.getElementById("resultsCard");
+  card.style.display = "block";
+  document.getElementById("resultCount").textContent = currentRows.length;
+
+  const thead = document.querySelector("#resultsTable thead");
+  const tbody = document.querySelector("#resultsTable tbody");
+  thead.innerHTML = "<tr>" + currentColumns.map(c => `<th>${c.label}</th>`).join("") + "</tr>";
+  tbody.innerHTML = currentRows.map(row => "<tr>" + currentColumns.map(c => {
+    const val = row[c.key];
+    const flagClass = c.key === "variance_flag" && val ? `flag-${val}` : "";
+    return `<td class="${flagClass}">${val === null || val === undefined ? "—" : val}</td>`;
+  }).join("") + "</tr>").join("");
+
+  const templateKey = document.getElementById("templateSelect").value;
+  const badges = document.getElementById("summaryBadges");
+  if (templateKey === "delivery" && currentRows.length > 0) {
+    const totalOwed = currentRows.reduce((a,r) => a + (Number(r.total_cost)||0), 0);
+    const totalRev = currentRows.reduce((a,r) => a + (Number(r.total_revenue)||0), 0);
+    badges.innerHTML = `
+      <span class="badge">Total Owed Suppliers: ₱${totalOwed.toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+      <span class="badge">Total Revenue: ₱${totalRev.toLocaleString(undefined,{minimumFractionDigits:2})}</span>
+      <span class="badge" style="${totalRev >= totalOwed ? 'color:var(--accent)' : 'color:var(--danger)'}">
+        ${totalRev >= totalOwed ? "✓ Sales cover supplier cost" : "⚠ Sales short of supplier cost"}
+      </span>`;
+  } else {
+    badges.innerHTML = "";
+  }
+}
+
+function exportExcel() {
+  const data = currentRows.map(row => {
+    const obj = {};
+    currentColumns.forEach(c => obj[c.label] = row[c.key]);
+    return obj;
+  });
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Report");
+  const templateKey = document.getElementById("templateSelect").value;
+  const branchCode = branches.find(b => b.id === document.getElementById("fBranch").value)?.code || "branch";
+  const filename = `${templateKey}_${branchCode}_${isoDate(new Date())}.xlsx`;
+  XLSX.writeFile(wb, filename);
+}
+</script>
+</body>
+</html>
