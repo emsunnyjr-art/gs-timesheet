@@ -61,6 +61,13 @@
     <div id="backToSearchRow" style="display:none; text-align:center; margin-top:8px;">
       <a href="#" id="backToSearchLink" style="color:var(--muted); font-size:13px;">← Back to search</a>
     </div>
+    <div id="selfieReadyPanel" style="display:none; margin-top:10px;">
+      <div style="text-align:center; font-size:14px; margin-bottom:10px;">Hi <span id="selfieEmpName" style="color:var(--accent); font-weight:600;"></span> — take your verification photo</div>
+      <div style="display:flex; gap:8px;">
+        <button type="button" id="selfieCancelBtn" style="flex:1; padding:12px; border-radius:8px; border:1px solid var(--accent-out); background:transparent; color:var(--accent-out); font-weight:600;">Cancel</button>
+        <button type="button" id="selfieCaptureBtn" style="flex:2; padding:12px; border-radius:8px; border:none; background:var(--accent); color:#052e16; font-weight:600;">📷 Take Photo</button>
+      </div>
+    </div>
   </div>
 
   <div id="manualPanel" style="display:none;">
@@ -433,6 +440,7 @@ function resetSelection() {
   manualVerifyExpected = null;
   verifiedViaQr = false;
   document.getElementById("backToSearchRow").style.display = "none";
+  document.getElementById("selfieReadyPanel").style.display = "none";
   document.getElementById("confirmBtn").disabled = true;
   document.getElementById("confirmBtn").textContent = "Checking…";
   document.getElementById("overrideRow").style.display = "none";
@@ -443,28 +451,32 @@ function resetSelection() {
 }
 
 // ---------- Camera (shared by scan + manual capture) ----------
+let currentFacing = null; // "environment" | "user" | null
+
 async function openCamera() {
   if (sharedStream) return;
   sharedStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+  currentFacing = "environment";
   qrVideo.srcObject = sharedStream;
   qrVideo.style.display = "block";
 }
 
 // Switches the shared camera to front-facing for the attendance verification
-// photo, since the QR scan itself needs the back camera (to read the ID
-// card) but the saved photo should be a selfie of the person, not whatever
-// the back camera happened to be pointed at. Brief pause after switching so
-// they have a moment to look up before the frame is grabbed.
+// photo. NOTE: iOS Safari can silently refuse to switch camera facing mode
+// unless this runs inside a direct user tap (not from an async chain like a
+// QR-detection loop) - that's why this is called from the Capture button's
+// click handler below, not automatically right after the QR match.
 async function switchToSelfieCamera() {
+  if (currentFacing === "user" && sharedStream) return; // already switched, nothing to do
   stopCamera();
   sharedStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+  currentFacing = "user";
   qrVideo.srcObject = sharedStream;
   qrVideo.style.display = "block";
-  scanStatus.textContent = "Look at the camera…";
-  await new Promise(resolve => setTimeout(resolve, 800));
 }
 
 function stopCamera() {
+  currentFacing = null;
   qrLoopActive = false;
   if (sharedStream) {
     sharedStream.getTracks().forEach(t => t.stop());
@@ -642,10 +654,33 @@ async function onEmployeeIdentified(id, name) {
   selectedEmployeeId = id;
   selectedEmployeeName = name;
   verifiedViaQr = true;
-  await switchToSelfieCamera();
-  const blob = await captureFrame();
-  showConfirm(blob);
+  document.getElementById("backToSearchRow").style.display = "none";
+  document.getElementById("selfieEmpName").textContent = name;
+  document.getElementById("selfieReadyPanel").style.display = "block";
+  scanStatus.textContent = "Identity confirmed.";
+  // Best-effort early switch so the preview looks right immediately if iOS allows it;
+  // the Capture button below retries this inside a real tap if it didn't take.
+  try { await switchToSelfieCamera(); } catch (err) { /* will retry on tap */ }
 }
+
+document.getElementById("selfieCaptureBtn").addEventListener("click", async () => {
+  try {
+    await switchToSelfieCamera(); // retry inside this real user tap - the one that actually works on iOS
+  } catch (err) {
+    logMsg("Camera error: " + err.message, "queued");
+    return;
+  }
+  const blob = await captureFrame();
+  document.getElementById("selfieReadyPanel").style.display = "none";
+  showConfirm(blob);
+});
+
+document.getElementById("selfieCancelBtn").addEventListener("click", () => {
+  stopCamera();
+  document.getElementById("selfieReadyPanel").style.display = "none";
+  logMsg("Cancelled — no entry recorded.", "queued");
+  setMode(mode);
+});
 
 // ---------- Manual mode: pick employee, then capture photo ----------
 document.getElementById("manualUsePhotoBtn").addEventListener("click", async () => {
