@@ -457,7 +457,8 @@ function resetSelection() {
 let currentFacing = null; // "environment" | "user" | null
 
 async function openCamera() {
-  if (sharedStream) return;
+  if (sharedStream && currentFacing === "environment") return; // already on the right camera
+  if (sharedStream) { sharedStream.getTracks().forEach(t => t.stop()); sharedStream = null; }
   sharedStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
   currentFacing = "environment";
   qrVideo.srcObject = sharedStream;
