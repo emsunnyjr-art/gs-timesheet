@@ -333,24 +333,36 @@ function findEmployeeByManualInput(text) {
 // Yet" (no open entry -> tap to Time In). Both groups are always visible and
 // tappable at once -- the incoming shift can clock in before the outgoing
 // shift clocks out, on purpose, so there's never a gap at the pumps.
-function renderTodayRoster() {
+async function renderTodayRoster() {
   const box = document.getElementById("todayRosterBox");
   const branchId = document.getElementById("branchSelect").value;
   const todays = activeAssignments.filter(a => a.branch_id === branchId);
-  if (!todays.length) {
-    box.innerHTML = "No one rostered here today yet.";
+
+  // "On duty now" must be driven by who actually has an open entry at this
+  // branch right now -- NOT by whether a roster assignment exists for them
+  // today. Clocking in doesn't require a roster match (manual mode allows
+  // it), so someone genuinely on duty must never disappear just because
+  // Roster has no data for today.
+  let onDutyIds = new Set();
+  try {
+    const { data: openHere, error } = await supabase.from("timesheet_entries")
+      .select("employee_id").eq("branch_id", branchId).is("time_out", null);
+    if (error) throw error;
+    onDutyIds = new Set((openHere || []).map(r => r.employee_id));
+  } catch (err) {
+    console.error("Could not load on-duty list:", err);
+    box.innerHTML = `<div class="small">Couldn't load who's on duty (${err.message || err}). Pull to refresh or check connection.</div>`;
     return;
   }
+
   const sorted = [...todays].sort((a, b) => {
     const ta = a.shifts ? a.shifts.scheduled_time_in : "";
     const tb = b.shifts ? b.shifts.scheduled_time_in : "";
     return (ta || "").localeCompare(tb || "");
   });
 
-  function personButton(a, isOpen) {
-    const emp = allEmployees.find(e => e.id === a.employee_id);
+  function personButton(emp, shiftLabel, isOpen) {
     if (!emp) return "";
-    const shiftLabel = a.shifts ? `${a.shifts.shift_label} ${fmtTimeOnly(a.shifts.scheduled_time_in)}` : "Unscheduled";
     const tagColor = isOpen ? "var(--accent-out)" : "var(--accent)";
     const tagText = isOpen ? "TIME OUT" : "TIME IN";
     return `<button type="button" class="roster-person-btn" data-id="${emp.id}"
@@ -362,14 +374,33 @@ function renderTodayRoster() {
     </button>`;
   }
 
-  const onDuty = sorted.filter(a => openEntryEmployeeIds.has(a.employee_id));
-  const notYet = sorted.filter(a => !openEntryEmployeeIds.has(a.employee_id));
+  // On duty: every open entry at this branch, whether or not they're on today's roster.
+  const onDuty = [...onDutyIds].map(id => {
+    const emp = allEmployees.find(e => e.id === id);
+    const rosterRow = sorted.find(a => a.employee_id === id);
+    const shiftLabel = rosterRow && rosterRow.shifts
+      ? `${rosterRow.shifts.shift_label} ${fmtTimeOnly(rosterRow.shifts.scheduled_time_in)}`
+      : "Not on today's roster";
+    return { emp, shiftLabel };
+  }).filter(x => x.emp);
+
+  // Not yet clocked in: rostered today, but no open entry.
+  const notYet = sorted.filter(a => !onDutyIds.has(a.employee_id));
+
+  if (!onDuty.length && !notYet.length) {
+    box.innerHTML = "No one rostered here today yet.";
+    return;
+  }
 
   box.innerHTML =
     `<b>On Duty Now (${onDuty.length})</b>` +
-    (onDuty.length ? onDuty.map(a => personButton(a, true)).join("") : `<div class="small" style="margin-top:4px;">Nobody clocked in yet.</div>`) +
+    (onDuty.length ? onDuty.map(x => personButton(x.emp, x.shiftLabel, true)).join("") : `<div class="small" style="margin-top:4px;">Nobody clocked in yet.</div>`) +
     `<b style="display:block; margin-top:14px;">Not Clocked In Yet (${notYet.length})</b>` +
-    (notYet.length ? notYet.map(a => personButton(a, false)).join("") : `<div class="small" style="margin-top:4px;">Everyone rostered is already on duty.</div>`);
+    (notYet.length ? notYet.map(a => {
+      const emp = allEmployees.find(e => e.id === a.employee_id);
+      const shiftLabel = a.shifts ? `${a.shifts.shift_label} ${fmtTimeOnly(a.shifts.scheduled_time_in)}` : "Unscheduled";
+      return personButton(emp, shiftLabel, false);
+    }).join("") : `<div class="small" style="margin-top:4px;">Everyone rostered is already on duty.</div>`);
 
   box.querySelectorAll(".roster-person-btn").forEach(el => {
     el.addEventListener("click", () => {
