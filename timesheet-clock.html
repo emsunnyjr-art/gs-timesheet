@@ -31,13 +31,16 @@
   .synced { color:var(--accent); }
   .nav-links { font-size:12px; margin-bottom:14px; }
   .nav-links a { color:var(--muted); text-decoration:none; margin-right:14px; }
-  .nav-links a:hover { color:var(--accent); }
+  
+  .nav-home { display:inline-flex; align-items:center; gap:5px; padding:10px 14px; margin-right:10px; border-radius:10px; background:#1e293b; font-size:15px; }
+  .nav-home:active { background:#334155; }
+.nav-links a:hover { color:var(--accent); }
 </style>
 </head>
 <body>
 
 <div class="card">
-  <div class="nav-links"><a href="index.html">🏠 Home</a></div>
+  <div class="nav-links"><a href="index.html" class="nav-home"><span style="font-size:19px;">🏠</span> Home</a></div>
   <div style="display:flex; align-items:center; gap:12px;">
     <img src="logo.png" alt="A's Fuel" style="width:40px; height:40px; border-radius:50%;">
     <h1 style="margin:0;">Clock In / Out</h1>

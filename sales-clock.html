@@ -27,7 +27,10 @@
   video, canvas, img.preview { width:100%; border-radius:10px; display:none; margin-top:10px; }
   .nav-links { font-size:12px; margin-bottom:14px; }
   .nav-links a { color:var(--muted); text-decoration:none; margin-right:14px; }
-  .grid-menu { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:16px; }
+  
+  .nav-home { display:inline-flex; align-items:center; gap:5px; padding:10px 14px; margin-right:10px; border-radius:10px; background:#1e293b; font-size:15px; }
+  .nav-home:active { background:#334155; }
+.grid-menu { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:16px; }
   .menu-btn { background:#0f172a; border:1px solid var(--border); border-radius:14px; padding:18px 10px; text-align:center; cursor:pointer; }
   .menu-btn .emoji { font-size:28px; display:block; margin-bottom:6px; }
   .menu-btn .lbl { font-size:12.5px; font-weight:600; }
@@ -62,7 +65,7 @@
 
   <!-- HOME -->
   <div class="card panel active" id="panel-home">
-    <div class="nav-links"><a href="index.html">🏠 Home</a><a href="sales-admin.html">Sales Admin</a></div>
+    <div class="nav-links"><a href="index.html" class="nav-home"><span style="font-size:19px;">🏠</span> Home</a><a href="sales-admin.html">Sales Admin</a></div>
     <div style="display:flex; align-items:center; gap:10px;">
       <img src="logo.png" alt="A's Fuel" style="width:36px; height:36px; border-radius:50%;">
       <h1 style="margin:0;">On Shift</h1>

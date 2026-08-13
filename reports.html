@@ -23,7 +23,10 @@
   .msg.err { color:var(--danger); }
   .nav-links { font-size:12px; margin-bottom:14px; }
   .nav-links a { color:var(--muted); text-decoration:none; margin-right:14px; }
-  .col-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:8px; margin-top:10px; }
+  
+  .nav-home { display:inline-flex; align-items:center; gap:5px; padding:10px 14px; margin-right:10px; border-radius:10px; background:#1e293b; font-size:15px; }
+  .nav-home:active { background:#334155; }
+.col-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:8px; margin-top:10px; }
   .col-check { display:flex; align-items:center; gap:6px; font-size:13px; background:#0f172a; border:1px solid var(--border); border-radius:8px; padding:8px 10px; }
   .col-check input { width:auto; margin:0; }
   table { width:100%; border-collapse:collapse; margin-top:14px; font-size:12.5px; }
@@ -52,7 +55,7 @@
   </div>
 
   <div id="app" style="display:none;">
-    <div class="nav-links"><a href="index.html">🏠 Home</a><a href="sales-admin.html">Sales</a><a href="hr-admin.html">HR Admin</a><a href="roster-admin.html">Roster</a></div>
+    <div class="nav-links"><a href="index.html" class="nav-home"><span style="font-size:19px;">🏠</span> Home</a><a href="sales-admin.html">Sales</a><a href="hr-admin.html">HR Admin</a><a href="roster-admin.html">Roster</a></div>
     <h1>Reports</h1>
     <p class="small">Pick a report, choose your filters, tick the columns you want, then run it. Export to Excel any time after.</p>
 

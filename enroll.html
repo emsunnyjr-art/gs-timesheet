@@ -23,7 +23,10 @@
   .msg.err { color:var(--danger); }
   .nav-links { font-size:12px; margin-bottom:14px; }
   .nav-links a { color:var(--muted); text-decoration:none; margin-right:14px; }
-  .grant-row { border:1px solid var(--border); border-radius:10px; padding:12px; margin-top:10px; }
+  
+  .nav-home { display:inline-flex; align-items:center; gap:5px; padding:10px 14px; margin-right:10px; border-radius:10px; background:#1e293b; font-size:15px; }
+  .nav-home:active { background:#334155; }
+.grant-row { border:1px solid var(--border); border-radius:10px; padding:12px; margin-top:10px; }
   .grant-row .apps { display:flex; gap:14px; margin-top:8px; flex-wrap:wrap; }
   .grant-row label.checklabel { display:flex; align-items:center; gap:6px; font-size:13px; color:var(--text); margin:0; }
   .grant-row label.checklabel input { width:auto; }
@@ -61,7 +64,7 @@
   </div>
 
   <div id="app" style="display:none;">
-    <div class="nav-links"><a href="index.html">🏠 Home</a><a href="hr-admin.html">HR Admin</a><a href="sales-admin.html">Sales</a><a href="roster-admin.html">Roster</a></div>
+    <div class="nav-links"><a href="index.html" class="nav-home"><span style="font-size:19px;">🏠</span> Home</a><a href="hr-admin.html">HR Admin</a><a href="sales-admin.html">Sales</a><a href="roster-admin.html">Roster</a></div>
     <h1>Enroll a TM</h1>
     <p class="small">Creates a real login account and grants access to specific apps and branches. Owner-only — enforced by the server, not just this page.</p>
 
