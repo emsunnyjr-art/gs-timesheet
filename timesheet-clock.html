@@ -343,17 +343,18 @@ async function renderTodayRoster() {
   // today. Clocking in doesn't require a roster match (manual mode allows
   // it), so someone genuinely on duty must never disappear just because
   // Roster has no data for today.
-  let onDutyIds = new Set();
+  let onDutyTimeIn = new Map(); // employee_id -> time_in ISO string
   try {
     const { data: openHere, error } = await supabase.from("timesheet_entries")
-      .select("employee_id").eq("branch_id", branchId).is("time_out", null);
+      .select("employee_id, time_in").eq("branch_id", branchId).is("time_out", null);
     if (error) throw error;
-    onDutyIds = new Set((openHere || []).map(r => r.employee_id));
+    (openHere || []).forEach(r => onDutyTimeIn.set(r.employee_id, r.time_in));
   } catch (err) {
     console.error("Could not load on-duty list:", err);
     box.innerHTML = `<div class="small">Couldn't load who's on duty (${err.message || err}). Pull to refresh or check connection.</div>`;
     return;
   }
+  const onDutyIds = new Set(onDutyTimeIn.keys());
 
   const sorted = [...todays].sort((a, b) => {
     const ta = a.shifts ? a.shifts.scheduled_time_in : "";
@@ -375,13 +376,15 @@ async function renderTodayRoster() {
   }
 
   // On duty: every open entry at this branch, whether or not they're on today's roster.
+  // Label always shows "Logged in since HH:MM" (the fact that actually matters for
+  // someone deciding whether to clock this person out) rather than just the shift name.
   const onDuty = [...onDutyIds].map(id => {
     const emp = allEmployees.find(e => e.id === id);
-    const rosterRow = sorted.find(a => a.employee_id === id);
-    const shiftLabel = rosterRow && rosterRow.shifts
-      ? `${rosterRow.shifts.shift_label} ${fmtTimeOnly(rosterRow.shifts.scheduled_time_in)}`
-      : "Not on today's roster";
-    return { emp, shiftLabel };
+    const timeIn = onDutyTimeIn.get(id);
+    const sinceLabel = timeIn
+      ? `Logged in since ${new Date(timeIn).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+      : "Logged in";
+    return { emp, shiftLabel: sinceLabel };
   }).filter(x => x.emp);
 
   // Not yet clocked in: rostered today, but no open entry.
