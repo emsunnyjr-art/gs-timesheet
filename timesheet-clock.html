@@ -92,6 +92,13 @@
     <div style="font-weight:600; margin-bottom:6px;">Confirm identity</div>
     <div id="confirmName" style="color:var(--accent); font-size:15px; margin-bottom:8px;"></div>
     <div id="rosterWarning" style="display:none; color:#f59e0b; font-size:12px; margin-bottom:8px; padding:6px 8px; background:#f59e0b1a; border-radius:6px;"></div>
+    <div id="clockWarningPanel" style="display:none; margin-bottom:10px; padding:12px; border-radius:8px; border:2px solid #f59e0b; background:#452b0080;">
+      <div id="clockWarningText" style="font-size:13.5px; color:#fde68a; margin-bottom:10px;"></div>
+      <div style="display:flex; gap:8px;">
+        <button type="button" id="clockWarningCancelBtn" style="flex:1; padding:10px; border-radius:8px; border:1px solid var(--accent-out); background:transparent; color:var(--accent-out); font-weight:600;">Cancel</button>
+        <button type="button" id="clockWarningProceedBtn" style="flex:2; padding:10px; border-radius:8px; border:none; background:#f59e0b; color:#452b00; font-weight:600;">Yes, Continue</button>
+      </div>
+    </div>
     <div id="actionBadge" style="font-size:13px; font-weight:600; margin-bottom:8px; padding:6px 8px; border-radius:6px;"></div>
     <div id="shiftPickerRow" style="display:none; margin-bottom:8px;">
       <label style="margin-top:0; font-size:12px; color:var(--muted);">Shift (not on today's roster — pick which shift this is)</label>
@@ -398,6 +405,7 @@ let sharedStream = null;
 let selectedEmployeeId = null;
 let selectedEmployeeName = null;
 let capturedPhotoBlob = null;
+let pendingClockWarning = false; // true while a headcount/recent-reclock warning is unacknowledged - blocks confirm + auto-save
 let detectedAction = null; // "in" | "out" -- auto-determined, not chosen by the user
 let lastPushError = null;  // most recent Supabase error message, shown on failure
 let manualShiftId = null;  // for a non-rostered clock-in: which of today's shifts this counts against
@@ -792,6 +800,41 @@ async function showConfirm(blob) {
   // Guard against a stale response if the person cancelled/switched while the lookup was in flight.
   if (selectedEmployeeId === null) return;
 
+  // ---- New rules: warn before an over-headcount Time In, or a Time Out
+  // recorded suspiciously soon after Time In (likely an accidental re-scan).
+  let clockWarningText = null;
+  if (detectedAction === "in") {
+    const { current } = await detectCurrentShiftForBranch(branchId);
+    if (current) {
+      const { count: rosteredCount } = await supabase.from("roster_assignments")
+        .select("id", { count: "exact", head: true }).eq("shift_id", current.id);
+      const { count: onDutyCount } = await supabase.from("timesheet_entries")
+        .select("id", { count: "exact", head: true }).eq("branch_id", branchId).is("time_out", null);
+      if ((rosteredCount || 0) > 0 && (onDutyCount || 0) + 1 > rosteredCount) {
+        clockWarningText = `⚠ ${onDutyCount} ${onDutyCount === 1 ? "person is" : "people are"} already on duty here, and only ${rosteredCount} ${rosteredCount === 1 ? "is" : "are"} rostered for the ${current.shift_label} shift. Clocking in ${selectedEmployeeName} would go over the rostered headcount.`;
+      }
+    }
+  } else {
+    const { data: openRows } = await supabase.from("timesheet_entries")
+      .select("time_in").eq("employee_id", selectedEmployeeId).is("time_out", null)
+      .order("time_in", { ascending: false }).limit(1);
+    if (openRows && openRows[0]) {
+      const minutesSince = (Date.now() - new Date(openRows[0].time_in).getTime()) / 60000;
+      if (minutesSince < 5) {
+        clockWarningText = `⚠ ${selectedEmployeeName} clocked in only ${Math.max(0, Math.round(minutesSince))} minute(s) ago. Recording a Time Out now — is that really intended?`;
+      }
+    }
+  }
+
+  const warnBox = document.getElementById("clockWarningPanel");
+  pendingClockWarning = !!clockWarningText;
+  if (clockWarningText) {
+    document.getElementById("clockWarningText").textContent = clockWarningText;
+    warnBox.style.display = "block";
+  } else {
+    warnBox.style.display = "none";
+  }
+
   // For a fresh clock-in with no roster assignment, figure out (and let
   // them confirm/override) which of today's shifts this actually counts
   // against -- same idea as the old AppSheet "Shift" picker defaulting to
@@ -812,8 +855,22 @@ async function showConfirm(blob) {
     shiftPickerRow.style.display = "none";
   }
 
-  if (selectedEmployeeId !== null) renderActionBadge();
+  if (selectedEmployeeId !== null && !pendingClockWarning) renderActionBadge();
 }
+
+document.getElementById("clockWarningProceedBtn").addEventListener("click", () => {
+  pendingClockWarning = false;
+  document.getElementById("clockWarningPanel").style.display = "none";
+  if (selectedEmployeeId !== null) renderActionBadge();
+});
+document.getElementById("clockWarningCancelBtn").addEventListener("click", () => {
+  pendingClockWarning = false;
+  document.getElementById("clockWarningPanel").style.display = "none";
+  cancelAutoSave();
+  stopCamera();
+  logMsg("Cancelled — no entry recorded.", "queued");
+  setMode(mode);
+});
 
 document.getElementById("retakeBtn").addEventListener("click", async () => {
   cancelAutoSave();

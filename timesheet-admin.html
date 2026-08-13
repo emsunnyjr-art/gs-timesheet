@@ -57,6 +57,7 @@
   <div class="tabs">
     <div class="tab active" data-tab="shifts">Shifts</div>
     <div class="tab" data-tab="entries">Timesheet Entries</div>
+    <div class="tab" data-tab="review">Review</div>
     <div class="tab" data-tab="payroll">Payroll</div>
     <div class="tab" data-tab="rules">Wage Rules</div>
     <div class="tab" data-tab="adjustments">Adjustments</div>
@@ -137,6 +138,20 @@
         <tbody></tbody>
       </table>
       <div class="msg" id="entriesMsg"></div>
+    </div>
+  </div>
+
+  <!-- REVIEW -->
+  <div class="panel" id="panel-review">
+    <div class="card">
+      <h2>Possible Forgot to Clock Out</h2>
+      <p style="color:var(--muted); font-size:13px;">Flagged automatically after 8+ hours with no Time Out. Nothing is finalized until you confirm the real Time Out here.</p>
+      <table id="staleTable"><thead><tr><th>Employee</th><th>Branch</th><th>Time In</th><th>Hours Open</th><th>Confirm Time Out</th><th>Your Name</th><th></th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="card">
+      <h2>Overtime Needs Review</h2>
+      <p style="color:var(--muted); font-size:13px;">Calculated automatically from time in/out. Approve if legitimate, or reject if it shouldn't count (e.g. it came from a forgotten clock-out).</p>
+      <table id="otTable"><thead><tr><th>Employee</th><th>Date</th><th>OT Hours</th><th>OT Wage</th><th>Your Name</th><th></th></tr></thead><tbody></tbody></table>
     </div>
   </div>
 
@@ -341,6 +356,7 @@ document.querySelectorAll(".tab").forEach(tab => {
     document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
     tab.classList.add("active");
     document.getElementById("panel-" + tab.dataset.tab).classList.add("active");
+    if (tab.dataset.tab === "review") loadReviewQueue();
   });
 });
 
@@ -505,6 +521,86 @@ async function saveEntryFlags(id, btn) {
 function fmtTime(ts) {
   if (!ts) return "—";
   return new Date(ts).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+// ---------- Review queue: auto-clockout confirmation + OT approval ----------
+function toLocalDatetimeInputValue(d) {
+  const pad = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+async function loadReviewQueue() {
+  const { data: stale, error: staleErr } = await supabase.from("timesheet_entries")
+    .select("id, time_in, employees(full_name, tm_number), branches(code)")
+    .eq("auto_clockout_flagged", true).eq("auto_clockout_confirmed", false)
+    .order("time_in", { ascending: true });
+  const staleBody = document.querySelector("#staleTable tbody");
+  if (staleErr) {
+    staleBody.innerHTML = `<tr><td colspan="7" class="small">Error: ${staleErr.message}</td></tr>`;
+  } else {
+    staleBody.innerHTML = (stale || []).map(e => {
+      const hoursOpen = ((Date.now() - new Date(e.time_in).getTime()) / 3600000).toFixed(1);
+      const suggested = new Date(new Date(e.time_in).getTime() + 8 * 3600 * 1000);
+      return `<tr>
+        <td>${e.employees?.full_name || ""} (${e.employees?.tm_number || ""})</td>
+        <td>${e.branches?.code || ""}</td>
+        <td>${new Date(e.time_in).toLocaleString()}</td>
+        <td>${hoursOpen}h</td>
+        <td><input type="datetime-local" id="stale_out_${e.id}" value="${toLocalDatetimeInputValue(suggested)}"></td>
+        <td><input type="text" id="stale_by_${e.id}" placeholder="Your name" style="width:110px;"></td>
+        <td><button onclick="confirmAutoClockout('${e.id}')">Confirm</button></td>
+      </tr>`;
+    }).join("") || "<tr><td colspan='7' class='small'>Nothing flagged.</td></tr>";
+  }
+
+  const { data: otRows, error: otErr } = await supabase.from("timesheet_entries")
+    .select("id, time_in, overtime_hours, overtime_wage, employees(full_name, tm_number)")
+    .eq("is_overtime", true).eq("ot_confirmed", false).eq("ot_rejected", false)
+    .order("time_in", { ascending: false }).limit(100);
+  const otBody = document.querySelector("#otTable tbody");
+  if (otErr) {
+    otBody.innerHTML = `<tr><td colspan="6" class="small">Error: ${otErr.message}</td></tr>`;
+  } else {
+    otBody.innerHTML = (otRows || []).map(e => `<tr>
+      <td>${e.employees?.full_name || ""} (${e.employees?.tm_number || ""})</td>
+      <td>${new Date(e.time_in).toLocaleDateString()}</td>
+      <td>${Number(e.overtime_hours).toFixed(2)}h</td>
+      <td>₱${Number(e.overtime_wage).toFixed(2)}</td>
+      <td><input type="text" id="ot_by_${e.id}" placeholder="Your name" style="width:110px;"></td>
+      <td>
+        <button onclick="reviewOt('${e.id}', true)">Approve</button>
+        <button onclick="reviewOt('${e.id}', false)" class="secondary">Reject</button>
+      </td>
+    </tr>`).join("") || "<tr><td colspan='6' class='small'>Nothing pending.</td></tr>";
+  }
+}
+
+async function confirmAutoClockout(entryId) {
+  const outInput = document.getElementById(`stale_out_${entryId}`);
+  const byInput = document.getElementById(`stale_by_${entryId}`);
+  const outVal = outInput.value;
+  const byVal = byInput.value.trim();
+  if (!outVal || !byVal) { alert("Time Out and Your Name are both required."); return; }
+  const { error } = await supabase.from("timesheet_entries").update({
+    time_out: new Date(outVal).toISOString(),
+    auto_clockout_confirmed: true,
+    auto_clockout_confirmed_by: byVal,
+    auto_clockout_confirmed_at: new Date().toISOString()
+  }).eq("id", entryId);
+  if (error) { alert("Error: " + error.message); return; }
+  loadReviewQueue();
+}
+
+async function reviewOt(entryId, approve) {
+  const byInput = document.getElementById(`ot_by_${entryId}`);
+  const byVal = byInput.value.trim();
+  if (!byVal) { alert("Your name is required."); return; }
+  const payload = approve
+    ? { ot_confirmed: true, ot_confirmed_by: byVal, ot_confirmed_at: new Date().toISOString() }
+    : { ot_rejected: true, ot_confirmed_by: byVal, ot_confirmed_at: new Date().toISOString() };
+  const { error } = await supabase.from("timesheet_entries").update(payload).eq("id", entryId);
+  if (error) { alert("Error: " + error.message); return; }
+  loadReviewQueue();
 }
 
 // ---------- Payroll rollup ----------
