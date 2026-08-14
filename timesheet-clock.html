@@ -356,36 +356,51 @@ async function renderTodayRoster() {
   }
   const onDutyIds = new Set(onDutyTimeIn.keys());
 
+  const { current, allShifts } = await detectCurrentShiftForBranch(branchId);
+
+  // Classify each on-duty person: are they on the CURRENT shift, or still
+  // clocked in from an earlier one (a carryover, likely forgot to clock out)?
+  function classifyTimeIn(timeInISO) {
+    if (!timeInISO || !allShifts || !allShifts.length) return null;
+    const t = new Date(timeInISO);
+    for (const s of allShifts) {
+      const { start, end } = toAbsRange(s.shift_date, s.scheduled_time_in, s.scheduled_time_out);
+      if (t >= start && t < end) return s;
+    }
+    return null;
+  }
+
   const sorted = [...todays].sort((a, b) => {
     const ta = a.shifts ? a.shifts.scheduled_time_in : "";
     const tb = b.shifts ? b.shifts.scheduled_time_in : "";
     return (ta || "").localeCompare(tb || "");
   });
 
-  function personButton(emp, shiftLabel, isOpen) {
+  function personButton(emp, label, isOpen, isCarryover) {
     if (!emp) return "";
     const tagColor = isOpen ? "var(--accent-out)" : "var(--accent)";
     const tagText = isOpen ? "TIME OUT" : "TIME IN";
+    const borderColor = isCarryover ? "#f59e0b" : tagColor;
     return `<button type="button" class="roster-person-btn" data-id="${emp.id}"
         style="display:flex; justify-content:space-between; align-items:center; width:100%; text-align:left;
-               padding:10px; margin-top:6px; border-radius:8px; border:1px solid ${tagColor}; background:#0f172a; color:var(--text);">
+               padding:10px; margin-top:6px; border-radius:8px; border:1px solid ${borderColor}; background:#0f172a; color:var(--text);">
       <span>${escapeHtml(emp.full_name)} <span style="color:var(--muted);">(${escapeHtml(emp.tm_number)})</span><br>
-        <span style="font-size:11px; color:var(--muted);">${escapeHtml(shiftLabel)}</span></span>
+        <span style="font-size:11px; color:${isCarryover ? '#f59e0b' : 'var(--muted)'};">${label}</span></span>
       <span style="font-weight:700; color:${tagColor}; border:1px solid ${tagColor}; border-radius:6px; padding:3px 8px; font-size:11px; white-space:nowrap;">${tagText}</span>
     </button>`;
   }
 
-  // On duty: every open entry at this branch, whether or not they're on today's roster.
-  // Label always shows "Logged in since HH:MM" (the fact that actually matters for
-  // someone deciding whether to clock this person out) rather than just the shift name.
   const onDuty = [...onDutyIds].map(id => {
     const emp = allEmployees.find(e => e.id === id);
     const timeIn = onDutyTimeIn.get(id);
-    const sinceLabel = timeIn
-      ? `Logged in since ${new Date(timeIn).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
-      : "Logged in";
-    return { emp, shiftLabel: sinceLabel };
-  }).filter(x => x.emp);
+    const matchedShift = classifyTimeIn(timeIn);
+    const timeStr = timeIn ? new Date(timeIn).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
+    const isCarryover = !!(current && matchedShift && matchedShift.id !== current.id);
+    const label = isCarryover
+      ? `⚠ Not yet clocked out from ${escapeHtml(matchedShift.shift_label)} shift — logged in since ${timeStr}`
+      : `Logged in since ${timeStr}`;
+    return { emp, label, isCarryover, sortKey: isCarryover ? 0 : 1 };
+  }).filter(x => x.emp).sort((a, b) => a.sortKey - b.sortKey); // carryovers surface first
 
   // Not yet clocked in: rostered today, but no open entry.
   const notYet = sorted.filter(a => !onDutyIds.has(a.employee_id));
@@ -395,14 +410,19 @@ async function renderTodayRoster() {
     return;
   }
 
+  const carryoverCount = onDuty.filter(x => x.isCarryover).length;
+  const headerLabel = current ? `On Duty — ${escapeHtml(current.shift_label)}` : "On Duty Now";
+  const carryoverNote = carryoverCount
+    ? ` <span style="color:#f59e0b;">(${carryoverCount} still open from a previous shift)</span>` : "";
+
   box.innerHTML =
-    `<b>On Duty Now (${onDuty.length})</b>` +
-    (onDuty.length ? onDuty.map(x => personButton(x.emp, x.shiftLabel, true)).join("") : `<div class="small" style="margin-top:4px;">Nobody clocked in yet.</div>`) +
+    `<b>${headerLabel} (${onDuty.length})${carryoverNote}</b>` +
+    (onDuty.length ? onDuty.map(x => personButton(x.emp, x.label, true, x.isCarryover)).join("") : `<div class="small" style="margin-top:4px;">Nobody clocked in yet.</div>`) +
     `<b style="display:block; margin-top:14px;">Not Clocked In Yet (${notYet.length})</b>` +
     (notYet.length ? notYet.map(a => {
       const emp = allEmployees.find(e => e.id === a.employee_id);
       const shiftLabel = a.shifts ? `${a.shifts.shift_label} ${fmtTimeOnly(a.shifts.scheduled_time_in)}` : "Unscheduled";
-      return personButton(emp, shiftLabel, false);
+      return personButton(emp, shiftLabel, false, false);
     }).join("") : `<div class="small" style="margin-top:4px;">Everyone rostered is already on duty.</div>`);
 
   box.querySelectorAll(".roster-person-btn").forEach(el => {
@@ -768,6 +788,13 @@ document.getElementById("backToSearchLink").addEventListener("click", (e) => {
 // active shift row is still dated "yesterday". Falls back to whichever
 // shift starts soonest if the current moment doesn't land inside any of
 // them (a gap between shifts, or none configured yet).
+function toAbsRange(dateISO, timeIn, timeOut) {
+  const start = new Date(`${dateISO}T${timeIn}`);
+  let end = new Date(`${dateISO}T${timeOut}`);
+  if (end <= start) end.setDate(end.getDate() + 1);
+  return { start, end };
+}
+
 async function detectCurrentShiftForBranch(branchId) {
   const now = new Date();
   const todayISO = localDateStr(now);
@@ -778,14 +805,7 @@ async function detectCurrentShiftForBranch(branchId) {
     .select("id, shift_label, scheduled_time_in, scheduled_time_out, shift_date")
     .eq("branch_id", branchId)
     .in("shift_date", [todayISO, yesterdayISO]);
-  if (error || !data || !data.length) return { current: null, todaysShifts: [] };
-
-  function toAbsRange(dateISO, timeIn, timeOut) {
-    const start = new Date(`${dateISO}T${timeIn}`);
-    let end = new Date(`${dateISO}T${timeOut}`);
-    if (end <= start) end.setDate(end.getDate() + 1);
-    return { start, end };
-  }
+  if (error || !data || !data.length) return { current: null, todaysShifts: [], allShifts: [] };
 
   let current = null;
   for (const s of data) {
@@ -803,7 +823,7 @@ async function detectCurrentShiftForBranch(branchId) {
   }
   const todaysShifts = data.filter(s => s.shift_date === todayISO)
     .sort((a, b) => a.scheduled_time_in.localeCompare(b.scheduled_time_in));
-  return { current, todaysShifts };
+  return { current, todaysShifts, allShifts: data };
 }
 
 document.getElementById("manualShiftSelect").addEventListener("change", function () {
