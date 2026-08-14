@@ -96,6 +96,7 @@
     <input type="number" step="0.01" id="dsHeightCm">
     <label>Liters</label>
     <input type="number" step="0.01" id="dsLiters">
+    <div class="small" id="dsConvertHint"></div>
     <button class="btn-secondary" onclick="openStillCamera('dsPhoto')">📷 Take Photo of Stick</button>
     <video id="dsPhoto_video" autoplay playsinline muted></video>
     <canvas id="dsPhoto_canvas" style="display:none;"></canvas>
@@ -565,7 +566,47 @@ async function saveDelivery() {
 // ============================================================
 async function loadTanksForDipstick() {
   document.getElementById("dsTank").innerHTML = tanks.map(t => `<option value="${t.id}" data-branch="${t.branch_id}" data-product="${t.product_id}">${t.fuel_products?.name} — ${t.tank_label}</option>`).join("");
+  document.getElementById("dsHeightCm").value = "";
+  document.getElementById("dsLiters").value = "";
+  document.getElementById("dsConvertHint").textContent = "";
 }
+
+// Looks up the tank's real calibration curve and linearly interpolates between
+// the two bracketing points -- this is what actually makes the height_cm field
+// mean something, instead of just being stored alongside a manually-typed liters value.
+async function lookupLitersFromCm(tankId, cm) {
+  const { data, error } = await supabase.from("fuel_tank_calibration")
+    .select("height_cm, liters").eq("tank_id", tankId).order("height_cm");
+  if (error || !data || !data.length) return null;
+  if (cm <= data[0].height_cm) return data[0].liters;
+  if (cm >= data[data.length - 1].height_cm) return data[data.length - 1].liters;
+  for (let i = 0; i < data.length - 1; i++) {
+    const a = data[i], b = data[i + 1];
+    if (cm >= a.height_cm && cm <= b.height_cm) {
+      const frac = (cm - a.height_cm) / (b.height_cm - a.height_cm);
+      return a.liters + frac * (b.liters - a.liters);
+    }
+  }
+  return null;
+}
+
+document.getElementById("dsHeightCm").addEventListener("input", async () => {
+  const cmVal = parseFloat(document.getElementById("dsHeightCm").value);
+  const hint = document.getElementById("dsConvertHint");
+  if (isNaN(cmVal)) { hint.textContent = ""; return; }
+  const tankId = document.getElementById("dsTank").value;
+  if (!tankId) return;
+  const liters = await lookupLitersFromCm(tankId, cmVal);
+  if (liters !== null) {
+    document.getElementById("dsLiters").value = liters.toFixed(2);
+    hint.textContent = `Converted from ${cmVal}cm using this tank's calibration. Edit Liters directly if this looks wrong.`;
+    hint.className = "small";
+  } else {
+    hint.textContent = "No calibration data for this tank yet — enter Liters manually.";
+    hint.className = "small";
+  }
+});
+
 async function saveDipstick() {
   const status = document.getElementById("dsStatus");
   const tankSel = document.getElementById("dsTank");
@@ -583,6 +624,7 @@ async function saveDipstick() {
   if (error) { status.textContent = "Error: " + error.message; status.className = "status err"; return; }
   status.textContent = "Saved ✓"; status.className = "status ok";
   document.getElementById("dsLiters").value = ""; document.getElementById("dsHeightCm").value = "";
+  document.getElementById("dsConvertHint").textContent = "";
 }
 
 // ============================================================

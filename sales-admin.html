@@ -668,6 +668,36 @@ function cancelEditDelivery() {
   document.getElementById("dlvDate").value = todayIso();
 }
 
+// Looks up the tank's real calibration curve and linearly interpolates -- this is
+// what actually makes the cm fields mean something, instead of just being stored
+// alongside a manually-typed liters value.
+async function lookupLitersFromCm(tankId, cm) {
+  const { data, error } = await supabase.from("fuel_tank_calibration")
+    .select("height_cm, liters").eq("tank_id", tankId).order("height_cm");
+  if (error || !data || !data.length) return null;
+  if (cm <= data[0].height_cm) return data[0].liters;
+  if (cm >= data[data.length - 1].height_cm) return data[data.length - 1].liters;
+  for (let i = 0; i < data.length - 1; i++) {
+    const a = data[i], b = data[i + 1];
+    if (cm >= a.height_cm && cm <= b.height_cm) {
+      const frac = (cm - a.height_cm) / (b.height_cm - a.height_cm);
+      return a.liters + frac * (b.liters - a.liters);
+    }
+  }
+  return null;
+}
+async function wireCmToLiters(cmFieldId, litersFieldId) {
+  document.getElementById(cmFieldId).addEventListener("input", async () => {
+    const cmVal = parseFloat(document.getElementById(cmFieldId).value);
+    const tankId = document.getElementById("dlvTank").value;
+    if (isNaN(cmVal) || !tankId) return;
+    const liters = await lookupLitersFromCm(tankId, cmVal);
+    if (liters !== null) document.getElementById(litersFieldId).value = liters.toFixed(2);
+  });
+}
+wireCmToLiters("dlvBeforeCm", "dlvBeforeL");
+wireCmToLiters("dlvAfterCm", "dlvAfterL");
+
 async function saveDelivery() {
   const msg = document.getElementById("dlvMsg");
   msg.textContent = ""; msg.className = "msg";
