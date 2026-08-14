@@ -453,7 +453,7 @@ function updateManualPhotoPreview() {
 }
 
 // ---------- Mode toggle ----------
-let mode = "scan"; // "scan" | "manual"
+let mode = null; // null (idle, roster-first) | "scan" | "manual"
 let qrLoopActive = false;
 let sharedStream = null;
 let selectedEmployeeId = null;
@@ -1178,7 +1178,7 @@ async function ensureTodayShift(branchId) {
 // ---------- Init ----------
 updateNetStatus();
 loadDropdowns().then(() => {
-  setMode("scan");
+  setMode(null);
   ensureTodayShift(document.getElementById("branchSelect").value);
 });
 document.getElementById("branchSelect").addEventListener("change", () => {
