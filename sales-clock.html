@@ -421,6 +421,7 @@ async function initApp() {
 async function onBranchChange() {
   currentBranch = document.getElementById("homeBranch").value;
   await loadShiftsForBranch();
+  await applyDeliverySmartDefaults(); // homeBranch only lives on panel-home today, but keep this in case that changes
 }
 
 async function loadShiftsForBranch() {
@@ -514,7 +515,7 @@ async function runOcrAssist(key, blob) {
 async function loadDeliveryForm() {
   document.getElementById("dlShift").innerHTML = "<option value=''>No active shift (delivery after shift closed)</option>" +
     (currentShift ? `<option value="${currentShift}" selected>Current shift</option>` : "");
-  loadTanksForDelivery();
+  await applyDeliverySmartDefaults(); // also populates the tank select for whichever product it picks
 }
 function loadTanksForDelivery() {
   const productId = document.getElementById("dlProduct").value;
@@ -557,6 +558,53 @@ function clearProductSpecificFields() {
   });
 }
 
+// ---------- Delivery smart defaults ----------
+// One supplier truck usually drops 2-3 products (Diesel, Premium, Unleaded)
+// in one visit, sharing vendor/driver/plate/check#. This looks at today's
+// deliveries for the current branch and either carries those shared fields
+// forward to whichever product hasn't been logged yet, or fully resets once
+// every product's been entered (or none have) -- so a genuinely new visit
+// never inherits stale data. Returns { reset, nextCode } so callers can
+// tailor their success message.
+const DELIVERY_PRODUCT_ORDER = ["DIESEL", "PREMIUM", "UNLEADED"];
+
+async function applyDeliverySmartDefaults() {
+  if (!currentBranch) return { reset: true, nextCode: DELIVERY_PRODUCT_ORDER[0] };
+  const today = todayIso();
+  const { data, error } = await supabase.from("fuel_deliveries")
+    .select("product_id, vendor_id, driver_id, plate_number, check_number")
+    .eq("branch_id", currentBranch).eq("delivery_date", today)
+    .order("created_at", { ascending: true });
+  if (error) { console.error("applyDeliverySmartDefaults failed:", error); return { reset: true, nextCode: DELIVERY_PRODUCT_ORDER[0] }; }
+
+  const todaysDeliveries = data || [];
+  const idByCode = {};
+  products.forEach(p => { idByCode[p.code] = p.id; });
+  const enteredProductIds = new Set(todaysDeliveries.map(d => d.product_id));
+  const nextCode = DELIVERY_PRODUCT_ORDER.find(code => idByCode[code] && !enteredProductIds.has(idByCode[code]));
+
+  let reset;
+  if (todaysDeliveries.length && nextCode) {
+    const latest = todaysDeliveries[todaysDeliveries.length - 1]; // ascending order -> last is most recent
+    document.getElementById("dlVendor").value = latest.vendor_id || "";
+    document.getElementById("dlDriver").value = latest.driver_id || "";
+    document.getElementById("dlPlate").value = latest.plate_number || "";
+    document.getElementById("dlCheck").value = latest.check_number || "";
+    clearProductSpecificFields(); // leaves the invoice photo alone -- one invoice usually covers the whole visit
+    reset = false;
+  } else {
+    // Zero deliveries today, or all 3 products already logged -- nothing to carry forward.
+    resetDeliveryForm();
+    reset = true;
+  }
+
+  // Product is never left as whatever it was -- always set explicitly here.
+  const chosenCode = nextCode || DELIVERY_PRODUCT_ORDER[0];
+  document.getElementById("dlProduct").value = idByCode[chosenCode] || "";
+  loadTanksForDelivery();
+  return { reset, nextCode: chosenCode };
+}
+
 async function saveDelivery() {
   if (isSavingDelivery) return; // guard against double-tap / double-submit creating duplicate rows
   const status = document.getElementById("dlStatus");
@@ -596,8 +644,11 @@ async function saveDelivery() {
     };
     const { error } = await supabase.from("fuel_deliveries").insert(payload);
     if (error) { status.textContent = "Error: " + error.message; status.className = "status err"; return; }
-    clearProductSpecificFields();
-    status.textContent = "Delivery saved ✓ — vendor/driver/plate/check# kept for the next product on this truck."; status.className = "status ok";
+    const result = await applyDeliverySmartDefaults(); // sets status/text below AFTER this, since a full reset clears status
+    status.textContent = result.reset
+      ? "Delivery saved ✓ — all products logged for this branch today, form reset for a new visit."
+      : "Delivery saved ✓ — vendor/driver/plate/check# kept for the next product on this truck.";
+    status.className = "status ok";
   } finally {
     isSavingDelivery = false;
     saveBtn.disabled = false;

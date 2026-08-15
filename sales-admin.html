@@ -503,7 +503,7 @@ document.querySelectorAll(".subtab").forEach(t => t.addEventListener("click", ()
 
 function onTabShown(tab) {
   if (tab === "dashboard") loadDashboard();
-  if (tab === "deliveries") loadDeliveries();
+  if (tab === "deliveries") { loadDeliveries(); applyDeliverySmartDefaults(); }
   if (tab === "dispensing") loadShiftsForDispensing();
   if (tab === "credit") loadCreditTab();
   if (tab === "cashrecon") loadCashReconTab();
@@ -710,6 +710,54 @@ function clearProductSpecificFields() {
   document.getElementById("dlvPaid").checked = false;
 }
 
+// ---------- Delivery smart defaults ----------
+// One supplier truck usually drops 2-3 products (Diesel, Premium, Unleaded)
+// in one visit, sharing vendor/driver/plate/check#. This looks at today's
+// deliveries for the current branch and either carries those shared fields
+// forward to whichever product hasn't been logged yet, or fully resets once
+// every product's been entered (or none have) -- so a genuinely new visit
+// never inherits stale data. Returns { reset, nextCode } so callers can
+// tailor their success message.
+const DELIVERY_PRODUCT_ORDER = ["DIESEL", "PREMIUM", "UNLEADED"];
+
+async function applyDeliverySmartDefaults() {
+  if (!currentBranch) return { reset: true, nextCode: DELIVERY_PRODUCT_ORDER[0] };
+  const today = todayIso();
+  const { data, error } = await supabase.from("fuel_deliveries")
+    .select("product_id, vendor_id, driver_id, plate_number, check_number")
+    .eq("branch_id", currentBranch).eq("delivery_date", today)
+    .order("created_at", { ascending: true });
+  if (error) { console.error("applyDeliverySmartDefaults failed:", error); return { reset: true, nextCode: DELIVERY_PRODUCT_ORDER[0] }; }
+
+  const todaysDeliveries = data || [];
+  const idByCode = {};
+  products.forEach(p => { idByCode[p.code] = p.id; });
+  const enteredProductIds = new Set(todaysDeliveries.map(d => d.product_id));
+  const nextCode = DELIVERY_PRODUCT_ORDER.find(code => idByCode[code] && !enteredProductIds.has(idByCode[code]));
+
+  let reset;
+  if (todaysDeliveries.length && nextCode) {
+    const latest = todaysDeliveries[todaysDeliveries.length - 1]; // ascending order -> last is most recent
+    document.getElementById("dlvVendor").value = latest.vendor_id || "";
+    document.getElementById("dlvDriver").value = latest.driver_id || "";
+    document.getElementById("dlvPlate").value = latest.plate_number || "";
+    document.getElementById("dlvCheck").value = latest.check_number || "";
+    document.getElementById("dlvDate").value = today;
+    clearProductSpecificFields();
+    reset = false;
+  } else {
+    // Zero deliveries today, or all 3 products already logged -- nothing to carry forward.
+    resetDeliveryFormFields();
+    reset = true;
+  }
+
+  // Product is never left as whatever it was -- always set explicitly here.
+  const chosenCode = nextCode || DELIVERY_PRODUCT_ORDER[0];
+  document.getElementById("dlvProduct").value = idByCode[chosenCode] || "";
+  populateTankSelectForDelivery();
+  return { reset, nextCode: chosenCode };
+}
+
 // Looks up the tank's real calibration curve and linearly interpolates -- this is
 // what actually makes the cm fields mean something, instead of just being stored
 // alongside a manually-typed liters value.
@@ -783,8 +831,11 @@ async function saveDelivery() {
     } else {
       const { error } = await supabase.from("fuel_deliveries").insert(payload);
       if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
-      msg.textContent = "Delivery saved. Vendor/driver/plate/check# kept for the next product on this truck — change them if this was a different delivery."; msg.className = "msg ok";
-      clearProductSpecificFields();
+      const result = await applyDeliverySmartDefaults();
+      msg.textContent = result.reset
+        ? "Delivery saved. All products logged for this branch today — form reset for a new visit."
+        : "Delivery saved. Vendor/driver/plate/check# kept for the next product on this truck — change them if this was a different delivery.";
+      msg.className = "msg ok";
     }
     loadDeliveries();
   } finally {
