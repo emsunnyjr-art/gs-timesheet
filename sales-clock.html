@@ -91,8 +91,17 @@
     <a class="backlink" href="#" onclick="openPanel('home'); return false;">← Back</a>
     <h1>Dipstick Check</h1>
     <label>Tank</label>
-    <select id="dsTank"></select>
-    <label>Height (cm) — optional</label>
+    <select id="dsTank" onchange="onDipstickTankChange()"></select>
+    <label style="display:flex; align-items:center; gap:8px; margin-top:14px;">
+      <input type="checkbox" id="dsEstimated" style="width:auto;" onchange="onDipstickEstimatedToggle()">
+      Unable to dipstick (e.g. heavy rain — water could enter the tank)
+    </label>
+    <div id="dsEstimatedBox" style="display:none; margin-top:8px;">
+      <label>Reason (required)</label>
+      <input type="text" id="dsEstimationReason" placeholder="e.g. Heavy rain, unsafe to open tank">
+      <div class="small">Liters below is the system's calculated running balance (deliveries minus sales/expenses/withdrawals), not a physical reading.</div>
+    </div>
+    <label id="dsHeightCmLabel">Height (cm) — optional</label>
     <input type="number" step="0.01" id="dsHeightCm">
     <label>Liters</label>
     <input type="number" step="0.01" id="dsLiters">
@@ -421,7 +430,6 @@ async function initApp() {
 async function onBranchChange() {
   currentBranch = document.getElementById("homeBranch").value;
   await loadShiftsForBranch();
-  await applyDeliverySmartDefaults(); // homeBranch only lives on panel-home today, but keep this in case that changes
 }
 
 async function loadShiftsForBranch() {
@@ -512,10 +520,56 @@ async function runOcrAssist(key, blob) {
 // ============================================================
 // DELIVERY
 // ============================================================
+const DELIVERY_PRODUCT_ORDER = ["DIESEL", "PREMIUM", "UNLEADED"];
+
+function setDeliveryProductByCode(code) {
+  const prod = products.find(p => p.code === code);
+  if (prod) {
+    document.getElementById("dlProduct").value = prod.id;
+    loadTanksForDelivery();
+  }
+}
+
+// Reads the actual database state (not just in-page memory, so this is correct
+// even after a refresh) and decides: start fresh, or retain the shared truck
+// info (vendor/driver/plate/check#/date) and advance to the next product still
+// missing for today, in Diesel -> Premium -> Unleaded order.
+async function applyDeliverySmartDefaults() {
+  if (!currentBranch) return;
+  const today = todayIso();
+  const { data: todays } = await supabase.from("fuel_deliveries")
+    .select("*, fuel_products(code)")
+    .eq("branch_id", currentBranch).eq("delivery_date", today)
+    .order("created_at", { ascending: true });
+
+  if (!todays || todays.length === 0) {
+    resetDeliveryForm();
+    setDeliveryProductByCode(DELIVERY_PRODUCT_ORDER[0]);
+    return;
+  }
+
+  const enteredCodes = new Set(todays.map(d => d.fuel_products?.code).filter(Boolean));
+  const nextCode = DELIVERY_PRODUCT_ORDER.find(c => !enteredCodes.has(c));
+
+  if (!nextCode) {
+    resetDeliveryForm();
+    setDeliveryProductByCode(DELIVERY_PRODUCT_ORDER[0]);
+    return;
+  }
+
+  const last = todays[todays.length - 1];
+  clearProductSpecificFields();
+  document.getElementById("dlVendor").value = last.vendor_id || "";
+  document.getElementById("dlDriver").value = last.driver_id || "";
+  document.getElementById("dlPlate").value = last.plate_number || "";
+  document.getElementById("dlCheck").value = last.check_number || "";
+  setDeliveryProductByCode(nextCode);
+}
+
 async function loadDeliveryForm() {
   document.getElementById("dlShift").innerHTML = "<option value=''>No active shift (delivery after shift closed)</option>" +
     (currentShift ? `<option value="${currentShift}" selected>Current shift</option>` : "");
-  await applyDeliverySmartDefaults(); // also populates the tank select for whichever product it picks
+  await applyDeliverySmartDefaults();
 }
 function loadTanksForDelivery() {
   const productId = document.getElementById("dlProduct").value;
@@ -558,53 +612,6 @@ function clearProductSpecificFields() {
   });
 }
 
-// ---------- Delivery smart defaults ----------
-// One supplier truck usually drops 2-3 products (Diesel, Premium, Unleaded)
-// in one visit, sharing vendor/driver/plate/check#. This looks at today's
-// deliveries for the current branch and either carries those shared fields
-// forward to whichever product hasn't been logged yet, or fully resets once
-// every product's been entered (or none have) -- so a genuinely new visit
-// never inherits stale data. Returns { reset, nextCode } so callers can
-// tailor their success message.
-const DELIVERY_PRODUCT_ORDER = ["DIESEL", "PREMIUM", "UNLEADED"];
-
-async function applyDeliverySmartDefaults() {
-  if (!currentBranch) return { reset: true, nextCode: DELIVERY_PRODUCT_ORDER[0] };
-  const today = todayIso();
-  const { data, error } = await supabase.from("fuel_deliveries")
-    .select("product_id, vendor_id, driver_id, plate_number, check_number")
-    .eq("branch_id", currentBranch).eq("delivery_date", today)
-    .order("created_at", { ascending: true });
-  if (error) { console.error("applyDeliverySmartDefaults failed:", error); return { reset: true, nextCode: DELIVERY_PRODUCT_ORDER[0] }; }
-
-  const todaysDeliveries = data || [];
-  const idByCode = {};
-  products.forEach(p => { idByCode[p.code] = p.id; });
-  const enteredProductIds = new Set(todaysDeliveries.map(d => d.product_id));
-  const nextCode = DELIVERY_PRODUCT_ORDER.find(code => idByCode[code] && !enteredProductIds.has(idByCode[code]));
-
-  let reset;
-  if (todaysDeliveries.length && nextCode) {
-    const latest = todaysDeliveries[todaysDeliveries.length - 1]; // ascending order -> last is most recent
-    document.getElementById("dlVendor").value = latest.vendor_id || "";
-    document.getElementById("dlDriver").value = latest.driver_id || "";
-    document.getElementById("dlPlate").value = latest.plate_number || "";
-    document.getElementById("dlCheck").value = latest.check_number || "";
-    clearProductSpecificFields(); // leaves the invoice photo alone -- one invoice usually covers the whole visit
-    reset = false;
-  } else {
-    // Zero deliveries today, or all 3 products already logged -- nothing to carry forward.
-    resetDeliveryForm();
-    reset = true;
-  }
-
-  // Product is never left as whatever it was -- always set explicitly here.
-  const chosenCode = nextCode || DELIVERY_PRODUCT_ORDER[0];
-  document.getElementById("dlProduct").value = idByCode[chosenCode] || "";
-  loadTanksForDelivery();
-  return { reset, nextCode: chosenCode };
-}
-
 async function saveDelivery() {
   if (isSavingDelivery) return; // guard against double-tap / double-submit creating duplicate rows
   const status = document.getElementById("dlStatus");
@@ -644,11 +651,8 @@ async function saveDelivery() {
     };
     const { error } = await supabase.from("fuel_deliveries").insert(payload);
     if (error) { status.textContent = "Error: " + error.message; status.className = "status err"; return; }
-    const result = await applyDeliverySmartDefaults(); // sets status/text below AFTER this, since a full reset clears status
-    status.textContent = result.reset
-      ? "Delivery saved ✓ — all products logged for this branch today, form reset for a new visit."
-      : "Delivery saved ✓ — vendor/driver/plate/check# kept for the next product on this truck.";
-    status.className = "status ok";
+    await applyDeliverySmartDefaults();
+    status.textContent = "Delivery saved ✓"; status.className = "status ok";
   } finally {
     isSavingDelivery = false;
     saveBtn.disabled = false;
@@ -663,6 +667,9 @@ async function loadTanksForDipstick() {
   document.getElementById("dsHeightCm").value = "";
   document.getElementById("dsLiters").value = "";
   document.getElementById("dsConvertHint").textContent = "";
+  document.getElementById("dsEstimated").checked = false;
+  document.getElementById("dsEstimationReason").value = "";
+  onDipstickEstimatedToggle();
 }
 
 // Looks up the tank's real calibration curve and linearly interpolates between
@@ -701,24 +708,59 @@ document.getElementById("dsHeightCm").addEventListener("input", async () => {
   }
 });
 
+async function onDipstickTankChange() {
+  if (document.getElementById("dsEstimated").checked) await fillEstimatedLiters();
+}
+
+function onDipstickEstimatedToggle() {
+  const checked = document.getElementById("dsEstimated").checked;
+  document.getElementById("dsEstimatedBox").style.display = checked ? "block" : "none";
+  document.getElementById("dsHeightCm").disabled = checked;
+  document.getElementById("dsHeightCmLabel").style.opacity = checked ? "0.5" : "1";
+  if (checked) {
+    document.getElementById("dsHeightCm").value = "";
+    fillEstimatedLiters();
+  } else {
+    document.getElementById("dsLiters").value = "";
+    document.getElementById("dsEstimationReason").value = "";
+  }
+}
+
+async function fillEstimatedLiters() {
+  const tankSel = document.getElementById("dsTank");
+  const opt = tankSel.options[tankSel.selectedIndex];
+  if (!opt) return;
+  const { data, error } = await supabase.from("fuel_inventory_state")
+    .select("current_liters").eq("branch_id", opt.dataset.branch).eq("product_id", opt.dataset.product).single();
+  document.getElementById("dsLiters").value = (!error && data) ? Number(data.current_liters).toFixed(2) : "";
+  document.getElementById("dsConvertHint").textContent = error ? "Couldn't load the calculated balance — enter manually if known." : "Pulled from the system's running balance.";
+}
+
 async function saveDipstick() {
   const status = document.getElementById("dsStatus");
   const tankSel = document.getElementById("dsTank");
   const opt = tankSel.options[tankSel.selectedIndex];
+  const isEstimated = document.getElementById("dsEstimated").checked;
+  const reason = document.getElementById("dsEstimationReason").value.trim();
+  if (isEstimated && !reason) { status.textContent = "A reason is required when marking this as estimated."; status.className = "status err"; return; }
   const photoUrl = await uploadPhoto(stillBlobs["dsPhoto"], "fuel-dipstick");
   const { error } = await supabase.from("fuel_dipstick_checks").insert({
     tank_id: tankSel.value,
     branch_id: opt.dataset.branch,
     product_id: opt.dataset.product,
     shift_id: currentShift,
-    height_cm: document.getElementById("dsHeightCm").value ? parseFloat(document.getElementById("dsHeightCm").value) : null,
+    height_cm: isEstimated ? null : (document.getElementById("dsHeightCm").value ? parseFloat(document.getElementById("dsHeightCm").value) : null),
     liters: parseFloat(document.getElementById("dsLiters").value),
-    photo_url: photoUrl
+    photo_url: photoUrl,
+    is_estimated: isEstimated,
+    estimation_reason: isEstimated ? reason : null
   });
   if (error) { status.textContent = "Error: " + error.message; status.className = "status err"; return; }
-  status.textContent = "Saved ✓"; status.className = "status ok";
+  status.textContent = "Saved ✓" + (isEstimated ? " (marked estimated)" : ""); status.className = "status ok";
   document.getElementById("dsLiters").value = ""; document.getElementById("dsHeightCm").value = "";
   document.getElementById("dsConvertHint").textContent = "";
+  document.getElementById("dsEstimated").checked = false;
+  onDipstickEstimatedToggle();
 }
 
 // ============================================================
