@@ -158,7 +158,8 @@
     <button class="btn-secondary" id="dlInvoicePhoto_snapBtn" style="display:none;" onclick="snapStillPhoto('dlInvoicePhoto')">Capture</button>
 
     <label style="display:flex; align-items:center; gap:8px; margin-top:14px;"><input type="checkbox" id="dlPaid" style="width:auto;"> Paid</label>
-    <button class="btn-primary" onclick="saveDelivery()">Save Delivery</button>
+    <button class="btn-primary" onclick="saveDelivery()" id="dlSaveBtn">Save Delivery</button>
+    <button class="btn-secondary" onclick="resetDeliveryForm()">Cancel</button>
     <div class="status" id="dlStatus"></div>
   </div>
 
@@ -523,42 +524,69 @@ function loadTanksForDelivery() {
 }
 document.getElementById("dlProduct")?.addEventListener("change", loadTanksForDelivery);
 
+let isSavingDelivery = false;
+
+function resetDeliveryForm() {
+  ["dlLiters","dlCost","dlMarket","dlBeforeL","dlAfterL","dlPlate","dlInvoice","dlCheck"].forEach(id => document.getElementById(id).value = "");
+  document.getElementById("dlPaid").checked = false;
+  document.getElementById("dlProduct").selectedIndex = 0;
+  loadTanksForDelivery();
+  document.getElementById("dlVendor").value = "";
+  document.getElementById("dlDriver").value = "";
+  document.getElementById("dlShift").value = "";
+  ["dlBeforePhoto", "dlAfterPhoto", "dlInvoicePhoto"].forEach(key => {
+    stillBlobs[key] = null;
+    const preview = document.getElementById(key + "_preview");
+    if (preview) { preview.style.display = "none"; preview.src = ""; }
+  });
+  document.getElementById("dlStatus").textContent = "";
+}
+
 async function saveDelivery() {
+  if (isSavingDelivery) return; // guard against double-tap / double-submit creating duplicate rows
   const status = document.getElementById("dlStatus");
   const tankId = document.getElementById("dlTank").value;
   if (!tankId) { status.textContent = "No tank available for this product/branch."; status.className = "status err"; return; }
 
-  const [beforePhoto, afterPhoto, invoicePhoto] = await Promise.all([
-    uploadPhoto(stillBlobs["dlBeforePhoto"], "fuel-deliveries"),
-    uploadPhoto(stillBlobs["dlAfterPhoto"], "fuel-deliveries"),
-    uploadPhoto(stillBlobs["dlInvoicePhoto"], "fuel-deliveries")
-  ]);
+  isSavingDelivery = true;
+  const saveBtn = document.getElementById("dlSaveBtn");
+  saveBtn.disabled = true;
+  try {
+    const [beforePhoto, afterPhoto, invoicePhoto] = await Promise.all([
+      uploadPhoto(stillBlobs["dlBeforePhoto"], "fuel-deliveries"),
+      uploadPhoto(stillBlobs["dlAfterPhoto"], "fuel-deliveries"),
+      uploadPhoto(stillBlobs["dlInvoicePhoto"], "fuel-deliveries")
+    ]);
 
-  const payload = {
-    branch_id: currentBranch,
-    product_id: document.getElementById("dlProduct").value,
-    tank_id: tankId,
-    vendor_id: document.getElementById("dlVendor").value || null,
-    driver_id: document.getElementById("dlDriver").value || null,
-    plate_number: document.getElementById("dlPlate").value || null,
-    invoice_number: document.getElementById("dlInvoice").value || null,
-    check_number: document.getElementById("dlCheck").value || null,
-    shift_id: document.getElementById("dlShift").value || null,
-    delivery_date: todayIso(),
-    invoiced_liters: parseFloat(document.getElementById("dlLiters").value),
-    cost_per_liter: parseFloat(document.getElementById("dlCost").value),
-    market_reference_price_per_liter: document.getElementById("dlMarket").value ? parseFloat(document.getElementById("dlMarket").value) : null,
-    dipstick_before_liters: parseFloat(document.getElementById("dlBeforeL").value),
-    dipstick_after_liters: parseFloat(document.getElementById("dlAfterL").value),
-    dipstick_before_photo_url: beforePhoto,
-    dipstick_after_photo_url: afterPhoto,
-    invoice_photo_url: invoicePhoto,
-    paid: document.getElementById("dlPaid").checked
-  };
-  const { error } = await supabase.from("fuel_deliveries").insert(payload);
-  if (error) { status.textContent = "Error: " + error.message; status.className = "status err"; return; }
-  status.textContent = "Delivery saved ✓"; status.className = "status ok";
-  ["dlLiters","dlCost","dlMarket","dlBeforeL","dlAfterL","dlPlate","dlInvoice","dlCheck"].forEach(id => document.getElementById(id).value = "");
+    const payload = {
+      branch_id: currentBranch,
+      product_id: document.getElementById("dlProduct").value,
+      tank_id: tankId,
+      vendor_id: document.getElementById("dlVendor").value || null,
+      driver_id: document.getElementById("dlDriver").value || null,
+      plate_number: document.getElementById("dlPlate").value || null,
+      invoice_number: document.getElementById("dlInvoice").value || null,
+      check_number: document.getElementById("dlCheck").value || null,
+      shift_id: document.getElementById("dlShift").value || null,
+      delivery_date: todayIso(),
+      invoiced_liters: parseFloat(document.getElementById("dlLiters").value),
+      cost_per_liter: parseFloat(document.getElementById("dlCost").value),
+      market_reference_price_per_liter: document.getElementById("dlMarket").value ? parseFloat(document.getElementById("dlMarket").value) : null,
+      dipstick_before_liters: parseFloat(document.getElementById("dlBeforeL").value),
+      dipstick_after_liters: parseFloat(document.getElementById("dlAfterL").value),
+      dipstick_before_photo_url: beforePhoto,
+      dipstick_after_photo_url: afterPhoto,
+      invoice_photo_url: invoicePhoto,
+      paid: document.getElementById("dlPaid").checked
+    };
+    const { error } = await supabase.from("fuel_deliveries").insert(payload);
+    if (error) { status.textContent = "Error: " + error.message; status.className = "status err"; return; }
+    resetDeliveryForm();
+    status.textContent = "Delivery saved ✓"; status.className = "status ok";
+  } finally {
+    isSavingDelivery = false;
+    saveBtn.disabled = false;
+  }
 }
 
 // ============================================================

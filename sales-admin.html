@@ -154,12 +154,12 @@
         </div>
         <label style="display:flex; align-items:center; gap:8px; margin-top:14px;"><input type="checkbox" id="dlvPaid" style="width:auto;"> Paid</label>
         <button onclick="saveDelivery()" id="dlvSaveBtn">Save Delivery</button>
-        <button class="secondary" onclick="cancelEditDelivery()" id="dlvCancelBtn" style="display:none;">Cancel Edit</button>
+        <button class="secondary" onclick="cancelEditDelivery()" id="dlvCancelBtn">Cancel</button>
         <div class="msg" id="dlvMsg"></div>
       </div>
       <div class="card">
         <h2>Recent Deliveries <span class="small" id="deliveriesEditHint"></span></h2>
-        <table id="deliveriesTable"><thead><tr><th>Date</th><th>Product</th><th>Vendor</th><th>Liters</th><th>Cost/L</th><th>WAC After</th><th>Delivered vs Invoiced</th><th>Paid</th></tr></thead><tbody></tbody></table>
+        <table id="deliveriesTable"><thead><tr><th>Date</th><th>Product</th><th>Vendor</th><th>Liters</th><th>Cost/L</th><th>WAC After</th><th>Delivered vs Invoiced</th><th>Paid</th><th></th></tr></thead><tbody></tbody></table>
       </div>
     </div>
 
@@ -624,12 +624,35 @@ async function loadDeliveries() {
   deliveriesCache = data || [];
   document.getElementById("deliveriesEditHint").textContent = isOwner ? "(click a row to edit)" : "(only the owner can edit a saved delivery)";
   document.getElementById("deliveriesTable").querySelector("tbody").innerHTML = (data || []).map((d,i) => `
-    <tr ${isOwner ? `style="cursor:pointer;" onclick="editDelivery(${i})"` : ""}>
-      <td>${d.delivery_date}</td><td>${d.fuel_products?.name || ""}</td><td>${d.fuel_vendors?.name || "—"}</td>
-      <td>${liters(d.invoiced_liters)}</td><td>${peso(d.cost_per_liter)}</td><td>${peso(d.wac_after)}</td>
-      <td style="${d.variance_liters != 0 ? 'color:var(--danger); font-weight:700;' : ''}">${d.variance_liters > 0 ? "+" : ""}${d.variance_liters} L</td>
-      <td>${d.paid ? "✅" : "—"}</td>
-    </tr>`).join("") || "<tr><td colspan='8' class='small'>No deliveries yet.</td></tr>";
+    <tr>
+      <td ${isOwner ? `style="cursor:pointer;" onclick="editDelivery(${i})"` : ""}>${d.delivery_date}</td>
+      <td ${isOwner ? `style="cursor:pointer;" onclick="editDelivery(${i})"` : ""}>${d.fuel_products?.name || ""}</td>
+      <td ${isOwner ? `style="cursor:pointer;" onclick="editDelivery(${i})"` : ""}>${d.fuel_vendors?.name || "—"}</td>
+      <td ${isOwner ? `style="cursor:pointer;" onclick="editDelivery(${i})"` : ""}>${liters(d.invoiced_liters)}</td>
+      <td ${isOwner ? `style="cursor:pointer;" onclick="editDelivery(${i})"` : ""}>${peso(d.cost_per_liter)}</td>
+      <td ${isOwner ? `style="cursor:pointer;" onclick="editDelivery(${i})"` : ""}>${peso(d.wac_after)}</td>
+      <td style="${d.variance_liters != 0 ? 'color:var(--danger); font-weight:700;' : ''}" ${isOwner ? `onclick="editDelivery(${i})"` : ""}>${d.variance_liters > 0 ? "+" : ""}${d.variance_liters} L</td>
+      <td ${isOwner ? `style="cursor:pointer;" onclick="editDelivery(${i})"` : ""}>${d.paid ? "✅" : "—"}</td>
+      <td>${isOwner ? `<button class="secondary small" style="margin:0; padding:6px 10px;" onclick="event.stopPropagation(); deleteDelivery('${d.id}')">Delete</button>` : ""}</td>
+    </tr>`).join("") || "<tr><td colspan='9' class='small'>No deliveries yet.</td></tr>";
+}
+
+async function deleteDelivery(deliveryId) {
+  const { data: d } = await supabase.from("fuel_deliveries").select("*, fuel_products(name)").eq("id", deliveryId).single();
+  if (!d) { alert("Couldn't find that delivery."); return; }
+  const confirmed = confirm(
+    `Delete this delivery permanently?\n\n${d.delivery_date} — ${d.fuel_products?.name} — ${liters(d.invoiced_liters)} @ ${peso(d.cost_per_liter)}\n\n` +
+    `This cannot be undone. The WAC cost chain for this product will be recalculated afterward to stay accurate.`
+  );
+  if (!confirmed) return;
+
+  const { error: delErr } = await supabase.from("fuel_deliveries").delete().eq("id", deliveryId);
+  if (delErr) { alert("Error: " + delErr.message); return; }
+
+  const { error: rpcErr } = await supabase.rpc("fn_fuel_recompute_wac_chain", { p_branch_id: d.branch_id, p_product_id: d.product_id });
+  if (rpcErr) { alert("Deleted, but WAC recompute failed: " + rpcErr.message + "\nRun it manually or re-edit another delivery for this product to trigger a recompute."); }
+
+  loadDeliveries();
 }
 
 function editDelivery(i) {
@@ -655,7 +678,7 @@ function editDelivery(i) {
   document.getElementById("dlvAfterL").value = d.dipstick_after_liters;
   document.getElementById("dlvPaid").checked = d.paid;
   document.getElementById("dlvSaveBtn").textContent = "Update Delivery (recalculates WAC chain)";
-  document.getElementById("dlvCancelBtn").style.display = "block";
+  document.getElementById("dlvCancelBtn").textContent = "Cancel Edit";
   document.getElementById("dlvMsg").textContent = "";
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -663,10 +686,19 @@ function editDelivery(i) {
 function cancelEditDelivery() {
   editingDeliveryId = null;
   document.getElementById("dlvSaveBtn").textContent = "Save Delivery";
-  document.getElementById("dlvCancelBtn").style.display = "none";
+  document.getElementById("dlvCancelBtn").textContent = "Cancel";
+  resetDeliveryFormFields();
+}
+
+function resetDeliveryFormFields() {
   ["dlvPlate","dlvInvoice","dlvCheck","dlvLiters","dlvCost","dlvMarket","dlvBeforeCm","dlvBeforeL","dlvAfterCm","dlvAfterL"].forEach(id => document.getElementById(id).value = "");
   document.getElementById("dlvPaid").checked = false;
   document.getElementById("dlvDate").value = todayIso();
+  document.getElementById("dlvProduct").selectedIndex = 0;
+  populateTankSelectForDelivery();
+  document.getElementById("dlvVendor").value = "";
+  document.getElementById("dlvDriver").value = "";
+  document.getElementById("dlvShift").value = "";
 }
 
 // Looks up the tank's real calibration curve and linearly interpolates -- this is
@@ -699,7 +731,10 @@ async function wireCmToLiters(cmFieldId, litersFieldId) {
 wireCmToLiters("dlvBeforeCm", "dlvBeforeL");
 wireCmToLiters("dlvAfterCm", "dlvAfterL");
 
+let isSavingDelivery = false;
+
 async function saveDelivery() {
+  if (isSavingDelivery) return; // guard against double-tap / double-submit creating duplicate rows
   const msg = document.getElementById("dlvMsg");
   msg.textContent = ""; msg.className = "msg";
   const productId = document.getElementById("dlvProduct").value;
@@ -725,19 +760,28 @@ async function saveDelivery() {
   };
   if (!payload.tank_id) { msg.textContent = "No tank set up for this product/branch — add one in Setup first."; msg.className = "msg err"; return; }
 
-  if (editingDeliveryId) {
-    const { error } = await supabase.from("fuel_deliveries").update(payload).eq("id", editingDeliveryId);
-    if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
-    const { error: rpcErr } = await supabase.rpc("fn_fuel_recompute_wac_chain", { p_branch_id: currentBranch, p_product_id: productId });
-    if (rpcErr) { msg.textContent = "Saved, but WAC recompute failed: " + rpcErr.message; msg.className = "msg err"; return; }
-    msg.textContent = "Delivery updated — WAC chain recalculated for every delivery of this product."; msg.className = "msg ok";
-    cancelEditDelivery();
-  } else {
-    const { error } = await supabase.from("fuel_deliveries").insert(payload);
-    if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
-    msg.textContent = "Delivery saved."; msg.className = "msg ok";
+  isSavingDelivery = true;
+  const saveBtn = document.getElementById("dlvSaveBtn");
+  saveBtn.disabled = true;
+  try {
+    if (editingDeliveryId) {
+      const { error } = await supabase.from("fuel_deliveries").update(payload).eq("id", editingDeliveryId);
+      if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+      const { error: rpcErr } = await supabase.rpc("fn_fuel_recompute_wac_chain", { p_branch_id: currentBranch, p_product_id: productId });
+      if (rpcErr) { msg.textContent = "Saved, but WAC recompute failed: " + rpcErr.message; msg.className = "msg err"; return; }
+      msg.textContent = "Delivery updated — WAC chain recalculated for every delivery of this product."; msg.className = "msg ok";
+      cancelEditDelivery();
+    } else {
+      const { error } = await supabase.from("fuel_deliveries").insert(payload);
+      if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+      msg.textContent = "Delivery saved."; msg.className = "msg ok";
+      resetDeliveryFormFields();
+    }
+    loadDeliveries();
+  } finally {
+    isSavingDelivery = false;
+    saveBtn.disabled = false;
   }
-  loadDeliveries();
 }
 
 // ============================================================
