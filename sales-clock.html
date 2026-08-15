@@ -527,6 +527,7 @@ document.getElementById("dlProduct")?.addEventListener("change", loadTanksForDel
 let isSavingDelivery = false;
 
 function resetDeliveryForm() {
+  // Full reset - used by the Cancel button, for genuinely starting over.
   ["dlLiters","dlCost","dlMarket","dlBeforeL","dlAfterL","dlPlate","dlInvoice","dlCheck"].forEach(id => document.getElementById(id).value = "");
   document.getElementById("dlPaid").checked = false;
   document.getElementById("dlProduct").selectedIndex = 0;
@@ -540,6 +541,20 @@ function resetDeliveryForm() {
     if (preview) { preview.style.display = "none"; preview.src = ""; }
   });
   document.getElementById("dlStatus").textContent = "";
+}
+
+function clearProductSpecificFields() {
+  // After a successful save: one supplier visit is usually 2-3 products on the
+  // same truck, so vendor/driver/plate/check#/invoice photo stay filled in --
+  // only the per-product figures (liters, cost, dipstick, dipstick photos)
+  // need re-entering for the next product.
+  ["dlLiters","dlCost","dlMarket","dlBeforeL","dlAfterL"].forEach(id => document.getElementById(id).value = "");
+  document.getElementById("dlPaid").checked = false;
+  ["dlBeforePhoto", "dlAfterPhoto"].forEach(key => {
+    stillBlobs[key] = null;
+    const preview = document.getElementById(key + "_preview");
+    if (preview) { preview.style.display = "none"; preview.src = ""; }
+  });
 }
 
 async function saveDelivery() {
@@ -581,8 +596,8 @@ async function saveDelivery() {
     };
     const { error } = await supabase.from("fuel_deliveries").insert(payload);
     if (error) { status.textContent = "Error: " + error.message; status.className = "status err"; return; }
-    resetDeliveryForm();
-    status.textContent = "Delivery saved ✓"; status.className = "status ok";
+    clearProductSpecificFields();
+    status.textContent = "Delivery saved ✓ — vendor/driver/plate/check# kept for the next product on this truck."; status.className = "status ok";
   } finally {
     isSavingDelivery = false;
     saveBtn.disabled = false;

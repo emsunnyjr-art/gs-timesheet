@@ -691,6 +691,7 @@ function cancelEditDelivery() {
 }
 
 function resetDeliveryFormFields() {
+  // Full reset - used by the Cancel button, for genuinely starting over.
   ["dlvPlate","dlvInvoice","dlvCheck","dlvLiters","dlvCost","dlvMarket","dlvBeforeCm","dlvBeforeL","dlvAfterCm","dlvAfterL"].forEach(id => document.getElementById(id).value = "");
   document.getElementById("dlvPaid").checked = false;
   document.getElementById("dlvDate").value = todayIso();
@@ -699,6 +700,14 @@ function resetDeliveryFormFields() {
   document.getElementById("dlvVendor").value = "";
   document.getElementById("dlvDriver").value = "";
   document.getElementById("dlvShift").value = "";
+}
+
+function clearProductSpecificFields() {
+  // After a successful save: one supplier visit is usually 2-3 products on
+  // the same truck, so vendor/driver/plate/check#/date stay filled in --
+  // only the per-product figures (liters, cost, dipstick) need re-entering.
+  ["dlvLiters","dlvCost","dlvMarket","dlvBeforeCm","dlvBeforeL","dlvAfterCm","dlvAfterL"].forEach(id => document.getElementById(id).value = "");
+  document.getElementById("dlvPaid").checked = false;
 }
 
 // Looks up the tank's real calibration curve and linearly interpolates -- this is
@@ -774,8 +783,8 @@ async function saveDelivery() {
     } else {
       const { error } = await supabase.from("fuel_deliveries").insert(payload);
       if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
-      msg.textContent = "Delivery saved."; msg.className = "msg ok";
-      resetDeliveryFormFields();
+      msg.textContent = "Delivery saved. Vendor/driver/plate/check# kept for the next product on this truck — change them if this was a different delivery."; msg.className = "msg ok";
+      clearProductSpecificFields();
     }
     loadDeliveries();
   } finally {
