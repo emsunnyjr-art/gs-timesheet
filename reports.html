@@ -66,6 +66,7 @@
         <option value="shift_sales">Shift Sales & Profit</option>
         <option value="cash_recon">Cash Reconciliation History</option>
         <option value="attendance">Timesheet / Attendance</option>
+        <option value="wholesale_checks">Wholesale Supply & Checks (GS4/GS5)</option>
       </select>
       <p class="small" id="templateHint"></p>
     </div>
@@ -187,6 +188,27 @@ const TEMPLATES = {
       { key: "is_overtime", label: "Overtime?", default: false },
       { key: "overtime_hours", label: "Overtime Hours", default: false },
       { key: "total_wages", label: "Total Wages", default: true }
+    ]
+  },
+  wholesale_checks: {
+    hint: "Wholesale-supplied deliveries (GS4 marked up, GS5 at cost) alongside both check ledgers — what you owe the supplier, and what's owed back to you — with actual check dates for cash flow planning.",
+    hasProductFilter: true,
+    hasDeliveryPick: false,
+    columns: [
+      { key: "delivery_date", label: "Delivery Date", default: true },
+      { key: "branch", label: "Branch", default: true },
+      { key: "product", label: "Product", default: true },
+      { key: "liters", label: "Liters", default: true },
+      { key: "cost_per_liter", label: "Cost / Liter", default: true },
+      { key: "markup_value", label: "Markup", default: true },
+      { key: "billed_price_per_liter", label: "Billed Price / Liter", default: true },
+      { key: "billed_total", label: "Billed Total (owed to you)", default: true },
+      { key: "supplier_check_number", label: "Supplier Check #", default: true },
+      { key: "supplier_check_date", label: "Supplier Check Date", default: true },
+      { key: "supplier_check_status", label: "Supplier Check Status", default: false },
+      { key: "receivable_check_number", label: "Branch Check #", default: true },
+      { key: "receivable_check_date", label: "Branch Check Date", default: true },
+      { key: "receivable_check_status", label: "Branch Check Status", default: false }
     ]
   }
 };
@@ -346,6 +368,51 @@ async function runReport() {
           total_hours: r.total_hours, is_late: r.is_late ? "Yes" : "No", late_minutes: r.late_minutes,
           is_overtime: r.is_overtime ? "Yes" : "No", overtime_hours: r.overtime_hours, total_wages: r.total_wages
         }));
+
+    } else if (templateKey === "wholesale_checks") {
+      let q = supabase.from("fuel_deliveries")
+        .select("*, branches(code), fuel_products(name)")
+        .eq("branch_id", branchId).not("markup_type", "is", null)
+        .gte("delivery_date", from).lte("delivery_date", to);
+      if (productId) q = q.eq("product_id", productId);
+      const { data, error } = await q.order("delivery_date", { ascending: false });
+      if (error) throw error;
+
+      const deliveryIds = (data || []).map(d => d.id);
+      const { data: scAllocs } = deliveryIds.length
+        ? await supabase.from("fuel_delivery_supplier_check_allocations").select("*, fuel_supplier_check_payments(check_number, check_date, status)").in("delivery_id", deliveryIds)
+        : { data: [] };
+      const { data: rcAllocs } = deliveryIds.length
+        ? await supabase.from("fuel_delivery_receivable_check_allocations").select("*, fuel_branch_receivable_payments(check_number, check_date, status)").in("delivery_id", deliveryIds)
+        : { data: [] };
+
+      const scByDelivery = {}, rcByDelivery = {};
+      (scAllocs || []).forEach(a => { (scByDelivery[a.delivery_id] ||= []).push(a); });
+      (rcAllocs || []).forEach(a => { (rcByDelivery[a.delivery_id] ||= []).push(a); });
+
+      function fmtAllocs(list, checkField) {
+        if (!list || !list.length) return { numbers: "—", dates: "—", statuses: "—", total: 0 };
+        const c = checkField;
+        return {
+          numbers: list.map(a => a[c]?.check_number).join("; "),
+          dates: list.map(a => a[c]?.check_date).join("; "),
+          statuses: list.map(a => a[c]?.status).join("; "),
+          total: list.reduce((sum, a) => sum + Number(a.amount), 0)
+        };
+      }
+
+      currentRows = (data || []).map(d => {
+        const sc = fmtAllocs(scByDelivery[d.id], "fuel_supplier_check_payments");
+        const rc = fmtAllocs(rcByDelivery[d.id], "fuel_branch_receivable_payments");
+        return {
+          delivery_date: d.delivery_date, branch: d.branches?.code || "", product: d.fuel_products?.name || "",
+          liters: d.invoiced_liters, cost_per_liter: d.cost_per_liter,
+          markup_value: d.markup_type === "percentage" ? d.markup_value + "%" : peso(d.markup_value),
+          billed_price_per_liter: d.billed_price_per_liter, billed_total: d.billed_total_amount,
+          supplier_check_number: sc.numbers, supplier_check_date: sc.dates, supplier_check_status: sc.statuses,
+          receivable_check_number: rc.numbers, receivable_check_date: rc.dates, receivable_check_status: rc.statuses
+        };
+      });
     }
 
     renderResults();

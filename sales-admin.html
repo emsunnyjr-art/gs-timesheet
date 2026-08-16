@@ -97,6 +97,7 @@
     <div class="tabs">
       <div class="tab active" data-tab="dashboard">Dashboard</div>
       <div class="tab" data-tab="deliveries">Deliveries</div>
+      <div class="tab" data-tab="checks">Checks</div>
       <div class="tab" data-tab="dispensing">Dispensing</div>
       <div class="tab" data-tab="credit">Credit / PO</div>
       <div class="tab" data-tab="cashrecon">Cash Reconciliation</div>
@@ -153,6 +154,17 @@
           <div><label>Dipstick AFTER — Liters</label><input type="number" step="0.01" id="dlvAfterL"></div>
         </div>
         <label style="display:flex; align-items:center; gap:8px; margin-top:14px;"><input type="checkbox" id="dlvPaid" style="width:auto;"> Paid</label>
+        <div id="dlvMarkupBox" style="display:none; margin-top:14px; padding:12px; border-radius:8px; border:1px solid var(--border); background:#0f172a;">
+          <p class="small" style="margin:0 0 8px;">This branch receives wholesale-supplied stock — billed amount below is what they owe for this delivery.</p>
+          <div class="row">
+            <div><label>Markup Type</label><select id="dlvMarkupType"><option value="per_liter">Peso per Liter</option><option value="percentage">Percentage</option></select></div>
+            <div><label>Markup Value</label><input type="number" step="0.01" id="dlvMarkupValue"></div>
+          </div>
+          <div class="stat-grid">
+            <div class="stat"><div class="k">Billed Price / Liter</div><div class="v" id="dlvBilledPricePreview">—</div></div>
+            <div class="stat"><div class="k">Billed Total</div><div class="v" id="dlvBilledTotalPreview">—</div></div>
+          </div>
+        </div>
         <button onclick="saveDelivery()" id="dlvSaveBtn">Save Delivery</button>
         <button class="secondary" onclick="cancelEditDelivery()" id="dlvCancelBtn">Cancel</button>
         <div class="msg" id="dlvMsg"></div>
@@ -160,6 +172,68 @@
       <div class="card">
         <h2>Recent Deliveries <span class="small" id="deliveriesEditHint"></span></h2>
         <table id="deliveriesTable"><thead><tr><th>Date</th><th>Product</th><th>Vendor</th><th>Liters</th><th>Cost/L</th><th>WAC After</th><th>Delivered vs Invoiced</th><th>Paid</th><th></th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <!-- ============ CHECKS ============ -->
+    <div class="panel" id="panel-checks">
+      <div class="card">
+        <h2>Checks You've Written to Suppliers</h2>
+        <p class="small">One check can cover several deliveries from the same visit (e.g. one truck to GS1+GS4+GS5, settled by 2 checks).</p>
+        <div class="row">
+          <div><label>Vendor</label><select id="scVendor"></select></div>
+          <div><label>Check #</label><input type="text" id="scNumber"></div>
+          <div><label>Check Date</label><input type="date" id="scDate"></div>
+        </div>
+        <div class="row">
+          <div><label>Amount</label><input type="number" step="0.01" id="scAmount"></div>
+          <div><label>Status</label><select id="scStatus"><option value="pending">Pending</option><option value="cleared">Cleared</option><option value="bounced">Bounced</option></select></div>
+          <div><label>Issued By</label><input type="text" id="scIssuedBy"></div>
+        </div>
+        <button onclick="saveSupplierCheck()">Save Check</button>
+        <div class="msg" id="scMsg"></div>
+        <table id="supplierChecksTable" style="margin-top:14px;"><thead><tr><th>Check #</th><th>Vendor</th><th>Check Date</th><th>Amount</th><th>Status</th><th>Covers</th></tr></thead><tbody></tbody></table>
+      </div>
+
+      <div class="card">
+        <h2>Checks Received from GS4 / GS5</h2>
+        <p class="small">Postdated checks these branches pay you back for wholesale-supplied stock.</p>
+        <div class="row">
+          <div><label>Branch</label><select id="rcBranch"></select></div>
+          <div><label>Check #</label><input type="text" id="rcNumber"></div>
+          <div><label>Check Date</label><input type="date" id="rcDate"></div>
+        </div>
+        <div class="row">
+          <div><label>Amount</label><input type="number" step="0.01" id="rcAmount"></div>
+          <div><label>Status</label><select id="rcStatus"><option value="pending">Pending</option><option value="cleared">Cleared</option><option value="bounced">Bounced</option></select></div>
+          <div><label>Received By</label><input type="text" id="rcReceivedBy"></div>
+        </div>
+        <button onclick="saveReceivableCheck()">Save Check</button>
+        <div class="msg" id="rcMsg"></div>
+        <table id="receivableChecksTable" style="margin-top:14px;"><thead><tr><th>Check #</th><th>Branch</th><th>Check Date</th><th>Amount</th><th>Status</th><th>Covers</th></tr></thead><tbody></tbody></table>
+      </div>
+
+      <div class="card">
+        <h2>Track Payments for a Delivery</h2>
+        <p class="small">Pick a delivery — you'll see how much is paid so far and how much remains. Add each check as its own allocation, so a delivery paid across 2+ checks on different dates stays fully traceable, not just "paid: yes/no."</p>
+        <div class="row">
+          <div><label>Direction</label><select id="asgnDirection" onchange="loadAllocatableDeliveries()"><option value="supplier">What You Owe the Supplier</option><option value="receivable">What GS4/GS5 Owes You</option></select></div>
+          <div><label>Delivery</label><select id="asgnDelivery" onchange="loadDeliveryPaymentStatus()"></select></div>
+        </div>
+        <div class="stat-grid" id="asgnStatusGrid" style="display:none;">
+          <div class="stat"><div class="k">Total</div><div class="v" id="asgnTotal">—</div></div>
+          <div class="stat"><div class="k">Allocated So Far</div><div class="v" id="asgnAllocated">—</div></div>
+          <div class="stat" id="asgnRemainingStat"><div class="k">Remaining</div><div class="v" id="asgnRemaining">—</div></div>
+        </div>
+        <table id="asgnAllocationsTable" style="margin-top:10px;"><thead><tr><th>Check #</th><th>Check Date</th><th>Amount</th><th>Status</th></tr></thead><tbody></tbody></table>
+        <hr class="divider">
+        <label>Add a Check to This Delivery</label>
+        <div class="row">
+          <div><select id="asgnCheck"></select></div>
+          <div><input type="number" step="0.01" id="asgnAmount" placeholder="Amount from this check"></div>
+        </div>
+        <button onclick="addCheckAllocation()">Add Allocation</button>
+        <div class="msg" id="asgnMsg"></div>
       </div>
     </div>
 
@@ -328,6 +402,7 @@
         <div class="subtab" data-sub="drivers">Drivers</div>
         <div class="subtab" data-sub="tanks">Tanks & Calibration</div>
         <div class="subtab" data-sub="pumps">Pumps</div>
+        <div class="subtab" data-sub="markup">Branch Markup</div>
       </div>
 
       <div class="subpanel active" id="sub-products">
@@ -420,6 +495,29 @@
           <p class="small">Change the product or label anytime and tap Save. If a pump already has real recorded sales, its product is locked (relabeling is still fine) — deactivate it and add a fresh one instead.</p>
         </div>
       </div>
+
+      <div class="subpanel" id="sub-markup">
+        <div class="card">
+          <h2>Standing Markup Rates</h2>
+          <p class="small">The default markup charged when this branch receives wholesale-supplied stock (e.g. GS4, marked up by you; GS5, owned by you, zero markup but still tracked). Editable anytime — new deliveries pick up whatever's set here, but each delivery keeps its own snapshot, so changing this later never rewrites history.</p>
+          <table id="markupTable"><thead><tr><th>Branch</th><th>Product</th><th>Type</th><th>Value</th><th></th></tr></thead><tbody></tbody></table>
+        </div>
+        <div class="card">
+          <h2>Add / Update a Markup Rate</h2>
+          <div class="row">
+            <div><label>Branch</label><select id="mkBranch"></select></div>
+            <div><label>Product</label><select id="mkProduct"></select></div>
+          </div>
+          <div class="row">
+            <div><label>Type</label>
+              <select id="mkType"><option value="per_liter">Peso per Liter</option><option value="percentage">Percentage</option></select>
+            </div>
+            <div><label>Value</label><input type="number" step="0.01" id="mkValue" placeholder="e.g. 0.30"></div>
+          </div>
+          <button onclick="saveMarkupSetting()">Save Rate</button>
+          <div class="msg" id="mkMsg"></div>
+        </div>
+      </div>
     </div>
 
   </div>
@@ -503,7 +601,8 @@ document.querySelectorAll(".subtab").forEach(t => t.addEventListener("click", ()
 
 function onTabShown(tab) {
   if (tab === "dashboard") loadDashboard();
-  if (tab === "deliveries") { loadDeliveries(); applyDeliverySmartDefaults(); }
+  if (tab === "deliveries") loadDeliveries();
+  if (tab === "checks") loadChecksTab();
   if (tab === "dispensing") loadShiftsForDispensing();
   if (tab === "credit") loadCreditTab();
   if (tab === "cashrecon") loadCashReconTab();
@@ -557,7 +656,42 @@ function populateTankSelectForDelivery() {
   const opts = tanks.filter(t => t.product_id === pid && t.branch_id === currentBranch)
     .map(t => `<option value="${t.id}">${t.tank_label}</option>`).join("");
   document.getElementById("dlvTank").innerHTML = opts || "<option value=''>No tank set up for this product/branch</option>";
+  checkMarkupForDelivery();
 }
+
+// Shows/hides and pre-fills the markup box based on whether this branch+product
+// has a standing wholesale markup relationship configured (e.g. GS4, GS5).
+// Branches with none (e.g. GS1, your own direct operation) just don't show it.
+let markupSettingsCache = [];
+async function checkMarkupForDelivery() {
+  const pid = document.getElementById("dlvProduct").value;
+  const box = document.getElementById("dlvMarkupBox");
+  if (!markupSettingsCache.length) {
+    const { data } = await supabase.from("fuel_branch_markup_settings").select("*");
+    markupSettingsCache = data || [];
+  }
+  const setting = markupSettingsCache.find(m => m.branch_id === currentBranch && m.product_id === pid);
+  if (!setting) { box.style.display = "none"; return; }
+  box.style.display = "block";
+  document.getElementById("dlvMarkupType").value = setting.markup_type;
+  document.getElementById("dlvMarkupValue").value = setting.markup_value;
+  updateBilledPreview();
+}
+
+function updateBilledPreview() {
+  const cost = parseFloat(document.getElementById("dlvCost").value) || 0;
+  const liters = parseFloat(document.getElementById("dlvLiters").value) || 0;
+  const type = document.getElementById("dlvMarkupType").value;
+  const val = parseFloat(document.getElementById("dlvMarkupValue").value) || 0;
+  const billedPrice = type === "percentage" ? cost * (1 + val / 100) : cost + val;
+  document.getElementById("dlvBilledPricePreview").textContent = peso(billedPrice);
+  document.getElementById("dlvBilledTotalPreview").textContent = peso(billedPrice * liters);
+}
+["dlvCost","dlvLiters","dlvMarkupType","dlvMarkupValue"].forEach(id => {
+  document.getElementById(id).addEventListener("input", updateBilledPreview);
+  document.getElementById(id).addEventListener("change", updateBilledPreview);
+});
+
 function populateVendorDriverSelects() {
   document.getElementById("dlvVendor").innerHTML = "<option value=''>—</option>" + vendors.map(v => `<option value="${v.id}">${v.name}</option>`).join("");
   document.getElementById("dlvDriver").innerHTML = "<option value=''>—</option>" + drivers.map(d => `<option value="${d.id}">${d.name}</option>`).join("");
@@ -616,9 +750,186 @@ async function loadDashboard() {
 let deliveriesCache = [];
 let editingDeliveryId = null;
 
+const DELIVERY_PRODUCT_ORDER = ["DIESEL", "PREMIUM", "UNLEADED"];
+
+function setDeliveryProductByCode(code) {
+  const prod = products.find(p => p.code === code);
+  if (prod) {
+    document.getElementById("dlvProduct").value = prod.id;
+    populateTankSelectForDelivery();
+  }
+}
+
+// Reads the actual database state (not just in-page memory, so this is correct
+// even after a refresh) and decides: start fresh, or retain the shared truck
+// info (vendor/driver/plate/check#/date) and advance to the next product still
+// missing for today, in Diesel -> Premium -> Unleaded order.
+async function applyDeliverySmartDefaults() {
+  if (!currentBranch) return;
+  const today = todayIso();
+  const { data: todays } = await supabase.from("fuel_deliveries")
+    .select("*, fuel_products(code)")
+    .eq("branch_id", currentBranch).eq("delivery_date", today)
+    .order("created_at", { ascending: true });
+
+  if (!todays || todays.length === 0) {
+    resetDeliveryFormFields();
+    setDeliveryProductByCode(DELIVERY_PRODUCT_ORDER[0]);
+    return;
+  }
+
+  const enteredCodes = new Set(todays.map(d => d.fuel_products?.code).filter(Boolean));
+  const nextCode = DELIVERY_PRODUCT_ORDER.find(c => !enteredCodes.has(c));
+
+  if (!nextCode) {
+    // All 3 products already entered for today - nothing left to carry forward.
+    resetDeliveryFormFields();
+    setDeliveryProductByCode(DELIVERY_PRODUCT_ORDER[0]);
+    return;
+  }
+
+  const last = todays[todays.length - 1];
+  clearProductSpecificFields();
+  document.getElementById("dlvVendor").value = last.vendor_id || "";
+  document.getElementById("dlvDriver").value = last.driver_id || "";
+  document.getElementById("dlvPlate").value = last.plate_number || "";
+  document.getElementById("dlvCheck").value = last.check_number || "";
+  document.getElementById("dlvDate").value = today;
+  setDeliveryProductByCode(nextCode);
+}
+
+// ============================================================
+// CHECKS (supplier payables + branch receivables, both postdated)
+// ============================================================
+async function loadChecksTab() {
+  document.getElementById("scVendor").innerHTML = vendors.map(v => `<option value="${v.id}">${v.name}</option>`).join("");
+  if (!document.getElementById("scDate").value) document.getElementById("scDate").value = todayIso();
+  if (!document.getElementById("rcDate").value) document.getElementById("rcDate").value = todayIso();
+
+  const { data: markupBranches } = await supabase.from("fuel_branch_markup_settings").select("branch_id, branches(code, name)");
+  const uniqueBranches = [...new Map((markupBranches || []).map(m => [m.branch_id, m.branches])).entries()];
+  document.getElementById("rcBranch").innerHTML = uniqueBranches.map(([id, b]) => `<option value="${id}">${b.code} — ${b.name}</option>`).join("")
+    || "<option value=''>No branches with a markup relationship set up yet</option>";
+
+  const { data: sc } = await supabase.from("fuel_supplier_check_payments").select("*, fuel_vendors(name)").order("check_date");
+  const { data: scAllocs } = await supabase.from("fuel_delivery_supplier_check_allocations").select("check_id, amount");
+  const scCounts = {}, scTotals = {};
+  (scAllocs || []).forEach(a => { scCounts[a.check_id] = (scCounts[a.check_id] || 0) + 1; scTotals[a.check_id] = (scTotals[a.check_id] || 0) + Number(a.amount); });
+  document.getElementById("supplierChecksTable").querySelector("tbody").innerHTML = (sc || []).map(c => `
+    <tr><td>${c.check_number}</td><td>${c.fuel_vendors?.name || "—"}</td><td>${c.check_date}</td><td>${peso(c.amount)}</td>
+    <td>${c.status}</td><td>${scCounts[c.id] || 0} deliveries — ${peso(scTotals[c.id] || 0)} allocated</td></tr>`).join("") || "<tr><td colspan='6' class='small'>No supplier checks yet.</td></tr>";
+
+  const { data: rc } = await supabase.from("fuel_branch_receivable_payments").select("*, branches(code)").order("check_date");
+  const { data: rcAllocs } = await supabase.from("fuel_delivery_receivable_check_allocations").select("check_id, amount");
+  const rcCounts = {}, rcTotals = {};
+  (rcAllocs || []).forEach(a => { rcCounts[a.check_id] = (rcCounts[a.check_id] || 0) + 1; rcTotals[a.check_id] = (rcTotals[a.check_id] || 0) + Number(a.amount); });
+  document.getElementById("receivableChecksTable").querySelector("tbody").innerHTML = (rc || []).map(c => `
+    <tr><td>${c.check_number}</td><td>${c.branches?.code || ""}</td><td>${c.check_date}</td><td>${peso(c.amount)}</td>
+    <td>${c.status}</td><td>${rcCounts[c.id] || 0} deliveries — ${peso(rcTotals[c.id] || 0)} allocated</td></tr>`).join("") || "<tr><td colspan='6' class='small'>No receivable checks yet.</td></tr>";
+
+  await loadAllocatableDeliveries();
+}
+
+async function saveSupplierCheck() {
+  const msg = document.getElementById("scMsg");
+  const { error } = await supabase.from("fuel_supplier_check_payments").insert({
+    vendor_id: document.getElementById("scVendor").value || null,
+    check_number: document.getElementById("scNumber").value.trim(),
+    check_date: document.getElementById("scDate").value,
+    amount: parseFloat(document.getElementById("scAmount").value),
+    status: document.getElementById("scStatus").value,
+    issued_by: document.getElementById("scIssuedBy").value || null
+  });
+  if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+  msg.textContent = "Check saved."; msg.className = "msg ok";
+  document.getElementById("scNumber").value = ""; document.getElementById("scAmount").value = "";
+  loadChecksTab();
+}
+
+async function saveReceivableCheck() {
+  const msg = document.getElementById("rcMsg");
+  const { error } = await supabase.from("fuel_branch_receivable_payments").insert({
+    branch_id: document.getElementById("rcBranch").value,
+    check_number: document.getElementById("rcNumber").value.trim(),
+    check_date: document.getElementById("rcDate").value,
+    amount: parseFloat(document.getElementById("rcAmount").value),
+    status: document.getElementById("rcStatus").value,
+    received_by: document.getElementById("rcReceivedBy").value || null
+  });
+  if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+  msg.textContent = "Check saved."; msg.className = "msg ok";
+  document.getElementById("rcNumber").value = ""; document.getElementById("rcAmount").value = "";
+  loadChecksTab();
+}
+
+// Deliveries with an outstanding balance in the selected direction (still owed,
+// fully or partially) - the status views compute this from actual allocations,
+// never a manually-set "paid" flag.
+async function loadAllocatableDeliveries() {
+  const direction = document.getElementById("asgnDirection").value;
+  const view = direction === "supplier" ? "fuel_delivery_supplier_payment_status" : "fuel_delivery_receivable_payment_status";
+  const { data } = await supabase.from(view).select("*, fuel_deliveries(branches(code), fuel_products(name))")
+    .gt("amount_remaining", 0).order("delivery_date", { ascending: false }).limit(100);
+  document.getElementById("asgnDelivery").innerHTML = (data || []).map(d => `
+    <option value="${d.delivery_id}">${d.delivery_date} — ${d.fuel_deliveries?.branches?.code || ""} ${d.fuel_deliveries?.fuel_products?.name || ""} — ${peso(d.amount_remaining)} remaining</option>
+  `).join("") || "<option value=''>Nothing outstanding</option>";
+  await loadDeliveryPaymentStatus();
+}
+
+async function loadDeliveryPaymentStatus() {
+  const direction = document.getElementById("asgnDirection").value;
+  const deliveryId = document.getElementById("asgnDelivery").value;
+  const grid = document.getElementById("asgnStatusGrid");
+  if (!deliveryId) { grid.style.display = "none"; document.getElementById("asgnAllocationsTable").querySelector("tbody").innerHTML = ""; return; }
+
+  const view = direction === "supplier" ? "fuel_delivery_supplier_payment_status" : "fuel_delivery_receivable_payment_status";
+  const totalField = direction === "supplier" ? "total_cost" : "billed_total_amount";
+  const { data: status } = await supabase.from(view).select("*").eq("delivery_id", deliveryId).single();
+  grid.style.display = "grid";
+  document.getElementById("asgnTotal").textContent = peso(status[totalField]);
+  document.getElementById("asgnAllocated").textContent = peso(status.amount_allocated);
+  document.getElementById("asgnRemaining").textContent = peso(status.amount_remaining);
+  document.getElementById("asgnRemainingStat").className = "stat" + (status.amount_remaining > 0 ? " warn" : " good");
+  document.getElementById("asgnAmount").value = status.amount_remaining > 0 ? status.amount_remaining : "";
+
+  const allocTable = direction === "supplier" ? "fuel_delivery_supplier_check_allocations" : "fuel_delivery_receivable_check_allocations";
+  const checkTable = direction === "supplier" ? "fuel_supplier_check_payments" : "fuel_branch_receivable_payments";
+  const { data: allocs } = await supabase.from(allocTable).select(`*, ${checkTable}(check_number, check_date, status)`).eq("delivery_id", deliveryId);
+  document.getElementById("asgnAllocationsTable").querySelector("tbody").innerHTML = (allocs || []).map(a => {
+    const check = a[checkTable];
+    return `<tr><td>${check?.check_number || ""}</td><td>${check?.check_date || ""}</td><td>${peso(a.amount)}</td><td>${check?.status || ""}</td></tr>`;
+  }).join("") || "<tr><td colspan='4' class='small'>No checks allocated yet.</td></tr>";
+
+  const checkSel = document.getElementById("asgnCheck");
+  if (direction === "supplier") {
+    const { data } = await supabase.from("fuel_supplier_check_payments").select("*, fuel_vendors(name)").order("check_date", { ascending: false });
+    checkSel.innerHTML = (data || []).map(c => `<option value="${c.id}">${c.check_number} — ${c.fuel_vendors?.name || ""} — ${c.check_date}</option>`).join("");
+  } else {
+    const { data } = await supabase.from("fuel_branch_receivable_payments").select("*, branches(code)").order("check_date", { ascending: false });
+    checkSel.innerHTML = (data || []).map(c => `<option value="${c.id}">${c.check_number} — ${c.branches?.code || ""} — ${c.check_date}</option>`).join("");
+  }
+}
+
+async function addCheckAllocation() {
+  const msg = document.getElementById("asgnMsg");
+  const direction = document.getElementById("asgnDirection").value;
+  const deliveryId = document.getElementById("asgnDelivery").value;
+  const checkId = document.getElementById("asgnCheck").value;
+  const amount = parseFloat(document.getElementById("asgnAmount").value);
+  if (!deliveryId || !checkId || !amount || amount <= 0) { msg.textContent = "Pick a delivery, a check, and a valid amount."; msg.className = "msg err"; return; }
+
+  const table = direction === "supplier" ? "fuel_delivery_supplier_check_allocations" : "fuel_delivery_receivable_check_allocations";
+  const { error } = await supabase.from(table).insert({ delivery_id: deliveryId, check_id: checkId, amount });
+  if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+  msg.textContent = "Allocation added."; msg.className = "msg ok";
+  loadDeliveryPaymentStatus();
+  loadAllocatableDeliveries();
+}
+
 async function loadDeliveries() {
   if (!currentBranch) return;
   await loadShiftOptions("dlvShift");
+  await applyDeliverySmartDefaults();
   const { data } = await supabase.from("fuel_deliveries").select("*, fuel_products(name), fuel_vendors(name)")
     .eq("branch_id", currentBranch).order("created_at", { ascending: false }).limit(20);
   deliveriesCache = data || [];
@@ -677,6 +988,12 @@ function editDelivery(i) {
   document.getElementById("dlvAfterCm").value = d.dipstick_after_cm || "";
   document.getElementById("dlvAfterL").value = d.dipstick_after_liters;
   document.getElementById("dlvPaid").checked = d.paid;
+  if (d.markup_type) {
+    document.getElementById("dlvMarkupBox").style.display = "block";
+    document.getElementById("dlvMarkupType").value = d.markup_type;
+    document.getElementById("dlvMarkupValue").value = d.markup_value;
+    updateBilledPreview();
+  }
   document.getElementById("dlvSaveBtn").textContent = "Update Delivery (recalculates WAC chain)";
   document.getElementById("dlvCancelBtn").textContent = "Cancel Edit";
   document.getElementById("dlvMsg").textContent = "";
@@ -708,54 +1025,6 @@ function clearProductSpecificFields() {
   // only the per-product figures (liters, cost, dipstick) need re-entering.
   ["dlvLiters","dlvCost","dlvMarket","dlvBeforeCm","dlvBeforeL","dlvAfterCm","dlvAfterL"].forEach(id => document.getElementById(id).value = "");
   document.getElementById("dlvPaid").checked = false;
-}
-
-// ---------- Delivery smart defaults ----------
-// One supplier truck usually drops 2-3 products (Diesel, Premium, Unleaded)
-// in one visit, sharing vendor/driver/plate/check#. This looks at today's
-// deliveries for the current branch and either carries those shared fields
-// forward to whichever product hasn't been logged yet, or fully resets once
-// every product's been entered (or none have) -- so a genuinely new visit
-// never inherits stale data. Returns { reset, nextCode } so callers can
-// tailor their success message.
-const DELIVERY_PRODUCT_ORDER = ["DIESEL", "PREMIUM", "UNLEADED"];
-
-async function applyDeliverySmartDefaults() {
-  if (!currentBranch) return { reset: true, nextCode: DELIVERY_PRODUCT_ORDER[0] };
-  const today = todayIso();
-  const { data, error } = await supabase.from("fuel_deliveries")
-    .select("product_id, vendor_id, driver_id, plate_number, check_number")
-    .eq("branch_id", currentBranch).eq("delivery_date", today)
-    .order("created_at", { ascending: true });
-  if (error) { console.error("applyDeliverySmartDefaults failed:", error); return { reset: true, nextCode: DELIVERY_PRODUCT_ORDER[0] }; }
-
-  const todaysDeliveries = data || [];
-  const idByCode = {};
-  products.forEach(p => { idByCode[p.code] = p.id; });
-  const enteredProductIds = new Set(todaysDeliveries.map(d => d.product_id));
-  const nextCode = DELIVERY_PRODUCT_ORDER.find(code => idByCode[code] && !enteredProductIds.has(idByCode[code]));
-
-  let reset;
-  if (todaysDeliveries.length && nextCode) {
-    const latest = todaysDeliveries[todaysDeliveries.length - 1]; // ascending order -> last is most recent
-    document.getElementById("dlvVendor").value = latest.vendor_id || "";
-    document.getElementById("dlvDriver").value = latest.driver_id || "";
-    document.getElementById("dlvPlate").value = latest.plate_number || "";
-    document.getElementById("dlvCheck").value = latest.check_number || "";
-    document.getElementById("dlvDate").value = today;
-    clearProductSpecificFields();
-    reset = false;
-  } else {
-    // Zero deliveries today, or all 3 products already logged -- nothing to carry forward.
-    resetDeliveryFormFields();
-    reset = true;
-  }
-
-  // Product is never left as whatever it was -- always set explicitly here.
-  const chosenCode = nextCode || DELIVERY_PRODUCT_ORDER[0];
-  document.getElementById("dlvProduct").value = idByCode[chosenCode] || "";
-  populateTankSelectForDelivery();
-  return { reset, nextCode: chosenCode };
 }
 
 // Looks up the tank's real calibration curve and linearly interpolates -- this is
@@ -813,7 +1082,9 @@ async function saveDelivery() {
     dipstick_before_liters: parseFloat(document.getElementById("dlvBeforeL").value),
     dipstick_after_cm: document.getElementById("dlvAfterCm").value ? parseFloat(document.getElementById("dlvAfterCm").value) : null,
     dipstick_after_liters: parseFloat(document.getElementById("dlvAfterL").value),
-    paid: document.getElementById("dlvPaid").checked
+    paid: document.getElementById("dlvPaid").checked,
+    markup_type: document.getElementById("dlvMarkupBox").style.display === "block" ? document.getElementById("dlvMarkupType").value : null,
+    markup_value: document.getElementById("dlvMarkupBox").style.display === "block" ? (parseFloat(document.getElementById("dlvMarkupValue").value) || 0) : null
   };
   if (!payload.tank_id) { msg.textContent = "No tank set up for this product/branch — add one in Setup first."; msg.className = "msg err"; return; }
 
@@ -831,13 +1102,9 @@ async function saveDelivery() {
     } else {
       const { error } = await supabase.from("fuel_deliveries").insert(payload);
       if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
-      const result = await applyDeliverySmartDefaults();
-      msg.textContent = result.reset
-        ? "Delivery saved. All products logged for this branch today — form reset for a new visit."
-        : "Delivery saved. Vendor/driver/plate/check# kept for the next product on this truck — change them if this was a different delivery.";
-      msg.className = "msg ok";
+      msg.textContent = "Delivery saved."; msg.className = "msg ok";
     }
-    loadDeliveries();
+    await loadDeliveries(); // also re-applies smart defaults for the next entry
   } finally {
     isSavingDelivery = false;
     saveBtn.disabled = false;
@@ -1167,6 +1434,29 @@ async function loadSetupTab() {
         <button class="small secondary" style="margin:0; padding:6px 10px;" onclick="togglePumpActive('${p.id}', ${!p.active})">${p.active ? "Deactivate" : "Reactivate"}</button>
       </td>
     </tr>`).join("") || "<tr><td colspan='4' class='small'>No pumps yet — use Standard Layout above or add one manually.</td></tr>";
+
+  document.getElementById("mkBranch").innerHTML = branches.map(b => `<option value="${b.id}">${b.code} — ${b.name}</option>`).join("");
+  document.getElementById("mkProduct").innerHTML = products.map(p => `<option value="${p.id}">${p.name}</option>`).join("");
+  const { data: mk } = await supabase.from("fuel_branch_markup_settings").select("*, branches(code), fuel_products(name)").order("updated_at", { ascending: false });
+  document.getElementById("markupTable").querySelector("tbody").innerHTML = (mk || []).map(m => `
+    <tr><td>${m.branches?.code || ""}</td><td>${m.fuel_products?.name || ""}</td>
+    <td>${m.markup_type === "per_liter" ? "₱/Liter" : "%"}</td><td>${m.markup_type === "per_liter" ? peso(m.markup_value) : m.markup_value + "%"}</td>
+    <td></td></tr>`).join("") || "<tr><td colspan='5' class='small'>No markup rates set yet.</td></tr>";
+}
+
+async function saveMarkupSetting() {
+  const msg = document.getElementById("mkMsg");
+  const { error } = await supabase.from("fuel_branch_markup_settings").upsert({
+    branch_id: document.getElementById("mkBranch").value,
+    product_id: document.getElementById("mkProduct").value,
+    markup_type: document.getElementById("mkType").value,
+    markup_value: parseFloat(document.getElementById("mkValue").value) || 0,
+    updated_at: new Date().toISOString()
+  }, { onConflict: "branch_id,product_id" });
+  if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+  msg.textContent = "Rate saved."; msg.className = "msg ok";
+  document.getElementById("mkValue").value = "";
+  loadSetupTab();
 }
 
 async function savePumpEdit(pumpId) {
