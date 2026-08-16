@@ -167,6 +167,25 @@
             <div class="stat"><div class="k">Billed Total</div><div class="v" id="dlvBilledTotalPreview">—</div></div>
           </div>
         </div>
+        <div id="dlvCheckBox" style="margin-top:14px; padding:12px; border-radius:8px; border:1px solid var(--accent); background:#0f172a;">
+          <p class="small" style="margin:0 0 8px;"><strong>Check for This Delivery (required)</strong> — a delivery can't be saved without one. Reuse the same check across products from one truck visit, or start a new one.</p>
+          <div class="row">
+            <label style="display:flex; align-items:center; gap:6px;"><input type="radio" name="dlvCheckMode" value="new" checked onchange="onCheckModeChange()"> New Check</label>
+            <label style="display:flex; align-items:center; gap:6px;"><input type="radio" name="dlvCheckMode" value="existing" onchange="onCheckModeChange()"> Reuse Existing Check</label>
+          </div>
+          <div id="dlvNewCheckFields">
+            <div class="row">
+              <div><label>Check #</label><input type="text" id="dlvNewCheckNumber"></div>
+              <div><label>Check Date</label><input type="date" id="dlvNewCheckDate"></div>
+              <div><label>Check Amount</label><input type="number" step="0.01" id="dlvNewCheckAmount"></div>
+            </div>
+          </div>
+          <div id="dlvExistingCheckFields" style="display:none;">
+            <label>Existing Check</label><select id="dlvExistingCheckId"></select>
+          </div>
+          <label>Amount From This Check For This Delivery</label>
+          <input type="number" step="0.01" id="dlvAllocationAmount">
+        </div>
         <button onclick="saveDelivery()" id="dlvSaveBtn">Save Delivery</button>
         <button class="secondary" onclick="cancelEditDelivery()" id="dlvCancelBtn">Cancel</button>
         <div class="msg" id="dlvMsg"></div>
@@ -795,6 +814,42 @@ function updateBilledPreview() {
   document.getElementById(id).addEventListener("change", updateBilledPreview);
 });
 
+function onCheckModeChange() {
+  const mode = document.querySelector('input[name="dlvCheckMode"]:checked').value;
+  document.getElementById("dlvNewCheckFields").style.display = mode === "new" ? "block" : "none";
+  document.getElementById("dlvExistingCheckFields").style.display = mode === "existing" ? "block" : "none";
+  if (mode === "existing") loadExistingChecksForVendor();
+}
+document.getElementById("dlvVendor").addEventListener("change", () => {
+  if (document.querySelector('input[name="dlvCheckMode"]:checked').value === "existing") loadExistingChecksForVendor();
+});
+
+async function loadExistingChecksForVendor() {
+  const vendorId = document.getElementById("dlvVendor").value;
+  const sel = document.getElementById("dlvExistingCheckId");
+  let q = supabase.from("fuel_supplier_check_payments").select("*, fuel_vendors(name)").order("created_at", { ascending: false }).limit(20);
+  if (vendorId) q = q.eq("vendor_id", vendorId);
+  const { data } = await q;
+  sel.innerHTML = (data || []).map(c => `<option value="${c.id}">${c.check_number} — ${c.fuel_vendors?.name || ""} — ${c.check_date} — ${peso(c.amount)}</option>`).join("")
+    || "<option value=''>No checks found for this vendor yet</option>";
+  if (lastUsedCheckId && [...sel.options].some(o => o.value === lastUsedCheckId)) sel.value = lastUsedCheckId;
+}
+
+// Suggest the allocation (and new check amount) as this delivery's own total cost by
+// default - the common case - while staying fully editable for split payments.
+function updateSuggestedCheckAmounts() {
+  const cost = parseFloat(document.getElementById("dlvCost").value) || 0;
+  const liters = parseFloat(document.getElementById("dlvLiters").value) || 0;
+  const total = cost * liters;
+  if (total > 0) {
+    if (!document.getElementById("dlvAllocationAmount").value) document.getElementById("dlvAllocationAmount").value = total.toFixed(2);
+    if (document.querySelector('input[name="dlvCheckMode"]:checked').value === "new" && !document.getElementById("dlvNewCheckAmount").value) {
+      document.getElementById("dlvNewCheckAmount").value = total.toFixed(2);
+    }
+  }
+}
+["dlvCost","dlvLiters"].forEach(id => document.getElementById(id).addEventListener("input", updateSuggestedCheckAmounts));
+
 function populateVendorDriverSelects() {
   document.getElementById("dlvVendor").innerHTML = "<option value=''>—</option>" + vendors.map(v => `<option value="${v.id}">${v.name}</option>`).join("");
   document.getElementById("dlvDriver").innerHTML = "<option value=''>—</option>" + drivers.map(d => `<option value="${d.id}">${d.name}</option>`).join("");
@@ -897,12 +952,13 @@ async function applyDeliverySmartDefaults() {
   document.getElementById("dlvDriver").value = last.driver_id || "";
   document.getElementById("dlvPlate").value = last.plate_number || "";
   document.getElementById("dlvDate").value = today;
+  if (lastUsedCheckId) {
+    document.querySelector('input[name="dlvCheckMode"][value="existing"]').checked = true;
+    onCheckModeChange();
+  }
   setDeliveryProductByCode(nextCode);
 }
 
-// ============================================================
-// CHECKS (supplier payables + branch receivables, both postdated)
-// ============================================================
 // ============================================================
 // DEBT TRACKER — fuel payables + everything else, one true total
 // ============================================================
@@ -1356,6 +1412,7 @@ function editDelivery(i) {
   }
   document.getElementById("dlvSaveBtn").textContent = "Update Delivery (recalculates WAC chain)";
   document.getElementById("dlvCancelBtn").textContent = "Cancel Edit";
+  document.getElementById("dlvCheckBox").style.display = "none"; // checks for an existing delivery are managed via the Checks tab, not re-required here
   document.getElementById("dlvMsg").textContent = "";
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -1364,12 +1421,13 @@ function cancelEditDelivery() {
   editingDeliveryId = null;
   document.getElementById("dlvSaveBtn").textContent = "Save Delivery";
   document.getElementById("dlvCancelBtn").textContent = "Cancel";
+  document.getElementById("dlvCheckBox").style.display = "block";
   resetDeliveryFormFields();
 }
 
 function resetDeliveryFormFields() {
   // Full reset - used by the Cancel button, for genuinely starting over.
-  ["dlvPlate","dlvInvoice","dlvLiters","dlvCost","dlvMarket","dlvBeforeCm","dlvBeforeL","dlvAfterCm","dlvAfterL"].forEach(id => document.getElementById(id).value = "");
+  ["dlvPlate","dlvInvoice","dlvLiters","dlvCost","dlvMarket","dlvBeforeCm","dlvBeforeL","dlvAfterCm","dlvAfterL","dlvNewCheckNumber","dlvNewCheckAmount","dlvAllocationAmount"].forEach(id => document.getElementById(id).value = "");
   document.getElementById("dlvPaid").checked = false;
   document.getElementById("dlvDate").value = todayIso();
   document.getElementById("dlvProduct").selectedIndex = 0;
@@ -1377,13 +1435,18 @@ function resetDeliveryFormFields() {
   document.getElementById("dlvVendor").value = "";
   document.getElementById("dlvDriver").value = "";
   document.getElementById("dlvShift").value = "";
+  document.getElementById("dlvNewCheckDate").value = "";
+  lastUsedCheckId = null;
+  document.querySelector('input[name="dlvCheckMode"][value="new"]').checked = true;
+  onCheckModeChange();
 }
 
 function clearProductSpecificFields() {
   // After a successful save: one supplier visit is usually 2-3 products on
-  // the same truck, so vendor/driver/plate/check#/date stay filled in --
-  // only the per-product figures (liters, cost, dipstick) need re-entering.
-  ["dlvLiters","dlvCost","dlvMarket","dlvBeforeCm","dlvBeforeL","dlvAfterCm","dlvAfterL"].forEach(id => document.getElementById(id).value = "");
+  // the same truck, so vendor/driver/plate/date stay filled in -- only the
+  // per-product figures (liters, cost, dipstick, and the check allocation
+  // amount, which differs per product's own total) need re-entering.
+  ["dlvLiters","dlvCost","dlvMarket","dlvBeforeCm","dlvBeforeL","dlvAfterCm","dlvAfterL","dlvAllocationAmount"].forEach(id => document.getElementById(id).value = "");
   document.getElementById("dlvPaid").checked = false;
 }
 
@@ -1418,6 +1481,7 @@ wireCmToLiters("dlvBeforeCm", "dlvBeforeL");
 wireCmToLiters("dlvAfterCm", "dlvAfterL");
 
 let isSavingDelivery = false;
+let lastUsedCheckId = null; // carries the check used for one product forward as the default for the next, within the same visit
 
 async function saveDelivery() {
   if (isSavingDelivery) return; // guard against double-tap / double-submit creating duplicate rows
@@ -1459,9 +1523,44 @@ async function saveDelivery() {
       msg.textContent = "Delivery updated — WAC chain recalculated for every delivery of this product."; msg.className = "msg ok";
       cancelEditDelivery();
     } else {
-      const { data: newDelivery, error } = await supabase.from("fuel_deliveries").insert(payload).select("id").single();
+      const checkMode = document.querySelector('input[name="dlvCheckMode"]:checked').value;
+      const allocationAmount = parseFloat(document.getElementById("dlvAllocationAmount").value);
+      if (!allocationAmount || allocationAmount <= 0) { msg.textContent = "An allocation amount for the check is required."; msg.className = "msg err"; return; }
+      if (checkMode === "new") {
+        const num = document.getElementById("dlvNewCheckNumber").value.trim();
+        const date = document.getElementById("dlvNewCheckDate").value;
+        const amt = parseFloat(document.getElementById("dlvNewCheckAmount").value);
+        if (!num || !date || !amt || amt <= 0) { msg.textContent = "New check needs a number, date, and amount."; msg.className = "msg err"; return; }
+      } else if (!document.getElementById("dlvExistingCheckId").value) {
+        msg.textContent = "Pick an existing check to reuse."; msg.className = "msg err"; return;
+      }
+
+      const { data: newDeliveryId, error } = await supabase.rpc("fn_save_delivery_with_check", {
+        p_branch_id: payload.branch_id, p_product_id: payload.product_id, p_tank_id: payload.tank_id,
+        p_vendor_id: payload.vendor_id, p_driver_id: payload.driver_id, p_plate_number: payload.plate_number,
+        p_invoice_number: payload.invoice_number, p_shift_id: payload.shift_id, p_delivery_date: payload.delivery_date,
+        p_invoiced_liters: payload.invoiced_liters, p_cost_per_liter: payload.cost_per_liter,
+        p_market_reference_price_per_liter: payload.market_reference_price_per_liter,
+        p_dipstick_before_cm: payload.dipstick_before_cm, p_dipstick_before_liters: payload.dipstick_before_liters,
+        p_dipstick_after_cm: payload.dipstick_after_cm, p_dipstick_after_liters: payload.dipstick_after_liters,
+        p_paid: payload.paid, p_markup_type: payload.markup_type, p_markup_value: payload.markup_value,
+        p_use_existing_check: checkMode === "existing",
+        p_existing_check_id: checkMode === "existing" ? document.getElementById("dlvExistingCheckId").value : null,
+        p_new_check_number: checkMode === "new" ? document.getElementById("dlvNewCheckNumber").value.trim() : null,
+        p_new_check_date: checkMode === "new" ? document.getElementById("dlvNewCheckDate").value : null,
+        p_new_check_amount: checkMode === "new" ? parseFloat(document.getElementById("dlvNewCheckAmount").value) : null,
+        p_allocation_amount: allocationAmount
+      });
       if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
-      msg.innerHTML = `Delivery saved. <button class="small" style="margin:6px 0 0; padding:8px 12px;" onclick="goToChecksForDelivery('${newDelivery.id}')">Add Check for This Delivery →</button>`;
+
+      // Remember which check was used, so the next product in this same visit defaults to reusing it.
+      if (checkMode === "existing") lastUsedCheckId = document.getElementById("dlvExistingCheckId").value;
+      else {
+        const { data: theCheck } = await supabase.from("fuel_supplier_check_payments").select("id").eq("check_number", document.getElementById("dlvNewCheckNumber").value.trim()).eq("check_date", document.getElementById("dlvNewCheckDate").value).order("created_at", { ascending: false }).limit(1).single();
+        lastUsedCheckId = theCheck?.id || null;
+      }
+
+      msg.innerHTML = `Delivery saved with check attached. <button class="small" style="margin:6px 0 0; padding:8px 12px;" onclick="showDeliveryDetail('${newDeliveryId}')">View Details →</button>`;
       msg.className = "msg ok";
     }
     await loadDeliveries(); // also re-applies smart defaults for the next entry
