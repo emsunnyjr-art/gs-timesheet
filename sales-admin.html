@@ -49,6 +49,7 @@
   .stat .k { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; }
   .stat .v { font-size:18px; font-weight:700; margin-top:4px; }
   .stat.warn .v { color:var(--danger); }
+  .stat.good .v { color:var(--accent); }
   .product-card { border:1px solid var(--border); border-radius:12px; padding:14px; margin-bottom:10px; }
   .product-card h3 { margin:0 0 8px; font-size:14px; }
   .pin-screen { max-width:340px; margin:60px auto; text-align:center; }
@@ -101,6 +102,7 @@
       <div class="tab" data-tab="dispensing">Dispensing</div>
       <div class="tab" data-tab="credit">Credit / PO</div>
       <div class="tab" data-tab="cashrecon">Cash Reconciliation</div>
+      <div class="tab" data-tab="debt">Debt</div>
       <div class="tab" data-tab="setup">Setup</div>
     </div>
 
@@ -137,9 +139,9 @@
         </div>
         <div class="row">
           <div><label>Invoice #</label><input id="dlvInvoice"></div>
-          <div><label>Check # (issued to supplier)</label><input id="dlvCheck"></div>
           <div><label>Delivery Date</label><input type="date" id="dlvDate"></div>
         </div>
+        <p class="small">Check tracking (numbers, dates, amounts) now lives in the <strong>Checks</strong> tab — after saving, use the "Add Check for This Delivery" button that appears, or the "Checks" button on any delivery row.</p>
         <div class="row">
           <div><label>Invoiced Liters</label><input type="number" step="0.01" id="dlvLiters"></div>
           <div><label>Cost / Liter (actual paid)</label><input type="number" step="0.0001" id="dlvCost"></div>
@@ -171,7 +173,7 @@
       </div>
       <div class="card">
         <h2>Recent Deliveries <span class="small" id="deliveriesEditHint"></span></h2>
-        <table id="deliveriesTable"><thead><tr><th>Date</th><th>Product</th><th>Vendor</th><th>Liters</th><th>Cost/L</th><th>WAC After</th><th>Delivered vs Invoiced</th><th>Paid</th><th></th></tr></thead><tbody></tbody></table>
+        <table id="deliveriesTable"><thead><tr><th>Date</th><th>Product</th><th>Vendor</th><th>Liters</th><th>Cost/L</th><th>WAC After</th><th>Delivered vs Invoiced</th><th>Payment</th><th></th></tr></thead><tbody></tbody></table>
       </div>
     </div>
 
@@ -395,6 +397,60 @@
     </div>
 
     <!-- ============ SETUP ============ -->
+    <!-- ============ DEBT ============ -->
+    <div class="panel" id="panel-debt">
+      <div class="card">
+        <h2>Total Owed — Everywhere</h2>
+        <div class="stat-grid" id="debtGrandTotal"></div>
+      </div>
+
+      <div class="card">
+        <h2>2-Year Payoff Target</h2>
+        <p class="small">Required pace = total owed ÷ 24 months. Actual pace = your real payments over the last 3 months, averaged. Extra payments whenever funds allow will pull the actual pace ahead of target — that's the goal.</p>
+        <div class="stat-grid" id="debtPaceComparison"></div>
+      </div>
+
+      <div class="card">
+        <h2>Upcoming — What's Due, in Order</h2>
+        <table id="debtScheduleTable"><thead><tr><th>Source</th><th>Due Date</th><th>Amount</th><th>Reference</th></tr></thead><tbody></tbody></table>
+      </div>
+
+      <div class="card">
+        <h2>Debts (Loans, Equipment, etc. — Not Fuel)</h2>
+        <table id="debtsTable"><thead><tr><th>Creditor</th><th>Type</th><th>Original</th><th>Paid</th><th>Remaining</th><th>Target Date</th><th>Status</th></tr></thead><tbody></tbody></table>
+      </div>
+
+      <div class="card">
+        <h2>Add a Debt</h2>
+        <div class="row">
+          <div><label>Type</label><select id="dbtType"><option value="loan">Loan</option><option value="equipment_financing">Equipment Financing</option><option value="other">Other</option></select></div>
+          <div><label>Creditor</label><input type="text" id="dbtCreditor"></div>
+        </div>
+        <div class="row">
+          <div><label>Original Amount</label><input type="number" step="0.01" id="dbtAmount"></div>
+          <div><label>Target Payoff Date</label><input type="date" id="dbtTargetDate"></div>
+        </div>
+        <div><label>Description / Notes</label><input type="text" id="dbtDescription"></div>
+        <button onclick="saveDebt()">Save Debt</button>
+        <div class="msg" id="dbtMsg"></div>
+      </div>
+
+      <div class="card">
+        <h2>Log a Payment</h2>
+        <div class="row">
+          <div><label>Debt</label><select id="dpayDebt"></select></div>
+          <div><label>Amount</label><input type="number" step="0.01" id="dpayAmount"></div>
+        </div>
+        <div class="row">
+          <div><label>Payment Date</label><input type="date" id="dpayDate"></div>
+          <div><label>Type</label><select id="dpayType"><option value="scheduled">Scheduled (regular payment)</option><option value="extra">Extra (accelerating payoff)</option></select></div>
+          <div><label>Status</label><select id="dpayStatus"><option value="paid">Paid (already cleared)</option><option value="pending">Pending (scheduled/postdated)</option><option value="bounced">Bounced</option></select></div>
+        </div>
+        <button onclick="saveDebtPayment()">Log Payment</button>
+        <div class="msg" id="dpayMsg"></div>
+      </div>
+    </div>
+
     <div class="panel" id="panel-setup">
       <div class="subtabs">
         <div class="subtab active" data-sub="products">Products & Price</div>
@@ -649,6 +705,7 @@ function onTabShown(tab) {
   if (tab === "dashboard") loadDashboard();
   if (tab === "deliveries") loadDeliveries();
   if (tab === "checks") loadChecksTab();
+  if (tab === "debt") loadDebtTab();
   if (tab === "dispensing") loadShiftsForDispensing();
   if (tab === "credit") loadCreditTab();
   if (tab === "cashrecon") loadCashReconTab();
@@ -839,7 +896,6 @@ async function applyDeliverySmartDefaults() {
   document.getElementById("dlvVendor").value = last.vendor_id || "";
   document.getElementById("dlvDriver").value = last.driver_id || "";
   document.getElementById("dlvPlate").value = last.plate_number || "";
-  document.getElementById("dlvCheck").value = last.check_number || "";
   document.getElementById("dlvDate").value = today;
   setDeliveryProductByCode(nextCode);
 }
@@ -847,6 +903,86 @@ async function applyDeliverySmartDefaults() {
 // ============================================================
 // CHECKS (supplier payables + branch receivables, both postdated)
 // ============================================================
+// ============================================================
+// DEBT TRACKER — fuel payables + everything else, one true total
+// ============================================================
+async function loadDebtTab() {
+  const { data: summary } = await supabase.from("business_debt_summary").select("*").single();
+  if (summary) {
+    document.getElementById("debtGrandTotal").innerHTML = `
+      <div class="stat"><div class="k">Fuel Supplier — Owed</div><div class="v">${peso(summary.fuel_total_owed)}</div></div>
+      <div class="stat"><div class="k">Fuel Supplier — Paid</div><div class="v">${peso(summary.fuel_total_paid)}</div></div>
+      <div class="stat"><div class="k">Other Debts — Owed</div><div class="v">${peso(summary.general_total_owed)}</div></div>
+      <div class="stat"><div class="k">Other Debts — Paid</div><div class="v">${peso(summary.general_total_paid)}</div></div>
+      <div class="stat warn"><div class="k">GRAND TOTAL STILL OWED</div><div class="v" style="font-size:22px;">${peso(summary.grand_total_balance)}</div></div>
+    `;
+
+    // Required pace to hit debt-free in 2 years, vs your real trailing pace.
+    const requiredMonthly = summary.grand_total_balance / 24;
+    const threeMonthsAgo = new Date(); threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+    const cutoff = threeMonthsAgo.toISOString().slice(0,10);
+    const { data: fuelPaid } = await supabase.from("fuel_supplier_check_payments").select("amount").eq("status", "cleared").gte("check_date", cutoff);
+    const { data: genPaid } = await supabase.from("business_debt_payments").select("amount").eq("status", "paid").gte("payment_date", cutoff);
+    const trailingTotal = (fuelPaid || []).reduce((s,r) => s + Number(r.amount), 0) + (genPaid || []).reduce((s,r) => s + Number(r.amount), 0);
+    const actualMonthly = trailingTotal / 3;
+    const onTrack = actualMonthly >= requiredMonthly;
+    document.getElementById("debtPaceComparison").innerHTML = `
+      <div class="stat"><div class="k">Required / Month (2-yr target)</div><div class="v">${peso(requiredMonthly)}</div></div>
+      <div class="stat ${onTrack ? 'good' : 'warn'}"><div class="k">Your Actual Pace (last 3 mo avg)</div><div class="v">${peso(actualMonthly)}</div></div>
+      <div class="stat ${onTrack ? 'good' : 'warn'}"><div class="k">Status</div><div class="v">${onTrack ? '✅ On track or ahead' : '⚠ Behind target pace'}</div></div>
+      <div class="stat"><div class="k">At Current Pace, Debt-Free In</div><div class="v">${actualMonthly > 0 ? (summary.grand_total_balance / actualMonthly).toFixed(1) + ' months' : 'no recent payments'}</div></div>
+    `;
+  }
+
+  const { data: schedule } = await supabase.from("business_debt_schedule").select("*").limit(30);
+  document.getElementById("debtScheduleTable").querySelector("tbody").innerHTML = (schedule || []).map(s =>
+    `<tr><td>${s.source === "fuel" ? "Fuel Supplier" : "Other Debt"}</td><td>${s.payment_date}</td><td>${peso(s.amount)}</td><td>${s.reference || "—"}</td></tr>`
+  ).join("") || "<tr><td colspan='4' class='small'>Nothing scheduled.</td></tr>";
+
+  const { data: debts } = await supabase.from("business_debt_status").select("*").order("status").order("target_payoff_date");
+  document.getElementById("debtsTable").querySelector("tbody").innerHTML = (debts || []).map(d =>
+    `<tr><td>${d.creditor_name}</td><td>${d.debt_type}</td><td>${peso(d.original_amount)}</td><td>${peso(d.total_paid)}</td><td>${peso(d.remaining_balance)}</td><td>${d.target_payoff_date || "—"}</td><td>${d.status === 'paid_off' ? '✅ Paid Off' : 'Active'}</td></tr>`
+  ).join("") || "<tr><td colspan='7' class='small'>No debts entered yet.</td></tr>";
+
+  document.getElementById("dpayDebt").innerHTML = (debts || []).filter(d => d.status !== 'paid_off').map(d =>
+    `<option value="${d.id}">${d.creditor_name} — ${peso(d.remaining_balance)} remaining</option>`
+  ).join("") || "<option value=''>No active debts</option>";
+  if (!document.getElementById("dpayDate").value) document.getElementById("dpayDate").value = todayIso();
+}
+
+async function saveDebt() {
+  const msg = document.getElementById("dbtMsg");
+  const { error } = await supabase.from("business_debts").insert({
+    debt_type: document.getElementById("dbtType").value,
+    creditor_name: document.getElementById("dbtCreditor").value.trim(),
+    original_amount: parseFloat(document.getElementById("dbtAmount").value),
+    target_payoff_date: document.getElementById("dbtTargetDate").value || null,
+    description: document.getElementById("dbtDescription").value || null
+  });
+  if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+  msg.textContent = "Debt saved."; msg.className = "msg ok";
+  ["dbtCreditor","dbtAmount","dbtTargetDate","dbtDescription"].forEach(id => document.getElementById(id).value = "");
+  loadDebtTab();
+}
+
+async function saveDebtPayment() {
+  const msg = document.getElementById("dpayMsg");
+  const debtId = document.getElementById("dpayDebt").value;
+  const amount = parseFloat(document.getElementById("dpayAmount").value);
+  if (!debtId || !amount || amount <= 0) { msg.textContent = "Pick a debt and a valid amount."; msg.className = "msg err"; return; }
+  const { error } = await supabase.from("business_debt_payments").insert({
+    debt_id: debtId,
+    amount,
+    payment_date: document.getElementById("dpayDate").value,
+    payment_type: document.getElementById("dpayType").value,
+    status: document.getElementById("dpayStatus").value
+  });
+  if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+  msg.textContent = "Payment logged."; msg.className = "msg ok";
+  document.getElementById("dpayAmount").value = "";
+  loadDebtTab();
+}
+
 async function loadChecksTab() {
   document.getElementById("scVendor").innerHTML = vendors.map(v => `<option value="${v.id}">${v.name}</option>`).join("");
   if (!document.getElementById("scDate").value) document.getElementById("scDate").value = todayIso();
@@ -967,9 +1103,22 @@ async function addCheckAllocation() {
   const table = direction === "supplier" ? "fuel_delivery_supplier_check_allocations" : "fuel_delivery_receivable_check_allocations";
   const { error } = await supabase.from(table).insert({ delivery_id: deliveryId, check_id: checkId, amount });
   if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
-  msg.textContent = "Allocation added."; msg.className = "msg ok";
-  loadDeliveryPaymentStatus();
-  loadAllocatableDeliveries();
+
+  // Wrap up: pull the delivery's own info for a clear confirmation, then return
+  // to Deliveries so the encoder lands back where they were, not stranded here.
+  const { data: d } = await supabase.from("fuel_deliveries").select("delivery_date, branches(code), fuel_products(name)").eq("id", deliveryId).single();
+  const label = d ? `${d.delivery_date} — ${d.branches?.code || ""} ${d.fuel_products?.name || ""}` : "that delivery";
+
+  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+  document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+  document.querySelector('.tab[data-tab="deliveries"]').classList.add("active");
+  document.getElementById("panel-deliveries").classList.add("active");
+  await loadDeliveries();
+
+  const dlvMsg = document.getElementById("dlvMsg");
+  dlvMsg.textContent = `✓ Check of ${peso(amount)} logged for ${label}. Back on Deliveries — continue with the next one.`;
+  dlvMsg.className = "msg ok";
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 // The "encyclopedia" view: everything connected to one delivery, pulled together
@@ -1122,6 +1271,25 @@ async function loadDeliveries() {
   const { data } = await supabase.from("fuel_deliveries").select("*, fuel_products(name), fuel_vendors(name)")
     .eq("branch_id", currentBranch).order("created_at", { ascending: false }).limit(20);
   deliveriesCache = data || [];
+
+  // Real payment status per delivery, pulled from actual check allocations - not a manual flag.
+  const deliveryIds = deliveriesCache.map(d => d.id);
+  const { data: allocs } = deliveryIds.length
+    ? await supabase.from("fuel_delivery_supplier_check_allocations").select("delivery_id, amount, fuel_supplier_check_payments(check_number)").in("delivery_id", deliveryIds)
+    : { data: [] };
+  const paidByDelivery = {}, checksByDelivery = {};
+  (allocs || []).forEach(a => {
+    paidByDelivery[a.delivery_id] = (paidByDelivery[a.delivery_id] || 0) + Number(a.amount);
+    (checksByDelivery[a.delivery_id] ||= []).push(a.fuel_supplier_check_payments?.check_number);
+  });
+  function paymentCell(d) {
+    const paid = paidByDelivery[d.id] || 0;
+    const checks = checksByDelivery[d.id] || [];
+    if (paid <= 0) return `<span class="small" style="color:var(--danger);">Unpaid</span>`;
+    if (paid < d.total_cost) return `<span class="small" style="color:var(--orange);">${peso(paid)} of ${peso(d.total_cost)}<br>${checks.join(", ")}</span>`;
+    return `<span class="small" style="color:var(--accent);">✅ Paid<br>${checks.join(", ")}</span>`;
+  }
+
   document.getElementById("deliveriesEditHint").textContent = isOwner ? "(click a row to edit)" : "(only the owner can edit a saved delivery)";
   document.getElementById("deliveriesTable").querySelector("tbody").innerHTML = (data || []).map((d,i) => `
     <tr>
@@ -1132,7 +1300,7 @@ async function loadDeliveries() {
       <td ${isOwner ? `style="cursor:pointer;" onclick="editDelivery(${i})"` : ""}>${peso(d.cost_per_liter)}</td>
       <td ${isOwner ? `style="cursor:pointer;" onclick="editDelivery(${i})"` : ""}>${peso(d.wac_after)}</td>
       <td style="${d.variance_liters != 0 ? 'color:var(--danger); font-weight:700;' : ''}" ${isOwner ? `onclick="editDelivery(${i})"` : ""}>${d.variance_liters > 0 ? "+" : ""}${d.variance_liters} L</td>
-      <td ${isOwner ? `style="cursor:pointer;" onclick="editDelivery(${i})"` : ""}>${d.paid ? "✅" : "—"}</td>
+      <td>${paymentCell(d)}</td>
       <td>
         <button class="small" style="margin:0 0 4px; padding:6px 10px; display:block; width:100%;" onclick="event.stopPropagation(); showDeliveryDetail('${d.id}')">Details</button>
         <button class="secondary small" style="margin:0 0 4px; padding:6px 10px; display:block; width:100%;" onclick="event.stopPropagation(); goToChecksForDelivery('${d.id}')">Checks</button>
@@ -1171,7 +1339,6 @@ function editDelivery(i) {
   document.getElementById("dlvPlate").value = d.plate_number || "";
   document.getElementById("dlvShift").value = d.shift_id || "";
   document.getElementById("dlvInvoice").value = d.invoice_number || "";
-  document.getElementById("dlvCheck").value = d.check_number || "";
   document.getElementById("dlvDate").value = d.delivery_date;
   document.getElementById("dlvLiters").value = d.invoiced_liters;
   document.getElementById("dlvCost").value = d.cost_per_liter;
@@ -1202,7 +1369,7 @@ function cancelEditDelivery() {
 
 function resetDeliveryFormFields() {
   // Full reset - used by the Cancel button, for genuinely starting over.
-  ["dlvPlate","dlvInvoice","dlvCheck","dlvLiters","dlvCost","dlvMarket","dlvBeforeCm","dlvBeforeL","dlvAfterCm","dlvAfterL"].forEach(id => document.getElementById(id).value = "");
+  ["dlvPlate","dlvInvoice","dlvLiters","dlvCost","dlvMarket","dlvBeforeCm","dlvBeforeL","dlvAfterCm","dlvAfterL"].forEach(id => document.getElementById(id).value = "");
   document.getElementById("dlvPaid").checked = false;
   document.getElementById("dlvDate").value = todayIso();
   document.getElementById("dlvProduct").selectedIndex = 0;
@@ -1265,7 +1432,6 @@ async function saveDelivery() {
     driver_id: document.getElementById("dlvDriver").value || null,
     plate_number: document.getElementById("dlvPlate").value || null,
     invoice_number: document.getElementById("dlvInvoice").value || null,
-    check_number: document.getElementById("dlvCheck").value || null,
     shift_id: document.getElementById("dlvShift").value || null,
     delivery_date: document.getElementById("dlvDate").value,
     invoiced_liters: parseFloat(document.getElementById("dlvLiters").value),
