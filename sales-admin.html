@@ -521,6 +521,52 @@
     </div>
 
   </div>
+
+  <!-- DELIVERY DETAIL MODAL — everything tied to one delivery, one click -->
+  <div id="deliveryDetailOverlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:100; overflow-y:auto; padding:20px;">
+    <div style="max-width:900px; margin:0 auto; background:var(--card); border-radius:14px; padding:24px; position:relative;">
+      <button onclick="closeDeliveryDetail()" style="position:absolute; top:16px; right:16px; width:auto; padding:8px 14px; background:#334155;">✕ Close</button>
+      <h1 id="ddTitle" style="margin-top:0;">Delivery Detail</h1>
+      <div id="ddLoading" class="small">Loading everything tied to this delivery…</div>
+      <div id="ddContent" style="display:none;">
+
+        <div class="card" style="background:#0f172a;">
+          <h2>Delivery</h2>
+          <div class="stat-grid" id="ddDeliveryInfo"></div>
+        </div>
+
+        <div class="card" style="background:#0f172a;">
+          <h2>Payment Status</h2>
+          <div class="stat-grid" id="ddPaymentSummary"></div>
+          <p class="small" style="margin-top:10px;"><strong>Checks You Paid the Supplier</strong></p>
+          <table id="ddSupplierChecks"><thead><tr><th>Check #</th><th>Date</th><th>Amount</th><th>Status</th></tr></thead><tbody></tbody></table>
+          <p class="small" style="margin-top:10px;"><strong>Checks Received Back (if wholesale-supplied)</strong></p>
+          <table id="ddReceivableChecks"><thead><tr><th>Check #</th><th>Date</th><th>Amount</th><th>Status</th></tr></thead><tbody></tbody></table>
+        </div>
+
+        <div class="card" style="background:#0f172a;">
+          <h2>Stock Reconciliation</h2>
+          <div class="stat-grid" id="ddStockRecon"></div>
+        </div>
+
+        <div class="card" style="background:#0f172a;">
+          <h2>Sales Activity Since This Delivery</h2>
+          <table id="ddShiftActivity"><thead><tr><th>Date</th><th>Shift</th><th>Liters Sold</th><th>Revenue</th><th>Profit (WAC)</th></tr></thead><tbody></tbody></table>
+        </div>
+
+        <div class="card" style="background:#0f172a;">
+          <h2>TMs Who Worked These Shifts</h2>
+          <table id="ddEmployees"><thead><tr><th>Employee</th><th>Date</th><th>Time In</th><th>Time Out</th></tr></thead><tbody></tbody></table>
+        </div>
+
+        <div class="card" style="background:#0f172a;">
+          <h2>Expenses During These Shifts</h2>
+          <table id="ddExpenses"><thead><tr><th>Date</th><th>Category</th><th>Amount</th><th>Details</th></tr></thead><tbody></tbody></table>
+        </div>
+
+      </div>
+    </div>
+  </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
@@ -926,6 +972,149 @@ async function addCheckAllocation() {
   loadAllocatableDeliveries();
 }
 
+// The "encyclopedia" view: everything connected to one delivery, pulled together
+// in a single click - the delivery itself, both check ledgers, stock reconciliation,
+// every shift that sold from this batch, who worked those shifts, and what was
+// spent during them.
+async function showDeliveryDetail(deliveryId) {
+  document.getElementById("deliveryDetailOverlay").style.display = "block";
+  document.getElementById("ddLoading").style.display = "block";
+  document.getElementById("ddContent").style.display = "none";
+
+  const { data: d } = await supabase.from("fuel_deliveries")
+    .select("*, branches(code,name), fuel_products(name), fuel_vendors(name), fuel_delivery_drivers(name)")
+    .eq("id", deliveryId).single();
+  if (!d) { document.getElementById("ddLoading").textContent = "Couldn't find that delivery."; return; }
+
+  document.getElementById("ddTitle").textContent = `${d.branches?.code} — ${d.fuel_products?.name} — ${d.delivery_date}`;
+  document.getElementById("ddDeliveryInfo").innerHTML = `
+    <div class="stat"><div class="k">Vendor</div><div class="v">${d.fuel_vendors?.name || "—"}</div></div>
+    <div class="stat"><div class="k">Driver / Plate</div><div class="v">${d.fuel_delivery_drivers?.name || "—"} ${d.plate_number || ""}</div></div>
+    <div class="stat"><div class="k">Invoice #</div><div class="v">${d.invoice_number || "—"}</div></div>
+    <div class="stat"><div class="k">Liters Delivered</div><div class="v">${liters(d.invoiced_liters)}</div></div>
+    <div class="stat"><div class="k">Cost / Liter</div><div class="v">${peso(d.cost_per_liter)}</div></div>
+    <div class="stat"><div class="k">Total Cost</div><div class="v">${peso(d.total_cost)}</div></div>
+    <div class="stat"><div class="k">WAC Before → After</div><div class="v">${peso(d.wac_before)} → ${peso(d.wac_after)}</div></div>
+    <div class="stat"><div class="k">Dipstick Before → After</div><div class="v">${liters(d.dipstick_before_liters)} → ${liters(d.dipstick_after_liters)}</div></div>
+  `;
+
+  // Payments (both directions)
+  const { data: scAllocs } = await supabase.from("fuel_delivery_supplier_check_allocations")
+    .select("*, fuel_supplier_check_payments(check_number, check_date, status)").eq("delivery_id", deliveryId);
+  const { data: rcAllocs } = await supabase.from("fuel_delivery_receivable_check_allocations")
+    .select("*, fuel_branch_receivable_payments(check_number, check_date, status)").eq("delivery_id", deliveryId);
+  const scPaid = (scAllocs || []).reduce((s,a) => s + Number(a.amount), 0);
+  const rcPaid = (rcAllocs || []).reduce((s,a) => s + Number(a.amount), 0);
+  document.getElementById("ddPaymentSummary").innerHTML = `
+    <div class="stat"><div class="k">Owed to Supplier</div><div class="v">${peso(d.total_cost)}</div></div>
+    <div class="stat ${scPaid >= d.total_cost ? 'good' : 'warn'}"><div class="k">Paid So Far</div><div class="v">${peso(scPaid)} (${peso(d.total_cost - scPaid)} left)</div></div>
+    ${d.billed_total_amount ? `
+    <div class="stat"><div class="k">Owed by Branch</div><div class="v">${peso(d.billed_total_amount)}</div></div>
+    <div class="stat ${rcPaid >= d.billed_total_amount ? 'good' : 'warn'}"><div class="k">Received So Far</div><div class="v">${peso(rcPaid)} (${peso(d.billed_total_amount - rcPaid)} left)</div></div>` : ''}
+  `;
+  document.getElementById("ddSupplierChecks").querySelector("tbody").innerHTML = (scAllocs || []).map(a =>
+    `<tr><td>${a.fuel_supplier_check_payments?.check_number}</td><td>${a.fuel_supplier_check_payments?.check_date}</td><td>${peso(a.amount)}</td><td>${a.fuel_supplier_check_payments?.status}</td></tr>`
+  ).join("") || "<tr><td colspan='4' class='small'>None yet.</td></tr>";
+  document.getElementById("ddReceivableChecks").querySelector("tbody").innerHTML = (rcAllocs || []).map(a =>
+    `<tr><td>${a.fuel_branch_receivable_payments?.check_number}</td><td>${a.fuel_branch_receivable_payments?.check_date}</td><td>${peso(a.amount)}</td><td>${a.fuel_branch_receivable_payments?.status}</td></tr>`
+  ).join("") || "<tr><td colspan='4' class='small'>Not applicable, or none yet.</td></tr>";
+
+  // Stock reconciliation (reuses the same view the Dashboard and Reports use)
+  const { data: recon } = await supabase.from("fuel_delivery_stock_reconciliation").select("*").eq("delivery_id", deliveryId).single();
+  if (recon) {
+    document.getElementById("ddStockRecon").innerHTML = `
+      <div class="stat"><div class="k">Starting Stock</div><div class="v">${liters(recon.starting_stock)}</div></div>
+      <div class="stat"><div class="k">Dispensed (all)</div><div class="v">${liters(recon.total_liters_dispensed)}</div></div>
+      <div class="stat"><div class="k">Sold</div><div class="v">${liters(recon.total_liters_sold)}</div></div>
+      <div class="stat"><div class="k">Revenue</div><div class="v">${peso(recon.total_revenue)}</div></div>
+      <div class="stat"><div class="k">Expected Remaining</div><div class="v">${liters(recon.expected_remaining_stock)}</div></div>
+      <div class="stat ${recon.variance_liters && Math.abs(recon.variance_liters) > 5 ? 'warn' : ''}"><div class="k">Latest Actual / Variance</div><div class="v">${recon.latest_actual_stock !== null ? liters(recon.latest_actual_stock) : "no check yet"} ${recon.variance_liters !== null ? `(${recon.variance_liters > 0 ? '+' : ''}${recon.variance_liters} L)` : ''}</div></div>
+    `;
+  }
+
+  // Find every shift that dispensed from this delivery's window (this delivery's
+  // created_at up to whichever delivery came next for the same branch+product).
+  const { data: nextDeliveries } = await supabase.from("fuel_deliveries")
+    .select("created_at").eq("branch_id", d.branch_id).eq("product_id", d.product_id)
+    .gt("created_at", d.created_at).order("created_at", { ascending: true }).limit(1);
+  const windowEnd = nextDeliveries && nextDeliveries[0] ? nextDeliveries[0].created_at : null;
+
+  const { data: periods } = await supabase.from("fuel_meter_periods")
+    .select("id, shift_id, opening_reading_id").eq("branch_id", d.branch_id).eq("product_id", d.product_id);
+  const openingIds = (periods || []).map(p => p.opening_reading_id).filter(Boolean);
+  const { data: readings } = openingIds.length
+    ? await supabase.from("fuel_meter_readings").select("id, reading_time").in("id", openingIds)
+    : { data: [] };
+  const readingTimeById = {}; (readings || []).forEach(r => readingTimeById[r.id] = r.reading_time);
+  const shiftIdsInWindow = [...new Set((periods || [])
+    .filter(p => {
+      const t = readingTimeById[p.opening_reading_id];
+      if (!t) return false;
+      return t >= d.created_at && (!windowEnd || t < windowEnd);
+    })
+    .map(p => p.shift_id))];
+
+  if (shiftIdsInWindow.length) {
+    const { data: profitRows } = await supabase.from("fuel_profit_by_shift").select("*")
+      .in("shift_id", shiftIdsInWindow).eq("product_id", d.product_id);
+    document.getElementById("ddShiftActivity").querySelector("tbody").innerHTML = (profitRows || []).map(p =>
+      `<tr><td>${p.shift_date}</td><td>${p.shift_label}</td><td>${liters(p.liters_sold)}</td><td>${peso(p.revenue)}</td><td>${peso(p.profit_wac)}</td></tr>`
+    ).join("") || "<tr><td colspan='5' class='small'>No sales activity recorded yet.</td></tr>";
+
+    const { data: entries } = await supabase.from("timesheet_entries")
+      .select("time_in, time_out, employees(full_name), shifts(shift_date)")
+      .eq("branch_id", d.branch_id).in("shift_id", shiftIdsInWindow);
+    document.getElementById("ddEmployees").querySelector("tbody").innerHTML = (entries || []).map(e =>
+      `<tr><td>${e.employees?.full_name || ""}</td><td>${e.shifts?.shift_date || ""}</td><td>${e.time_in ? new Date(e.time_in).toLocaleTimeString() : "—"}</td><td>${e.time_out ? new Date(e.time_out).toLocaleTimeString() : "—"}</td></tr>`
+    ).join("") || "<tr><td colspan='4' class='small'>No timesheet entries found for these shifts.</td></tr>";
+
+    const { data: expenses } = await supabase.from("fuel_shift_expenses")
+      .select("*, shifts(shift_date)").eq("branch_id", d.branch_id).in("shift_id", shiftIdsInWindow);
+    document.getElementById("ddExpenses").querySelector("tbody").innerHTML = (expenses || []).map(ex =>
+      `<tr><td>${ex.shifts?.shift_date || ""}</td><td>${ex.category || "—"}</td><td>${peso(ex.amount)}</td><td>${ex.details || "—"}</td></tr>`
+    ).join("") || "<tr><td colspan='4' class='small'>No expenses recorded for these shifts.</td></tr>";
+  } else {
+    document.getElementById("ddShiftActivity").querySelector("tbody").innerHTML = "<tr><td colspan='5' class='small'>No sales activity recorded yet.</td></tr>";
+    document.getElementById("ddEmployees").querySelector("tbody").innerHTML = "<tr><td colspan='4' class='small'>No sales activity yet, so no shifts to check.</td></tr>";
+    document.getElementById("ddExpenses").querySelector("tbody").innerHTML = "<tr><td colspan='4' class='small'>No sales activity yet, so no shifts to check.</td></tr>";
+  }
+
+  document.getElementById("ddLoading").style.display = "none";
+  document.getElementById("ddContent").style.display = "block";
+}
+
+function closeDeliveryDetail() {
+  document.getElementById("deliveryDetailOverlay").style.display = "none";
+}
+
+// Carries a delivery's ID directly into the Checks tab, pre-selected — no
+// searching for it again on a separate, disconnected screen.
+async function goToChecksForDelivery(deliveryId) {
+  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+  document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+  document.querySelector('.tab[data-tab="checks"]').classList.add("active");
+  document.getElementById("panel-checks").classList.add("active");
+
+  await loadChecksTab();
+
+  document.getElementById("asgnDirection").value = "supplier"; // always applicable; switch to "receivable" manually if this was a GS4/GS5 wholesale delivery
+  await loadAllocatableDeliveries();
+
+  // Make sure this exact delivery is selectable even if it's already fully paid
+  // (and so wouldn't otherwise appear in the "still outstanding" list).
+  const sel = document.getElementById("asgnDelivery");
+  if (![...sel.options].some(o => o.value === deliveryId)) {
+    const { data: d } = await supabase.from("fuel_deliveries").select("delivery_date, branches(code), fuel_products(name)").eq("id", deliveryId).single();
+    const opt = document.createElement("option");
+    opt.value = deliveryId;
+    opt.textContent = `${d?.delivery_date || ""} — ${d?.branches?.code || ""} ${d?.fuel_products?.name || ""} (already fully paid)`;
+    sel.insertBefore(opt, sel.firstChild);
+  }
+  sel.value = deliveryId;
+  await loadDeliveryPaymentStatus();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
 async function loadDeliveries() {
   if (!currentBranch) return;
   await loadShiftOptions("dlvShift");
@@ -944,7 +1133,11 @@ async function loadDeliveries() {
       <td ${isOwner ? `style="cursor:pointer;" onclick="editDelivery(${i})"` : ""}>${peso(d.wac_after)}</td>
       <td style="${d.variance_liters != 0 ? 'color:var(--danger); font-weight:700;' : ''}" ${isOwner ? `onclick="editDelivery(${i})"` : ""}>${d.variance_liters > 0 ? "+" : ""}${d.variance_liters} L</td>
       <td ${isOwner ? `style="cursor:pointer;" onclick="editDelivery(${i})"` : ""}>${d.paid ? "✅" : "—"}</td>
-      <td>${isOwner ? `<button class="secondary small" style="margin:0; padding:6px 10px;" onclick="event.stopPropagation(); deleteDelivery('${d.id}')">Delete</button>` : ""}</td>
+      <td>
+        <button class="small" style="margin:0 0 4px; padding:6px 10px; display:block; width:100%;" onclick="event.stopPropagation(); showDeliveryDetail('${d.id}')">Details</button>
+        <button class="secondary small" style="margin:0 0 4px; padding:6px 10px; display:block; width:100%;" onclick="event.stopPropagation(); goToChecksForDelivery('${d.id}')">Checks</button>
+        ${isOwner ? `<button class="secondary small" style="margin:0; padding:6px 10px; display:block; width:100%;" onclick="event.stopPropagation(); deleteDelivery('${d.id}')">Delete</button>` : ""}
+      </td>
     </tr>`).join("") || "<tr><td colspan='9' class='small'>No deliveries yet.</td></tr>";
 }
 
@@ -1100,9 +1293,10 @@ async function saveDelivery() {
       msg.textContent = "Delivery updated — WAC chain recalculated for every delivery of this product."; msg.className = "msg ok";
       cancelEditDelivery();
     } else {
-      const { error } = await supabase.from("fuel_deliveries").insert(payload);
+      const { data: newDelivery, error } = await supabase.from("fuel_deliveries").insert(payload).select("id").single();
       if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
-      msg.textContent = "Delivery saved."; msg.className = "msg ok";
+      msg.innerHTML = `Delivery saved. <button class="small" style="margin:6px 0 0; padding:8px 12px;" onclick="goToChecksForDelivery('${newDelivery.id}')">Add Check for This Delivery →</button>`;
+      msg.className = "msg ok";
     }
     await loadDeliveries(); // also re-applies smart defaults for the next entry
   } finally {
