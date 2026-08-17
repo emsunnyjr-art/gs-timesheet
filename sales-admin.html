@@ -168,23 +168,14 @@
           </div>
         </div>
         <div id="dlvCheckBox" style="margin-top:14px; padding:12px; border-radius:8px; border:1px solid var(--accent); background:#0f172a;">
-          <p class="small" style="margin:0 0 8px;"><strong>Check for This Delivery (required)</strong> — a delivery can't be saved without one. Reuse the same check across products from one truck visit, or start a new one.</p>
-          <div class="row">
-            <label style="display:flex; align-items:center; gap:6px;"><input type="radio" name="dlvCheckMode" value="new" checked onchange="onCheckModeChange()"> New Check</label>
-            <label style="display:flex; align-items:center; gap:6px;"><input type="radio" name="dlvCheckMode" value="existing" onchange="onCheckModeChange()"> Reuse Existing Check</label>
+          <p class="small" style="margin:0 0 8px;"><strong>Checks for This Delivery (required)</strong> — a delivery can't be saved until the checks below sum exactly to the total cost. Reuse the same check across products from one truck visit, or start a new one.</p>
+          <div class="stat-grid">
+            <div class="stat"><div class="k">Total Delivery Cost</div><div class="v" id="dlvCheckTotalCost">—</div></div>
+            <div class="stat" id="dlvCheckBalanceStat"><div class="k">Balance Remaining</div><div class="v" id="dlvCheckBalance">—</div></div>
           </div>
-          <div id="dlvNewCheckFields">
-            <div class="row">
-              <div><label>Check #</label><input type="text" id="dlvNewCheckNumber"></div>
-              <div><label>Check Date</label><input type="date" id="dlvNewCheckDate"></div>
-              <div><label>Check Amount</label><input type="number" step="0.01" id="dlvNewCheckAmount"></div>
-            </div>
-          </div>
-          <div id="dlvExistingCheckFields" style="display:none;">
-            <label>Existing Check</label><select id="dlvExistingCheckId"></select>
-          </div>
-          <label>Amount From This Check For This Delivery</label>
-          <input type="number" step="0.01" id="dlvAllocationAmount">
+          <div id="dlvCheckRows" style="margin-top:10px;"></div>
+          <button type="button" class="secondary" style="margin-top:10px;" onclick="addCheckRow()">+ Add Another Check</button>
+          <div class="small" id="dlvCheckValidation" style="color:var(--danger); margin-top:8px; min-height:16px;"></div>
         </div>
         <button onclick="saveDelivery()" id="dlvSaveBtn">Save Delivery</button>
         <button class="secondary" onclick="cancelEditDelivery()" id="dlvCancelBtn">Cancel</button>
@@ -213,7 +204,7 @@
         </div>
         <button onclick="saveSupplierCheck()">Save Check</button>
         <div class="msg" id="scMsg"></div>
-        <table id="supplierChecksTable" style="margin-top:14px;"><thead><tr><th>Check #</th><th>Vendor</th><th>Check Date</th><th>Amount</th><th>Status</th><th>Covers</th></tr></thead><tbody></tbody></table>
+        <table id="supplierChecksTable" style="margin-top:14px;"><thead><tr><th>Check #</th><th>Vendor</th><th>Check Date</th><th>Amount</th><th>Status</th><th>Covers</th><th></th></tr></thead><tbody></tbody></table>
       </div>
 
       <div class="card">
@@ -231,7 +222,7 @@
         </div>
         <button onclick="saveReceivableCheck()">Save Check</button>
         <div class="msg" id="rcMsg"></div>
-        <table id="receivableChecksTable" style="margin-top:14px;"><thead><tr><th>Check #</th><th>Branch</th><th>Check Date</th><th>Amount</th><th>Status</th><th>Covers</th></tr></thead><tbody></tbody></table>
+        <table id="receivableChecksTable" style="margin-top:14px;"><thead><tr><th>Check #</th><th>Branch</th><th>Check Date</th><th>Amount</th><th>Status</th><th>Covers</th><th></th></tr></thead><tbody></tbody></table>
       </div>
 
       <div class="card">
@@ -814,41 +805,152 @@ function updateBilledPreview() {
   document.getElementById(id).addEventListener("change", updateBilledPreview);
 });
 
-function onCheckModeChange() {
-  const mode = document.querySelector('input[name="dlvCheckMode"]:checked').value;
-  document.getElementById("dlvNewCheckFields").style.display = mode === "new" ? "block" : "none";
-  document.getElementById("dlvExistingCheckFields").style.display = mode === "existing" ? "block" : "none";
-  if (mode === "existing") loadExistingChecksForVendor();
-}
-document.getElementById("dlvVendor").addEventListener("change", () => {
-  if (document.querySelector('input[name="dlvCheckMode"]:checked').value === "existing") loadExistingChecksForVendor();
-});
+// ---------- Split checks for a delivery ----------
+// Each row independently is either a brand-new check or a reuse of an existing
+// one (same choice the old single-check box offered, just repeated per row) so
+// a truck visit can be settled by any mix of new/reused checks across products.
+// Amounts must sum EXACTLY to the delivery's total cost before Save unlocks --
+// compared in centavos (integer cents), not raw floats, to avoid float drift
+// ever showing a false "balanced" or false "off by 0.01" state.
+let checkRowSeq = 0;
+let activeCheckRowIds = [];
 
-async function loadExistingChecksForVendor() {
+function toCents(v) { return Math.round((parseFloat(v) || 0) * 100); }
+function deliveryTotalCost() {
+  return (parseFloat(document.getElementById("dlvCost").value) || 0) * (parseFloat(document.getElementById("dlvLiters").value) || 0);
+}
+
+function renderCheckRowHtml(id) {
+  return `
+    <div class="check-row" id="dlvCheckRow_${id}" style="${activeCheckRowIds.length ? 'margin-top:14px; padding-top:14px; border-top:1px solid var(--border);' : ''}">
+      <div class="row" style="align-items:flex-end;">
+        <label style="display:flex; align-items:center; gap:6px;"><input type="radio" name="dlvCheckMode_${id}" value="new" checked onchange="onCheckRowModeChange(${id})"> New Check</label>
+        <label style="display:flex; align-items:center; gap:6px;"><input type="radio" name="dlvCheckMode_${id}" value="existing" onchange="onCheckRowModeChange(${id})"> Reuse Existing Check</label>
+        <button type="button" class="secondary" id="dlvCheckRemove_${id}" style="flex:0 0 auto; padding:8px 12px; margin:0; display:none;" onclick="removeCheckRow(${id})">Remove</button>
+      </div>
+      <div id="dlvCheckNewFields_${id}">
+        <div class="row">
+          <div><label>Check # / Bank</label><input type="text" id="dlvCheckNumber_${id}"></div>
+          <div><label>Date</label><input type="date" id="dlvCheckDate_${id}"></div>
+        </div>
+      </div>
+      <div id="dlvCheckExistingFields_${id}" style="display:none;">
+        <label>Existing Check</label><select id="dlvCheckExistingId_${id}"></select>
+      </div>
+      <label>Amount</label>
+      <input type="number" step="0.01" id="dlvCheckAmount_${id}">
+    </div>`;
+}
+
+function addCheckRow() {
+  const id = checkRowSeq++;
+  document.getElementById("dlvCheckRows").insertAdjacentHTML("beforeend", renderCheckRowHtml(id));
+  activeCheckRowIds.push(id);
+  document.getElementById(`dlvCheckAmount_${id}`).addEventListener("input", updateCheckBalance);
+  document.getElementById(`dlvCheckDate_${id}`).addEventListener("input", updateCheckBalance);
+  updateRemoveButtonVisibility();
+  updateCheckBalance();
+  return id;
+}
+
+function removeCheckRow(id) {
+  if (activeCheckRowIds.length <= 1) return; // always keep at least one row
+  document.getElementById(`dlvCheckRow_${id}`).remove();
+  activeCheckRowIds = activeCheckRowIds.filter(x => x !== id);
+  updateRemoveButtonVisibility();
+  updateCheckBalance();
+}
+
+function updateRemoveButtonVisibility() {
+  activeCheckRowIds.forEach(id => {
+    const btn = document.getElementById(`dlvCheckRemove_${id}`);
+    if (btn) btn.style.display = activeCheckRowIds.length > 1 ? "inline-block" : "none";
+  });
+}
+
+// Full reset of the check-row list back to a single blank "New Check" row --
+// used both by the Cancel/full-reset path and by the carry-forward path
+// (check amounts are per-product, so they're never carried across products).
+// If a check was used for the prior product in this same visit, the fresh
+// row defaults to reusing it (mirrors the old single-box continuity), while
+// staying just as easy to switch to "New Check" for a genuinely new one.
+function resetCheckRows() {
+  document.getElementById("dlvCheckRows").innerHTML = "";
+  activeCheckRowIds = [];
+  const id = addCheckRow();
+  if (lastUsedCheckId) {
+    document.querySelector(`input[name="dlvCheckMode_${id}"][value="existing"]`).checked = true;
+    onCheckRowModeChange(id, lastUsedCheckId);
+  }
+}
+
+function onCheckRowModeChange(id, preselectCheckId) {
+  const mode = document.querySelector(`input[name="dlvCheckMode_${id}"]:checked`).value;
+  document.getElementById(`dlvCheckNewFields_${id}`).style.display = mode === "new" ? "block" : "none";
+  document.getElementById(`dlvCheckExistingFields_${id}`).style.display = mode === "existing" ? "block" : "none";
+  if (mode === "existing") loadExistingChecksForRow(id, preselectCheckId);
+  updateCheckBalance();
+}
+
+async function loadExistingChecksForRow(id, preselectCheckId) {
   const vendorId = document.getElementById("dlvVendor").value;
-  const sel = document.getElementById("dlvExistingCheckId");
+  const sel = document.getElementById(`dlvCheckExistingId_${id}`);
+  if (!sel) return; // row may have been removed while this was in flight
   let q = supabase.from("fuel_supplier_check_payments").select("*, fuel_vendors(name)").order("created_at", { ascending: false }).limit(20);
   if (vendorId) q = q.eq("vendor_id", vendorId);
   const { data } = await q;
   sel.innerHTML = (data || []).map(c => `<option value="${c.id}">${c.check_number} — ${c.fuel_vendors?.name || ""} — ${c.check_date} — ${peso(c.amount)}</option>`).join("")
     || "<option value=''>No checks found for this vendor yet</option>";
-  if (lastUsedCheckId && [...sel.options].some(o => o.value === lastUsedCheckId)) sel.value = lastUsedCheckId;
+  const wanted = preselectCheckId || lastUsedCheckId;
+  if (wanted && [...sel.options].some(o => o.value === wanted)) sel.value = wanted;
 }
+document.getElementById("dlvVendor").addEventListener("change", () => {
+  activeCheckRowIds.forEach(id => {
+    const mode = document.querySelector(`input[name="dlvCheckMode_${id}"]:checked`)?.value;
+    if (mode === "existing") loadExistingChecksForRow(id);
+  });
+});
 
-// Suggest the allocation (and new check amount) as this delivery's own total cost by
-// default - the common case - while staying fully editable for split payments.
-function updateSuggestedCheckAmounts() {
-  const cost = parseFloat(document.getElementById("dlvCost").value) || 0;
-  const liters = parseFloat(document.getElementById("dlvLiters").value) || 0;
-  const total = cost * liters;
-  if (total > 0) {
-    if (!document.getElementById("dlvAllocationAmount").value) document.getElementById("dlvAllocationAmount").value = total.toFixed(2);
-    if (document.querySelector('input[name="dlvCheckMode"]:checked').value === "new" && !document.getElementById("dlvNewCheckAmount").value) {
-      document.getElementById("dlvNewCheckAmount").value = total.toFixed(2);
-    }
+// Live "Balance Remaining" = Total Delivery Cost - sum(entered check amounts),
+// compared in integer centavos so 0.1 + 0.2-style float drift can never show
+// a false balanced/unbalanced state. Gates the Save button and shows inline
+// validation text rather than letting an invalid save fail silently.
+function updateCheckBalance() {
+  const totalCents = toCents(deliveryTotalCost());
+  let sumCents = 0;
+  let anyRowFilled = false;
+  activeCheckRowIds.forEach(id => {
+    const amountEl = document.getElementById(`dlvCheckAmount_${id}`);
+    if (!amountEl) return;
+    const cents = toCents(amountEl.value);
+    sumCents += cents;
+    const mode = document.querySelector(`input[name="dlvCheckMode_${id}"]:checked`)?.value;
+    const hasDateOrExisting = mode === "existing"
+      ? !!document.getElementById(`dlvCheckExistingId_${id}`)?.value
+      : !!document.getElementById(`dlvCheckDate_${id}`)?.value;
+    if (cents > 0 && hasDateOrExisting) anyRowFilled = true;
+  });
+
+  document.getElementById("dlvCheckTotalCost").textContent = peso(totalCents / 100);
+  const balanceCents = totalCents - sumCents;
+  const balanceEl = document.getElementById("dlvCheckBalance");
+  const balanceStat = document.getElementById("dlvCheckBalanceStat");
+  const balanced = balanceCents === 0;
+  balanceEl.textContent = (balanced ? "✓ " : "") + peso(Math.abs(balanceCents) / 100) + (balanced ? "" : (balanceCents > 0 ? " short" : " over"));
+  balanceStat.className = "stat " + (balanced ? "good" : "warn");
+
+  const valid = anyRowFilled && balanced;
+  const validationEl = document.getElementById("dlvCheckValidation");
+  const saveBtn = document.getElementById("dlvSaveBtn");
+  if (!editingDeliveryId) {
+    saveBtn.disabled = !valid;
+    validationEl.textContent = valid ? "" :
+      (!anyRowFilled ? "Add at least one check with an amount and a date (or an existing check) before saving."
+        : "Checks must sum exactly to the total delivery cost before saving.");
   }
+  return valid;
 }
-["dlvCost","dlvLiters"].forEach(id => document.getElementById(id).addEventListener("input", updateSuggestedCheckAmounts));
+["dlvCost","dlvLiters"].forEach(id => document.getElementById(id).addEventListener("input", updateCheckBalance));
 
 function populateVendorDriverSelects() {
   document.getElementById("dlvVendor").innerHTML = "<option value=''>—</option>" + vendors.map(v => `<option value="${v.id}">${v.name}</option>`).join("");
@@ -947,15 +1049,11 @@ async function applyDeliverySmartDefaults() {
   }
 
   const last = todays[todays.length - 1];
-  clearProductSpecificFields();
+  clearProductSpecificFields(); // also resets the check rows, defaulting to reuse lastUsedCheckId if set
   document.getElementById("dlvVendor").value = last.vendor_id || "";
   document.getElementById("dlvDriver").value = last.driver_id || "";
   document.getElementById("dlvPlate").value = last.plate_number || "";
   document.getElementById("dlvDate").value = today;
-  if (lastUsedCheckId) {
-    document.querySelector('input[name="dlvCheckMode"][value="existing"]').checked = true;
-    onCheckModeChange();
-  }
   setDeliveryProductByCode(nextCode);
 }
 
@@ -1055,7 +1153,8 @@ async function loadChecksTab() {
   (scAllocs || []).forEach(a => { scCounts[a.check_id] = (scCounts[a.check_id] || 0) + 1; scTotals[a.check_id] = (scTotals[a.check_id] || 0) + Number(a.amount); });
   document.getElementById("supplierChecksTable").querySelector("tbody").innerHTML = (sc || []).map(c => `
     <tr><td>${c.check_number}</td><td>${c.fuel_vendors?.name || "—"}</td><td>${c.check_date}</td><td>${peso(c.amount)}</td>
-    <td>${c.status}</td><td>${scCounts[c.id] || 0} deliveries — ${peso(scTotals[c.id] || 0)} allocated</td></tr>`).join("") || "<tr><td colspan='6' class='small'>No supplier checks yet.</td></tr>";
+    <td>${c.status}</td><td>${scCounts[c.id] || 0} deliveries — ${peso(scTotals[c.id] || 0)} allocated</td><td>${checkActionCell(c, "supplier")}</td></tr>
+    ${clearCheckFormRow(c, "supplier")}`).join("") || "<tr><td colspan='7' class='small'>No supplier checks yet.</td></tr>";
 
   const { data: rc } = await supabase.from("fuel_branch_receivable_payments").select("*, branches(code)").order("check_date");
   const { data: rcAllocs } = await supabase.from("fuel_delivery_receivable_check_allocations").select("check_id, amount");
@@ -1063,9 +1162,64 @@ async function loadChecksTab() {
   (rcAllocs || []).forEach(a => { rcCounts[a.check_id] = (rcCounts[a.check_id] || 0) + 1; rcTotals[a.check_id] = (rcTotals[a.check_id] || 0) + Number(a.amount); });
   document.getElementById("receivableChecksTable").querySelector("tbody").innerHTML = (rc || []).map(c => `
     <tr><td>${c.check_number}</td><td>${c.branches?.code || ""}</td><td>${c.check_date}</td><td>${peso(c.amount)}</td>
-    <td>${c.status}</td><td>${rcCounts[c.id] || 0} deliveries — ${peso(rcTotals[c.id] || 0)} allocated</td></tr>`).join("") || "<tr><td colspan='6' class='small'>No receivable checks yet.</td></tr>";
+    <td>${c.status}</td><td>${rcCounts[c.id] || 0} deliveries — ${peso(rcTotals[c.id] || 0)} allocated</td><td>${checkActionCell(c, "receivable")}</td></tr>
+    ${clearCheckFormRow(c, "receivable")}`).join("") || "<tr><td colspan='7' class='small'>No receivable checks yet.</td></tr>";
 
   await loadAllocatableDeliveries();
+}
+
+function escapeHtml(str) {
+  return String(str ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// ---------- Clear Check (both supplier-payable and branch-receivable) ----------
+// A single 'cleared' status covers cleared/paid/cash-settled alike -- no
+// separate voided/bounced state needed here ('bounced' already exists
+// separately for a check that failed to clear at all). business_debt_summary
+// already filters supplier checks by status='cleared' for its "paid" total,
+// so flipping status here is all that's needed for the Debt Tracker to pick
+// it up -- no view changes required.
+function checkTableName(kind) { return kind === "supplier" ? "fuel_supplier_check_payments" : "fuel_branch_receivable_payments"; }
+
+function checkActionCell(c, kind) {
+  if (c.status === "cleared") {
+    return `Cleared ${c.cleared_at || ""}${c.cleared_note ? " — " + escapeHtml(c.cleared_note) : ""}`;
+  }
+  return `<button type="button" class="secondary small" style="margin:0; padding:6px 10px;" onclick="showClearCheckForm('${kind}','${c.id}')">Clear Check</button>`;
+}
+
+function clearCheckFormRow(c, kind) {
+  if (c.status === "cleared") return "";
+  return `<tr id="clearFormRow_${kind}_${c.id}" style="display:none;">
+    <td colspan="7">
+      <div class="row" style="align-items:flex-end;">
+        <div><label>Date Cleared</label><input type="date" id="clearDate_${kind}_${c.id}" value="${todayIso()}"></div>
+        <div><label>Note (optional)</label><input type="text" id="clearNote_${kind}_${c.id}" placeholder="e.g. Paid in cash"></div>
+        <button type="button" class="secondary" style="flex:0 0 auto; margin:0;" onclick="hideClearCheckForm('${kind}','${c.id}')">Cancel</button>
+        <button type="button" style="flex:0 0 auto; margin:0;" onclick="confirmClearCheck('${kind}','${c.id}')">Confirm</button>
+      </div>
+    </td>
+  </tr>`;
+}
+
+function showClearCheckForm(kind, id) {
+  const row = document.getElementById(`clearFormRow_${kind}_${id}`);
+  if (row) row.style.display = "table-row";
+}
+function hideClearCheckForm(kind, id) {
+  const row = document.getElementById(`clearFormRow_${kind}_${id}`);
+  if (row) row.style.display = "none";
+}
+
+async function confirmClearCheck(kind, id) {
+  const clearedAt = document.getElementById(`clearDate_${kind}_${id}`).value;
+  if (!clearedAt) { alert("Pick the date this check was cleared."); return; }
+  const note = document.getElementById(`clearNote_${kind}_${id}`).value.trim() || null;
+  const { error } = await supabase.from(checkTableName(kind))
+    .update({ status: "cleared", cleared_at: clearedAt, cleared_note: note }).eq("id", id);
+  if (error) { alert("Error: " + error.message); return; }
+  await loadChecksTab();
+  if (document.querySelector('.tab[data-tab="debt"]')?.classList.contains("active")) loadDebtTab();
 }
 
 async function saveSupplierCheck() {
@@ -1411,6 +1565,7 @@ function editDelivery(i) {
     updateBilledPreview();
   }
   document.getElementById("dlvSaveBtn").textContent = "Update Delivery (recalculates WAC chain)";
+  document.getElementById("dlvSaveBtn").disabled = false; // editing bypasses the check-balance gate entirely
   document.getElementById("dlvCancelBtn").textContent = "Cancel Edit";
   document.getElementById("dlvCheckBox").style.display = "none"; // checks for an existing delivery are managed via the Checks tab, not re-required here
   document.getElementById("dlvMsg").textContent = "";
@@ -1427,7 +1582,7 @@ function cancelEditDelivery() {
 
 function resetDeliveryFormFields() {
   // Full reset - used by the Cancel button, for genuinely starting over.
-  ["dlvPlate","dlvInvoice","dlvLiters","dlvCost","dlvMarket","dlvBeforeCm","dlvBeforeL","dlvAfterCm","dlvAfterL","dlvNewCheckNumber","dlvNewCheckAmount","dlvAllocationAmount"].forEach(id => document.getElementById(id).value = "");
+  ["dlvPlate","dlvInvoice","dlvLiters","dlvCost","dlvMarket","dlvBeforeCm","dlvBeforeL","dlvAfterCm","dlvAfterL"].forEach(id => document.getElementById(id).value = "");
   document.getElementById("dlvPaid").checked = false;
   document.getElementById("dlvDate").value = todayIso();
   document.getElementById("dlvProduct").selectedIndex = 0;
@@ -1435,19 +1590,18 @@ function resetDeliveryFormFields() {
   document.getElementById("dlvVendor").value = "";
   document.getElementById("dlvDriver").value = "";
   document.getElementById("dlvShift").value = "";
-  document.getElementById("dlvNewCheckDate").value = "";
   lastUsedCheckId = null;
-  document.querySelector('input[name="dlvCheckMode"][value="new"]').checked = true;
-  onCheckModeChange();
+  resetCheckRows();
 }
 
 function clearProductSpecificFields() {
   // After a successful save: one supplier visit is usually 2-3 products on
   // the same truck, so vendor/driver/plate/date stay filled in -- only the
-  // per-product figures (liters, cost, dipstick, and the check allocation
-  // amount, which differs per product's own total) need re-entering.
-  ["dlvLiters","dlvCost","dlvMarket","dlvBeforeCm","dlvBeforeL","dlvAfterCm","dlvAfterL","dlvAllocationAmount"].forEach(id => document.getElementById(id).value = "");
+  // per-product figures (liters, cost, dipstick, and the checks, which sum
+  // to a different total per product) need re-entering.
+  ["dlvLiters","dlvCost","dlvMarket","dlvBeforeCm","dlvBeforeL","dlvAfterCm","dlvAfterL"].forEach(id => document.getElementById(id).value = "");
   document.getElementById("dlvPaid").checked = false;
+  resetCheckRows();
 }
 
 // Looks up the tank's real calibration curve and linearly interpolates -- this is
@@ -1523,16 +1677,30 @@ async function saveDelivery() {
       msg.textContent = "Delivery updated — WAC chain recalculated for every delivery of this product."; msg.className = "msg ok";
       cancelEditDelivery();
     } else {
-      const checkMode = document.querySelector('input[name="dlvCheckMode"]:checked').value;
-      const allocationAmount = parseFloat(document.getElementById("dlvAllocationAmount").value);
-      if (!allocationAmount || allocationAmount <= 0) { msg.textContent = "An allocation amount for the check is required."; msg.className = "msg err"; return; }
-      if (checkMode === "new") {
-        const num = document.getElementById("dlvNewCheckNumber").value.trim();
-        const date = document.getElementById("dlvNewCheckDate").value;
-        const amt = parseFloat(document.getElementById("dlvNewCheckAmount").value);
-        if (!num || !date || !amt || amt <= 0) { msg.textContent = "New check needs a number, date, and amount."; msg.className = "msg err"; return; }
-      } else if (!document.getElementById("dlvExistingCheckId").value) {
-        msg.textContent = "Pick an existing check to reuse."; msg.className = "msg err"; return;
+      const checksPayload = [];
+      let rowsOk = true;
+      for (const id of activeCheckRowIds) {
+        const mode = document.querySelector(`input[name="dlvCheckMode_${id}"]:checked`).value;
+        const amount = parseFloat(document.getElementById(`dlvCheckAmount_${id}`).value);
+        if (!amount || amount <= 0) { rowsOk = false; break; }
+        if (mode === "new") {
+          const num = document.getElementById(`dlvCheckNumber_${id}`).value.trim();
+          const date = document.getElementById(`dlvCheckDate_${id}`).value;
+          if (!num || !date) { rowsOk = false; break; }
+          checksPayload.push({ mode: "new", check_number: num, check_date: date, amount });
+        } else {
+          const checkId = document.getElementById(`dlvCheckExistingId_${id}`).value;
+          if (!checkId) { rowsOk = false; break; }
+          checksPayload.push({ mode: "existing", check_id: checkId, amount });
+        }
+      }
+      // Defense in depth: Save is already disabled unless this holds, but the
+      // RPC itself is the real backstop (checked again server-side) - this
+      // just avoids a wasted round-trip and shows the same inline message.
+      if (!rowsOk || !checksPayload.length || !updateCheckBalance()) {
+        msg.textContent = "Fix the checks below — each row needs an amount and a date (or an existing check), and they must sum exactly to the total delivery cost.";
+        msg.className = "msg err";
+        return;
       }
 
       const { data: newDeliveryId, error } = await supabase.rpc("fn_save_delivery_with_check", {
@@ -1544,23 +1712,16 @@ async function saveDelivery() {
         p_dipstick_before_cm: payload.dipstick_before_cm, p_dipstick_before_liters: payload.dipstick_before_liters,
         p_dipstick_after_cm: payload.dipstick_after_cm, p_dipstick_after_liters: payload.dipstick_after_liters,
         p_paid: payload.paid, p_markup_type: payload.markup_type, p_markup_value: payload.markup_value,
-        p_use_existing_check: checkMode === "existing",
-        p_existing_check_id: checkMode === "existing" ? document.getElementById("dlvExistingCheckId").value : null,
-        p_new_check_number: checkMode === "new" ? document.getElementById("dlvNewCheckNumber").value.trim() : null,
-        p_new_check_date: checkMode === "new" ? document.getElementById("dlvNewCheckDate").value : null,
-        p_new_check_amount: checkMode === "new" ? parseFloat(document.getElementById("dlvNewCheckAmount").value) : null,
-        p_allocation_amount: allocationAmount
+        p_checks: checksPayload
       });
       if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
 
-      // Remember which check was used, so the next product in this same visit defaults to reusing it.
-      if (checkMode === "existing") lastUsedCheckId = document.getElementById("dlvExistingCheckId").value;
-      else {
-        const { data: theCheck } = await supabase.from("fuel_supplier_check_payments").select("id").eq("check_number", document.getElementById("dlvNewCheckNumber").value.trim()).eq("check_date", document.getElementById("dlvNewCheckDate").value).order("created_at", { ascending: false }).limit(1).single();
-        lastUsedCheckId = theCheck?.id || null;
-      }
+      // Remember the last check used, so the next product in this same visit defaults to reusing it.
+      const { data: allocs } = await supabase.from("fuel_delivery_supplier_check_allocations")
+        .select("check_id").eq("delivery_id", newDeliveryId).order("created_at", { ascending: false }).limit(1);
+      lastUsedCheckId = allocs && allocs[0] ? allocs[0].check_id : null;
 
-      msg.innerHTML = `Delivery saved with check attached. <button class="small" style="margin:6px 0 0; padding:8px 12px;" onclick="showDeliveryDetail('${newDeliveryId}')">View Details →</button>`;
+      msg.innerHTML = `Delivery saved with ${checksPayload.length} check${checksPayload.length > 1 ? "s" : ""} attached. <button class="small" style="margin:6px 0 0; padding:8px 12px;" onclick="showDeliveryDetail('${newDeliveryId}')">View Details →</button>`;
       msg.className = "msg ok";
     }
     await loadDeliveries(); // also re-applies smart defaults for the next entry

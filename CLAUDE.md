@@ -106,6 +106,14 @@ Before applying any migration or Postgres function change with `apply_migration`
 
 This is purely a data-level fact (which branches happen to have calibration rows) — nothing in the app code enforces or branches on it structurally. Don't assume a new branch will/won't have a calibration table, or that dipstick-reading UI can treat all branches identically; check `fuel_tank_calibration` for that branch's tanks first.
 
+## Known RLS gap: `fuel_deliveries` check-required rule is app-enforced, not DB-enforced (open, not fixed)
+
+`sales-admin.html`'s delivery form requires one or more checks summing exactly to the delivery total before it will call `fn_save_delivery_with_check` — and that function itself re-validates the sum server-side (raises and rolls back the whole call on a mismatch or zero checks), so a client that goes through the RPC genuinely cannot save an under/over/un-checked delivery.
+
+But RLS on `fuel_deliveries` allows **any branch-scoped authenticated user to INSERT directly** (`fuel_deliveries_insert_branch_or_owner`: owner OR `branch_id` match) — it isn't restricted to going through the RPC. So a raw `supabase.from("fuel_deliveries").insert(...)` (bypassing the RPC entirely) could still create a delivery with zero attached checks. (RLS on `fuel_supplier_check_payments`/`fuel_delivery_supplier_check_allocations` *is* owner-write-only, which is why a non-owner's RPC call fails partway if they tried to attach a check themselves — but that doesn't stop a bypass that just never calls the RPC.)
+
+This is a pre-existing gap, not something introduced or fixed by the split-check work — it's called out here deliberately rather than fixed, because closing it (tightening the `fuel_deliveries` INSERT policy to route only through the RPC) is entangled with `sales-clock.html`'s mobile delivery form, which still does a raw `fuel_deliveries` insert directly and has never adopted the check-required/atomic-allocation flow at all. Tightening the policy without first migrating mobile onto the RPC would break mobile delivery logging outright. Don't tighten this RLS policy without addressing mobile in the same change.
+
 ## Known iOS Safari pitfalls already fixed
 
 - **Login fields must be real `type="password"` inputs**, not a text input with CSS-based masking — Safari's autofill/keychain integration behaves inconsistently (or not at all) against a faked password field.
