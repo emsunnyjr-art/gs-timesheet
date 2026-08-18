@@ -125,65 +125,57 @@
 
     <!-- ============ DELIVERIES ============ -->
     <div class="panel" id="panel-deliveries">
-      <div class="card">
-        <h2>Log a Delivery</h2>
+      <div class="card" id="visitDraftBanner" style="display:none; border:1px solid var(--orange);">
+        <p class="small" style="margin:0 0 10px;">You have an unsaved delivery visit draft, last edited <span id="draftTimestamp"></span>.</p>
         <div class="row">
-          <div><label>Product</label><select id="dlvProduct"></select></div>
-          <div><label>Tank</label><select id="dlvTank"></select></div>
-          <div><label>Vendor</label><select id="dlvVendor"></select></div>
+          <button type="button" style="margin:0;" onclick="restoreVisitDraft()">Restore Draft</button>
+          <button type="button" class="secondary" style="margin:0;" onclick="discardVisitDraft()">Discard</button>
         </div>
+      </div>
+      <div class="card">
+        <h2>Log a Delivery Visit</h2>
+        <p class="small">Enter every product this truck delivered (up to 3), then attach checks covering the combined total, and save once at the end — nothing is written to the database until you save.</p>
         <div class="row">
+          <div><label>Vendor</label><select id="dlvVendor"></select></div>
           <div><label>Driver</label><select id="dlvDriver"></select></div>
           <div><label>Plate Number</label><input id="dlvPlate"></div>
-          <div><label>Shift (optional)</label><select id="dlvShift"></select></div>
         </div>
         <div class="row">
           <div><label>Invoice #</label><input id="dlvInvoice"></div>
+          <div><label>Shift (optional)</label><select id="dlvShift"></select></div>
           <div><label>Delivery Date</label><input type="date" id="dlvDate"></div>
         </div>
-        <p class="small">Check tracking (numbers, dates, amounts) now lives in the <strong>Checks</strong> tab — after saving, use the "Add Check for This Delivery" button that appears, or the "Checks" button on any delivery row.</p>
-        <div class="row">
-          <div><label>Invoiced Liters</label><input type="number" step="0.01" id="dlvLiters"></div>
-          <div><label>Cost / Liter (actual paid)</label><input type="number" step="0.0001" id="dlvCost"></div>
-          <div><label>Market Reference Price / Liter</label><input type="number" step="0.0001" id="dlvMarket" placeholder="for monitoring only"></div>
+        <label style="display:flex; align-items:center; gap:8px; margin-top:14px;"><input type="checkbox" id="dlvPaid" style="width:auto;"> Paid (outside the check system, e.g. cash)</label>
+
+        <div id="visitProductSlots" style="margin-top:10px;"></div>
+
+        <div class="stat-grid" style="margin-top:14px;">
+          <div class="stat"><div class="k">Diesel</div><div class="v" id="visitSummary_DIESEL">— not yet entered</div></div>
+          <div class="stat"><div class="k">Premium</div><div class="v" id="visitSummary_PREMIUM">— not yet entered</div></div>
+          <div class="stat"><div class="k">Unleaded</div><div class="v" id="visitSummary_UNLEADED">— not yet entered</div></div>
+          <div class="stat good"><div class="k">Combined Visit Total</div><div class="v" id="visitCombinedTotal">₱0.00</div></div>
         </div>
-        <div class="row">
-          <div><label>Dipstick BEFORE unloading — cm</label><input type="number" step="0.01" id="dlvBeforeCm"></div>
-          <div><label>Dipstick BEFORE — Liters</label><input type="number" step="0.01" id="dlvBeforeL"></div>
-        </div>
-        <div class="row">
-          <div><label>Dipstick AFTER unloading — cm</label><input type="number" step="0.01" id="dlvAfterCm"></div>
-          <div><label>Dipstick AFTER — Liters</label><input type="number" step="0.01" id="dlvAfterL"></div>
-        </div>
-        <label style="display:flex; align-items:center; gap:8px; margin-top:14px;"><input type="checkbox" id="dlvPaid" style="width:auto;"> Paid</label>
-        <div id="dlvMarkupBox" style="display:none; margin-top:14px; padding:12px; border-radius:8px; border:1px solid var(--border); background:#0f172a;">
-          <p class="small" style="margin:0 0 8px;">This branch receives wholesale-supplied stock — billed amount below is what they owe for this delivery.</p>
-          <div class="row">
-            <div><label>Markup Type</label><select id="dlvMarkupType"><option value="per_liter">Peso per Liter</option><option value="percentage">Percentage</option></select></div>
-            <div><label>Markup Value</label><input type="number" step="0.01" id="dlvMarkupValue"></div>
-          </div>
-          <div class="stat-grid">
-            <div class="stat"><div class="k">Billed Price / Liter</div><div class="v" id="dlvBilledPricePreview">—</div></div>
-            <div class="stat"><div class="k">Billed Total</div><div class="v" id="dlvBilledTotalPreview">—</div></div>
-          </div>
-        </div>
+
         <div id="dlvCheckBox" style="margin-top:14px; padding:12px; border-radius:8px; border:1px solid var(--accent); background:#0f172a;">
-          <p class="small" style="margin:0 0 8px;"><strong>Checks for This Delivery (required)</strong> — a delivery can't be saved until the checks below sum exactly to the total cost. Reuse the same check across products from one truck visit, or start a new one.</p>
-          <div class="stat-grid">
-            <div class="stat"><div class="k">Total Delivery Cost</div><div class="v" id="dlvCheckTotalCost">—</div></div>
-            <div class="stat" id="dlvCheckBalanceStat"><div class="k">Balance Remaining</div><div class="v" id="dlvCheckBalance">—</div></div>
+          <p class="small" id="dlvCheckLockNote" style="margin:0 0 8px; color:var(--orange); display:none;">🔒 Resolve all 3 product slots above (fill one in, or mark "Not delivered this visit") before checks unlock.</p>
+          <div id="dlvCheckContent">
+            <p class="small" style="margin:0 0 8px;"><strong>Checks for This Visit (required)</strong> — the visit can't be saved until the checks below sum exactly to the combined total. Reuse the same check across products from one truck visit, or start a new one.</p>
+            <div class="stat-grid">
+              <div class="stat"><div class="k">Combined Visit Total</div><div class="v" id="dlvCheckTotalCost">—</div></div>
+              <div class="stat" id="dlvCheckBalanceStat"><div class="k">Balance Remaining</div><div class="v" id="dlvCheckBalance">—</div></div>
+            </div>
+            <div id="dlvCheckRows" style="margin-top:10px;"></div>
+            <button type="button" class="secondary" id="dlvAddCheckBtn" style="margin-top:10px;" onclick="addCheckRow()">+ Add Another Check</button>
+            <div class="small" id="dlvCheckValidation" style="color:var(--danger); margin-top:8px; min-height:16px;"></div>
           </div>
-          <div id="dlvCheckRows" style="margin-top:10px;"></div>
-          <button type="button" class="secondary" style="margin-top:10px;" onclick="addCheckRow()">+ Add Another Check</button>
-          <div class="small" id="dlvCheckValidation" style="color:var(--danger); margin-top:8px; min-height:16px;"></div>
         </div>
-        <button onclick="saveDelivery()" id="dlvSaveBtn">Save Delivery</button>
+        <button onclick="saveDeliveryVisit()" id="dlvSaveBtn">Save Delivery Visit</button>
         <button class="secondary" onclick="cancelEditDelivery()" id="dlvCancelBtn">Cancel</button>
         <div class="msg" id="dlvMsg"></div>
       </div>
       <div class="card">
         <h2>Recent Deliveries <span class="small" id="deliveriesEditHint"></span></h2>
-        <table id="deliveriesTable"><thead><tr><th>Date</th><th>Product</th><th>Vendor</th><th>Liters</th><th>Cost/L</th><th>WAC After</th><th>Delivered vs Invoiced</th><th>Payment</th><th></th></tr></thead><tbody></tbody></table>
+        <table id="deliveriesTable"><thead><tr><th>Date</th><th>Product</th><th>Vendor</th><th>Liters</th><th>Cost/L</th><th>WAC After</th><th>Delivered vs Invoiced</th><th>Payment (visit)</th><th></th></tr></thead><tbody></tbody></table>
       </div>
     </div>
 
@@ -226,11 +218,11 @@
       </div>
 
       <div class="card">
-        <h2>Track Payments for a Delivery</h2>
-        <p class="small">Pick a delivery — you'll see how much is paid so far and how much remains. Add each check as its own allocation, so a delivery paid across 2+ checks on different dates stays fully traceable, not just "paid: yes/no."</p>
+        <h2>Track Payments for a Visit</h2>
+        <p class="small">Pick a delivery visit — you'll see how much is paid so far (across all its products combined) and how much remains. Add each check as its own allocation, so a visit paid across 2+ checks on different dates stays fully traceable, not just "paid: yes/no."</p>
         <div class="row">
-          <div><label>Direction</label><select id="asgnDirection" onchange="loadAllocatableDeliveries()"><option value="supplier">What You Owe the Supplier</option><option value="receivable">What GS4/GS5 Owes You</option></select></div>
-          <div><label>Delivery</label><select id="asgnDelivery" onchange="loadDeliveryPaymentStatus()"></select></div>
+          <div><label>Direction</label><select id="asgnDirection" onchange="loadAllocatableVisits()"><option value="supplier">What You Owe the Supplier</option><option value="receivable">What GS4/GS5 Owes You</option></select></div>
+          <div><label>Visit</label><select id="asgnVisit" onchange="loadVisitPaymentStatus()"></select></div>
         </div>
         <div class="stat-grid" id="asgnStatusGrid" style="display:none;">
           <div class="stat"><div class="k">Total</div><div class="v" id="asgnTotal">—</div></div>
@@ -239,7 +231,7 @@
         </div>
         <table id="asgnAllocationsTable" style="margin-top:10px;"><thead><tr><th>Check #</th><th>Check Date</th><th>Amount</th><th>Status</th></tr></thead><tbody></tbody></table>
         <hr class="divider">
-        <label>Add a Check to This Delivery</label>
+        <label>Add a Check to This Visit</label>
         <div class="row">
           <div><select id="asgnCheck"></select></div>
           <div><input type="number" step="0.01" id="asgnAmount" placeholder="Amount from this check"></div>
@@ -601,8 +593,14 @@
           <div class="stat-grid" id="ddDeliveryInfo"></div>
         </div>
 
+        <div class="card" style="background:#0f172a;" id="ddVisitCard">
+          <h2>Other Products From This Visit</h2>
+          <p class="small" style="margin-top:0;">Checks are attached to the whole visit, not this product alone — see Payment Status below for the combined total.</p>
+          <table id="ddVisitSiblings"><thead><tr><th>Product</th><th>Liters</th><th>Total Cost</th></tr></thead><tbody></tbody></table>
+        </div>
+
         <div class="card" style="background:#0f172a;">
-          <h2>Payment Status</h2>
+          <h2>Payment Status (whole visit)</h2>
           <div class="stat-grid" id="ddPaymentSummary"></div>
           <p class="small" style="margin-top:10px;"><strong>Checks You Paid the Supplier</strong></p>
           <table id="ddSupplierChecks"><thead><tr><th>Check #</th><th>Date</th><th>Amount</th><th>Status</th></tr></thead><tbody></tbody></table>
@@ -746,39 +744,113 @@ async function initApp() {
 
   populateProductSelects();
   populateVendorDriverSelects();
-  document.getElementById("dlvDate").value = todayIso();
+  renderProductSlots();
+  resetVisitFormFields(); // blank starting state; does not touch a stored draft
+  checkForVisitDraft(); // offers to restore it if one exists, on top of the blank state above
   onTabShown("dashboard");
 }
 
 function onBranchChange() {
   currentBranch = document.getElementById("globalBranch").value;
+  if (!editingDeliveryId) resetVisitFormFields(); // a visit is branch-scoped; slot tank options depend on currentBranch
   onTabShown(document.querySelector(".tab.active").dataset.tab);
 }
 
 function populateProductSelects() {
   const opts = products.map(p => `<option value="${p.id}">${p.name}</option>`).join("");
-  ["dlvProduct","priceProduct","tkProduct","pmProduct"].forEach(id => {
+  ["priceProduct","tkProduct","pmProduct"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.innerHTML = opts;
   });
-  document.getElementById("dlvProduct").onchange = populateTankSelectForDelivery;
-  populateTankSelectForDelivery();
 }
-function populateTankSelectForDelivery() {
-  const pid = document.getElementById("dlvProduct").value;
+
+// ============================================================
+// DELIVERY VISIT — up to 3 fixed product slots (Diesel/Premium/Unleaded),
+// entered together and committed together. Each slot is either filled in or
+// explicitly marked "not delivered this visit" -- never left ambiguous.
+// ============================================================
+const DELIVERY_PRODUCT_ORDER = ["DIESEL", "PREMIUM", "UNLEADED"];
+let markupSettingsCache = [];
+
+function productIdFor(code) { return products.find(p => p.code === code)?.id || null; }
+function productNameFor(code) { return products.find(p => p.code === code)?.name || code; }
+
+function renderProductSlots() {
+  document.getElementById("visitProductSlots").innerHTML = DELIVERY_PRODUCT_ORDER.map(code => `
+    <div class="check-row" id="slotBlock_${code}" style="margin-top:14px; padding-top:14px; border-top:1px solid var(--border);">
+      <div class="row" style="align-items:center;">
+        <label style="font-weight:600; flex:1; margin:0;">${escapeHtml(productNameFor(code))}</label>
+        <label style="display:flex; align-items:center; gap:6px; flex:0 0 auto; margin:0;">
+          <input type="checkbox" id="slotNotDelivered_${code}" style="width:auto;" onchange="onSlotNotDeliveredChange('${code}')"> Not delivered this visit
+        </label>
+      </div>
+      <div id="slotFields_${code}">
+        <div class="row">
+          <div><label>Tank</label><select id="slotTank_${code}"></select></div>
+          <div><label>Invoiced Liters</label><input type="number" step="0.01" id="slotLiters_${code}"></div>
+          <div><label>Cost / Liter (actual paid)</label><input type="number" step="0.0001" id="slotCost_${code}"></div>
+        </div>
+        <div class="row">
+          <div><label>Market Reference Price / Liter</label><input type="number" step="0.0001" id="slotMarket_${code}" placeholder="for monitoring only"></div>
+        </div>
+        <div class="row">
+          <div><label>Dipstick BEFORE unloading — cm</label><input type="number" step="0.01" id="slotBeforeCm_${code}"></div>
+          <div><label>Dipstick BEFORE — Liters</label><input type="number" step="0.01" id="slotBeforeL_${code}"></div>
+        </div>
+        <div class="row">
+          <div><label>Dipstick AFTER unloading — cm</label><input type="number" step="0.01" id="slotAfterCm_${code}"></div>
+          <div><label>Dipstick AFTER — Liters</label><input type="number" step="0.01" id="slotAfterL_${code}"></div>
+        </div>
+        <div id="slotMarkupBox_${code}" style="display:none; margin-top:10px; padding:12px; border-radius:8px; border:1px solid var(--border); background:#0f172a;">
+          <p class="small" style="margin:0 0 8px;">This branch receives wholesale-supplied stock — billed amount below is what they owe for this product.</p>
+          <div class="row">
+            <div><label>Markup Type</label><select id="slotMarkupType_${code}"><option value="per_liter">Peso per Liter</option><option value="percentage">Percentage</option></select></div>
+            <div><label>Markup Value</label><input type="number" step="0.01" id="slotMarkupValue_${code}"></div>
+          </div>
+          <div class="stat-grid">
+            <div class="stat"><div class="k">Billed Price / Liter</div><div class="v" id="slotBilledPricePreview_${code}">—</div></div>
+            <div class="stat"><div class="k">Billed Total</div><div class="v" id="slotBilledTotalPreview_${code}">—</div></div>
+          </div>
+        </div>
+      </div>
+    </div>`).join("");
+
+  DELIVERY_PRODUCT_ORDER.forEach(code => {
+    populateSlotTank(code);
+    ["slotLiters","slotCost","slotMarket","slotMarkupType","slotMarkupValue"].forEach(prefix => {
+      document.getElementById(`${prefix}_${code}`).addEventListener("input", () => { updateSlotBilledPreview(code); onVisitFieldChange(); });
+    });
+    wireSlotCmToLiters(code, "Before");
+    wireSlotCmToLiters(code, "After");
+  });
+}
+
+function onSlotNotDeliveredChange(code) {
+  const notDelivered = document.getElementById(`slotNotDelivered_${code}`).checked;
+  const fields = document.getElementById(`slotFields_${code}`);
+  fields.style.display = notDelivered ? "none" : "block";
+  if (notDelivered) {
+    ["slotLiters","slotCost","slotMarket","slotBeforeCm","slotBeforeL","slotAfterCm","slotAfterL"].forEach(prefix => {
+      document.getElementById(`${prefix}_${code}`).value = "";
+    });
+  }
+  onVisitFieldChange();
+}
+
+function populateSlotTank(code) {
+  const pid = productIdFor(code);
   const opts = tanks.filter(t => t.product_id === pid && t.branch_id === currentBranch)
     .map(t => `<option value="${t.id}">${t.tank_label}</option>`).join("");
-  document.getElementById("dlvTank").innerHTML = opts || "<option value=''>No tank set up for this product/branch</option>";
-  checkMarkupForDelivery();
+  document.getElementById(`slotTank_${code}`).innerHTML = opts || "<option value=''>No tank set up for this product/branch</option>";
+  checkMarkupForSlot(code);
 }
 
 // Shows/hides and pre-fills the markup box based on whether this branch+product
 // has a standing wholesale markup relationship configured (e.g. GS4, GS5).
 // Branches with none (e.g. GS1, your own direct operation) just don't show it.
-let markupSettingsCache = [];
-async function checkMarkupForDelivery() {
-  const pid = document.getElementById("dlvProduct").value;
-  const box = document.getElementById("dlvMarkupBox");
+async function checkMarkupForSlot(code) {
+  const pid = productIdFor(code);
+  const box = document.getElementById(`slotMarkupBox_${code}`);
   if (!markupSettingsCache.length) {
     const { data } = await supabase.from("fuel_branch_markup_settings").select("*");
     markupSettingsCache = data || [];
@@ -786,24 +858,222 @@ async function checkMarkupForDelivery() {
   const setting = markupSettingsCache.find(m => m.branch_id === currentBranch && m.product_id === pid);
   if (!setting) { box.style.display = "none"; return; }
   box.style.display = "block";
-  document.getElementById("dlvMarkupType").value = setting.markup_type;
-  document.getElementById("dlvMarkupValue").value = setting.markup_value;
-  updateBilledPreview();
+  document.getElementById(`slotMarkupType_${code}`).value = setting.markup_type;
+  document.getElementById(`slotMarkupValue_${code}`).value = setting.markup_value;
+  updateSlotBilledPreview(code);
 }
 
-function updateBilledPreview() {
-  const cost = parseFloat(document.getElementById("dlvCost").value) || 0;
-  const liters = parseFloat(document.getElementById("dlvLiters").value) || 0;
-  const type = document.getElementById("dlvMarkupType").value;
-  const val = parseFloat(document.getElementById("dlvMarkupValue").value) || 0;
+function updateSlotBilledPreview(code) {
+  const cost = parseFloat(document.getElementById(`slotCost_${code}`).value) || 0;
+  const liters = parseFloat(document.getElementById(`slotLiters_${code}`).value) || 0;
+  const type = document.getElementById(`slotMarkupType_${code}`).value;
+  const val = parseFloat(document.getElementById(`slotMarkupValue_${code}`).value) || 0;
   const billedPrice = type === "percentage" ? cost * (1 + val / 100) : cost + val;
-  document.getElementById("dlvBilledPricePreview").textContent = peso(billedPrice);
-  document.getElementById("dlvBilledTotalPreview").textContent = peso(billedPrice * liters);
+  document.getElementById(`slotBilledPricePreview_${code}`).textContent = peso(billedPrice);
+  document.getElementById(`slotBilledTotalPreview_${code}`).textContent = peso(billedPrice * liters);
 }
-["dlvCost","dlvLiters","dlvMarkupType","dlvMarkupValue"].forEach(id => {
-  document.getElementById(id).addEventListener("input", updateBilledPreview);
-  document.getElementById(id).addEventListener("change", updateBilledPreview);
+
+// A slot is "resolved" once it's either explicitly marked not-delivered, or
+// has enough filled in to compute a cost. Every slot must be resolved before
+// checks unlock -- this is what "up to 3 products, each an explicit choice,
+// never an implicit default" actually gates on.
+function getSlotState(code) {
+  const notDelivered = document.getElementById(`slotNotDelivered_${code}`).checked;
+  if (notDelivered) return { resolved: true, notDelivered: true, filled: false, cost: 0 };
+  const liters = parseFloat(document.getElementById(`slotLiters_${code}`).value);
+  const cost = parseFloat(document.getElementById(`slotCost_${code}`).value);
+  const tank = document.getElementById(`slotTank_${code}`).value;
+  const beforeL = document.getElementById(`slotBeforeL_${code}`).value;
+  const afterL = document.getElementById(`slotAfterL_${code}`).value;
+  const filled = !!(liters > 0 && cost > 0 && tank && beforeL !== "" && afterL !== "");
+  return { resolved: filled, notDelivered: false, filled, cost: filled ? liters * cost : 0 };
+}
+function allSlotsResolved() { return DELIVERY_PRODUCT_ORDER.every(code => getSlotState(code).resolved); }
+function anySlotFilled() { return DELIVERY_PRODUCT_ORDER.some(code => getSlotState(code).filled); }
+function visitCombinedTotal() { return DELIVERY_PRODUCT_ORDER.reduce((sum, code) => sum + getSlotState(code).cost, 0); }
+
+function updateVisitSummary() {
+  DELIVERY_PRODUCT_ORDER.forEach(code => {
+    const s = getSlotState(code);
+    const el = document.getElementById(`visitSummary_${code}`);
+    if (s.notDelivered) el.textContent = "— not delivered this visit";
+    else if (s.filled) el.textContent = `✓ ${liters(parseFloat(document.getElementById(`slotLiters_${code}`).value))} — ${peso(s.cost)}`;
+    else el.textContent = "— not yet entered";
+  });
+  document.getElementById("visitCombinedTotal").textContent = peso(visitCombinedTotal());
+}
+
+// Checks stay visible but locked (dimmed, inputs disabled) until every slot is
+// resolved -- entered check data is preserved underneath, not wiped, so
+// toggling a slot back and forth doesn't lose work already typed in.
+function setCheckSectionLocked(locked) {
+  document.getElementById("dlvCheckLockNote").style.display = locked ? "block" : "none";
+  const content = document.getElementById("dlvCheckContent");
+  content.style.opacity = locked ? "0.4" : "1";
+  content.style.pointerEvents = locked ? "none" : "auto";
+  content.querySelectorAll("input, select, button").forEach(el => { el.disabled = locked; });
+}
+function updateCheckLockState() {
+  setCheckSectionLocked(!allSlotsResolved());
+}
+
+// Single entry point wired to every visit-level input: keeps the summary,
+// the check lock, Save's enabled state, and the local draft all in sync.
+function onVisitFieldChange() {
+  updateVisitSummary();
+  updateCheckLockState();
+  updateCheckBalance();
+  saveVisitDraftDebounced();
+}
+
+async function wireSlotCmToLiters(code, which) {
+  const cmField = document.getElementById(`slot${which}Cm_${code}`);
+  const litersField = document.getElementById(`slot${which}L_${code}`);
+  cmField.addEventListener("input", async () => {
+    const cmVal = parseFloat(cmField.value);
+    const tankId = document.getElementById(`slotTank_${code}`).value;
+    if (isNaN(cmVal) || !tankId) return;
+    const liters = await lookupLitersFromCm(tankId, cmVal);
+    if (liters !== null) { litersField.value = liters.toFixed(2); onVisitFieldChange(); }
+  });
+}
+["dlvVendor","dlvDriver","dlvPlate","dlvInvoice","dlvShift","dlvDate","dlvPaid"].forEach(id => {
+  document.getElementById(id).addEventListener("input", onVisitFieldChange);
+  document.getElementById(id).addEventListener("change", onVisitFieldChange);
 });
+
+// ---------- Local draft autosave (Sales Admin only; text/number fields only,
+// no photos -- this is a client-side safety net against a dropped tab or
+// browser crash, not a sync mechanism. Nothing here touches the database;
+// the real save is still the single atomic RPC call.) ----------
+const VISIT_DRAFT_KEY = "gs_delivery_visit_draft";
+let draftSaveTimer = null;
+
+function collectSlotDraft(code) {
+  return {
+    notDelivered: document.getElementById(`slotNotDelivered_${code}`).checked,
+    tank: document.getElementById(`slotTank_${code}`).value,
+    liters: document.getElementById(`slotLiters_${code}`).value,
+    cost: document.getElementById(`slotCost_${code}`).value,
+    market: document.getElementById(`slotMarket_${code}`).value,
+    beforeCm: document.getElementById(`slotBeforeCm_${code}`).value,
+    beforeL: document.getElementById(`slotBeforeL_${code}`).value,
+    afterCm: document.getElementById(`slotAfterCm_${code}`).value,
+    afterL: document.getElementById(`slotAfterL_${code}`).value,
+    markupType: document.getElementById(`slotMarkupType_${code}`).value,
+    markupValue: document.getElementById(`slotMarkupValue_${code}`).value
+  };
+}
+function collectCheckRowDraft(id) {
+  return {
+    mode: document.querySelector(`input[name="dlvCheckMode_${id}"]:checked`)?.value || "new",
+    number: document.getElementById(`dlvCheckNumber_${id}`).value,
+    date: document.getElementById(`dlvCheckDate_${id}`).value,
+    existingId: document.getElementById(`dlvCheckExistingId_${id}`).value,
+    amount: document.getElementById(`dlvCheckAmount_${id}`).value
+  };
+}
+function collectVisitDraft() {
+  return {
+    visitId: currentVisitId,
+    savedAt: new Date().toISOString(),
+    branchId: currentBranch,
+    vendor: document.getElementById("dlvVendor").value,
+    driver: document.getElementById("dlvDriver").value,
+    plate: document.getElementById("dlvPlate").value,
+    invoice: document.getElementById("dlvInvoice").value,
+    shift: document.getElementById("dlvShift").value,
+    date: document.getElementById("dlvDate").value,
+    paid: document.getElementById("dlvPaid").checked,
+    slots: Object.fromEntries(DELIVERY_PRODUCT_ORDER.map(code => [code, collectSlotDraft(code)])),
+    checks: activeCheckRowIds.map(collectCheckRowDraft)
+  };
+}
+function saveVisitDraftDebounced() {
+  if (editingDeliveryId) return; // editing an existing row is never draft-tracked
+  clearTimeout(draftSaveTimer);
+  draftSaveTimer = setTimeout(() => {
+    try { localStorage.setItem(VISIT_DRAFT_KEY, JSON.stringify(collectVisitDraft())); } catch (e) { console.error("draft save failed:", e); }
+  }, 400);
+}
+function clearVisitDraft() {
+  clearTimeout(draftSaveTimer);
+  localStorage.removeItem(VISIT_DRAFT_KEY);
+  document.getElementById("visitDraftBanner").style.display = "none";
+}
+
+function checkForVisitDraft() {
+  const raw = localStorage.getItem(VISIT_DRAFT_KEY);
+  if (!raw) return;
+  let draft;
+  try { draft = JSON.parse(raw); } catch (e) { localStorage.removeItem(VISIT_DRAFT_KEY); return; }
+  document.getElementById("draftTimestamp").textContent = new Date(draft.savedAt).toLocaleString();
+  document.getElementById("visitDraftBanner").style.display = "block";
+}
+
+async function restoreVisitDraft() {
+  const raw = localStorage.getItem(VISIT_DRAFT_KEY);
+  if (!raw) return;
+  const draft = JSON.parse(raw);
+
+  if (draft.branchId && draft.branchId !== currentBranch && [...document.getElementById("globalBranch").options].some(o => o.value === draft.branchId)) {
+    document.getElementById("globalBranch").value = draft.branchId;
+    currentBranch = draft.branchId;
+    renderProductSlots();
+  }
+
+  currentVisitId = draft.visitId || crypto.randomUUID();
+  document.getElementById("dlvVendor").value = draft.vendor || "";
+  document.getElementById("dlvDriver").value = draft.driver || "";
+  document.getElementById("dlvPlate").value = draft.plate || "";
+  document.getElementById("dlvInvoice").value = draft.invoice || "";
+  document.getElementById("dlvDate").value = draft.date || todayIso();
+
+  await loadShiftOptions("dlvShift");
+  document.getElementById("dlvShift").value = draft.shift || "";
+  document.getElementById("dlvPaid").checked = !!draft.paid;
+
+  DELIVERY_PRODUCT_ORDER.forEach(code => {
+    const s = (draft.slots || {})[code];
+    if (!s) return;
+    document.getElementById(`slotNotDelivered_${code}`).checked = !!s.notDelivered;
+    document.getElementById(`slotFields_${code}`).style.display = s.notDelivered ? "none" : "block";
+    if (s.tank) document.getElementById(`slotTank_${code}`).value = s.tank;
+    document.getElementById(`slotLiters_${code}`).value = s.liters || "";
+    document.getElementById(`slotCost_${code}`).value = s.cost || "";
+    document.getElementById(`slotMarket_${code}`).value = s.market || "";
+    document.getElementById(`slotBeforeCm_${code}`).value = s.beforeCm || "";
+    document.getElementById(`slotBeforeL_${code}`).value = s.beforeL || "";
+    document.getElementById(`slotAfterCm_${code}`).value = s.afterCm || "";
+    document.getElementById(`slotAfterL_${code}`).value = s.afterL || "";
+    if (s.markupType) document.getElementById(`slotMarkupType_${code}`).value = s.markupType;
+    if (s.markupValue) document.getElementById(`slotMarkupValue_${code}`).value = s.markupValue;
+    updateSlotBilledPreview(code);
+  });
+
+  document.getElementById("dlvCheckRows").innerHTML = "";
+  activeCheckRowIds = [];
+  const checksToRestore = (draft.checks && draft.checks.length) ? draft.checks : [{ mode: "new" }];
+  for (const c of checksToRestore) {
+    const id = addCheckRow();
+    if (c.mode === "existing") {
+      document.querySelector(`input[name="dlvCheckMode_${id}"][value="existing"]`).checked = true;
+      onCheckRowModeChange(id, c.existingId);
+    }
+    if (c.number) document.getElementById(`dlvCheckNumber_${id}`).value = c.number;
+    if (c.date) document.getElementById(`dlvCheckDate_${id}`).value = c.date;
+    if (c.amount) document.getElementById(`dlvCheckAmount_${id}`).value = c.amount;
+  }
+
+  updateVisitSummary();
+  updateCheckLockState();
+  updateCheckBalance();
+  document.getElementById("visitDraftBanner").style.display = "none";
+}
+
+function discardVisitDraft() {
+  clearVisitDraft();
+}
 
 // ---------- Split checks for a delivery ----------
 // Each row independently is either a brand-new check or a reuse of an existing
@@ -816,9 +1086,6 @@ let checkRowSeq = 0;
 let activeCheckRowIds = [];
 
 function toCents(v) { return Math.round((parseFloat(v) || 0) * 100); }
-function deliveryTotalCost() {
-  return (parseFloat(document.getElementById("dlvCost").value) || 0) * (parseFloat(document.getElementById("dlvLiters").value) || 0);
-}
 
 function renderCheckRowHtml(id) {
   return `
@@ -846,8 +1113,9 @@ function addCheckRow() {
   const id = checkRowSeq++;
   document.getElementById("dlvCheckRows").insertAdjacentHTML("beforeend", renderCheckRowHtml(id));
   activeCheckRowIds.push(id);
-  document.getElementById(`dlvCheckAmount_${id}`).addEventListener("input", updateCheckBalance);
-  document.getElementById(`dlvCheckDate_${id}`).addEventListener("input", updateCheckBalance);
+  document.getElementById(`dlvCheckAmount_${id}`).addEventListener("input", () => { updateCheckBalance(); saveVisitDraftDebounced(); });
+  document.getElementById(`dlvCheckDate_${id}`).addEventListener("input", () => { updateCheckBalance(); saveVisitDraftDebounced(); });
+  document.getElementById(`dlvCheckNumber_${id}`).addEventListener("input", saveVisitDraftDebounced);
   updateRemoveButtonVisibility();
   updateCheckBalance();
   return id;
@@ -859,6 +1127,7 @@ function removeCheckRow(id) {
   activeCheckRowIds = activeCheckRowIds.filter(x => x !== id);
   updateRemoveButtonVisibility();
   updateCheckBalance();
+  saveVisitDraftDebounced();
 }
 
 function updateRemoveButtonVisibility() {
@@ -869,19 +1138,14 @@ function updateRemoveButtonVisibility() {
 }
 
 // Full reset of the check-row list back to a single blank "New Check" row --
-// used both by the Cancel/full-reset path and by the carry-forward path
-// (check amounts are per-product, so they're never carried across products).
-// If a check was used for the prior product in this same visit, the fresh
-// row defaults to reusing it (mirrors the old single-box continuity), while
-// staying just as easy to switch to "New Check" for a genuinely new one.
+// used when starting a genuinely new visit. Unlike the old per-product flow,
+// there's no "next product" continuity to default into anymore (all products
+// in a visit save together) -- "Reuse Existing Check" is still there per row,
+// just never auto-preselected.
 function resetCheckRows() {
   document.getElementById("dlvCheckRows").innerHTML = "";
   activeCheckRowIds = [];
-  const id = addCheckRow();
-  if (lastUsedCheckId) {
-    document.querySelector(`input[name="dlvCheckMode_${id}"][value="existing"]`).checked = true;
-    onCheckRowModeChange(id, lastUsedCheckId);
-  }
+  addCheckRow();
 }
 
 function onCheckRowModeChange(id, preselectCheckId) {
@@ -890,6 +1154,7 @@ function onCheckRowModeChange(id, preselectCheckId) {
   document.getElementById(`dlvCheckExistingFields_${id}`).style.display = mode === "existing" ? "block" : "none";
   if (mode === "existing") loadExistingChecksForRow(id, preselectCheckId);
   updateCheckBalance();
+  saveVisitDraftDebounced();
 }
 
 async function loadExistingChecksForRow(id, preselectCheckId) {
@@ -901,22 +1166,24 @@ async function loadExistingChecksForRow(id, preselectCheckId) {
   const { data } = await q;
   sel.innerHTML = (data || []).map(c => `<option value="${c.id}">${c.check_number} — ${c.fuel_vendors?.name || ""} — ${c.check_date} — ${peso(c.amount)}</option>`).join("")
     || "<option value=''>No checks found for this vendor yet</option>";
-  const wanted = preselectCheckId || lastUsedCheckId;
-  if (wanted && [...sel.options].some(o => o.value === wanted)) sel.value = wanted;
+  if (preselectCheckId && [...sel.options].some(o => o.value === preselectCheckId)) sel.value = preselectCheckId;
+  sel.addEventListener("change", saveVisitDraftDebounced);
 }
 document.getElementById("dlvVendor").addEventListener("change", () => {
   activeCheckRowIds.forEach(id => {
     const mode = document.querySelector(`input[name="dlvCheckMode_${id}"]:checked`)?.value;
     if (mode === "existing") loadExistingChecksForRow(id);
   });
+  saveVisitDraftDebounced();
 });
 
-// Live "Balance Remaining" = Total Delivery Cost - sum(entered check amounts),
+// Live "Balance Remaining" = Combined Visit Total - sum(entered check amounts),
 // compared in integer centavos so 0.1 + 0.2-style float drift can never show
-// a false balanced/unbalanced state. Gates the Save button and shows inline
-// validation text rather than letting an invalid save fail silently.
+// a false balanced/unbalanced state. Gates the Save button (which also stays
+// disabled until every product slot is resolved) and shows inline validation
+// text rather than letting an invalid save fail silently.
 function updateCheckBalance() {
-  const totalCents = toCents(deliveryTotalCost());
+  const totalCents = toCents(visitCombinedTotal());
   let sumCents = 0;
   let anyRowFilled = false;
   activeCheckRowIds.forEach(id => {
@@ -939,18 +1206,19 @@ function updateCheckBalance() {
   balanceEl.textContent = (balanced ? "✓ " : "") + peso(Math.abs(balanceCents) / 100) + (balanced ? "" : (balanceCents > 0 ? " short" : " over"));
   balanceStat.className = "stat " + (balanced ? "good" : "warn");
 
-  const valid = anyRowFilled && balanced;
+  const slotsOk = allSlotsResolved() && anySlotFilled();
+  const valid = slotsOk && anyRowFilled && balanced;
   const validationEl = document.getElementById("dlvCheckValidation");
   const saveBtn = document.getElementById("dlvSaveBtn");
   if (!editingDeliveryId) {
     saveBtn.disabled = !valid;
     validationEl.textContent = valid ? "" :
-      (!anyRowFilled ? "Add at least one check with an amount and a date (or an existing check) before saving."
-        : "Checks must sum exactly to the total delivery cost before saving.");
+      (!slotsOk ? "Resolve every product slot above first."
+        : !anyRowFilled ? "Add at least one check with an amount and a date (or an existing check) before saving."
+        : "Checks must sum exactly to the combined visit total before saving.");
   }
   return valid;
 }
-["dlvCost","dlvLiters"].forEach(id => document.getElementById(id).addEventListener("input", updateCheckBalance));
 
 function populateVendorDriverSelects() {
   document.getElementById("dlvVendor").innerHTML = "<option value=''>—</option>" + vendors.map(v => `<option value="${v.id}">${v.name}</option>`).join("");
@@ -1009,53 +1277,6 @@ async function loadDashboard() {
 // ============================================================
 let deliveriesCache = [];
 let editingDeliveryId = null;
-
-const DELIVERY_PRODUCT_ORDER = ["DIESEL", "PREMIUM", "UNLEADED"];
-
-function setDeliveryProductByCode(code) {
-  const prod = products.find(p => p.code === code);
-  if (prod) {
-    document.getElementById("dlvProduct").value = prod.id;
-    populateTankSelectForDelivery();
-  }
-}
-
-// Reads the actual database state (not just in-page memory, so this is correct
-// even after a refresh) and decides: start fresh, or retain the shared truck
-// info (vendor/driver/plate/check#/date) and advance to the next product still
-// missing for today, in Diesel -> Premium -> Unleaded order.
-async function applyDeliverySmartDefaults() {
-  if (!currentBranch) return;
-  const today = todayIso();
-  const { data: todays } = await supabase.from("fuel_deliveries")
-    .select("*, fuel_products(code)")
-    .eq("branch_id", currentBranch).eq("delivery_date", today)
-    .order("created_at", { ascending: true });
-
-  if (!todays || todays.length === 0) {
-    resetDeliveryFormFields();
-    setDeliveryProductByCode(DELIVERY_PRODUCT_ORDER[0]);
-    return;
-  }
-
-  const enteredCodes = new Set(todays.map(d => d.fuel_products?.code).filter(Boolean));
-  const nextCode = DELIVERY_PRODUCT_ORDER.find(c => !enteredCodes.has(c));
-
-  if (!nextCode) {
-    // All 3 products already entered for today - nothing left to carry forward.
-    resetDeliveryFormFields();
-    setDeliveryProductByCode(DELIVERY_PRODUCT_ORDER[0]);
-    return;
-  }
-
-  const last = todays[todays.length - 1];
-  clearProductSpecificFields(); // also resets the check rows, defaulting to reuse lastUsedCheckId if set
-  document.getElementById("dlvVendor").value = last.vendor_id || "";
-  document.getElementById("dlvDriver").value = last.driver_id || "";
-  document.getElementById("dlvPlate").value = last.plate_number || "";
-  document.getElementById("dlvDate").value = today;
-  setDeliveryProductByCode(nextCode);
-}
 
 // ============================================================
 // DEBT TRACKER — fuel payables + everything else, one true total
@@ -1165,7 +1386,7 @@ async function loadChecksTab() {
     <td>${c.status}</td><td>${rcCounts[c.id] || 0} deliveries — ${peso(rcTotals[c.id] || 0)} allocated</td><td>${checkActionCell(c, "receivable")}</td></tr>
     ${clearCheckFormRow(c, "receivable")}`).join("") || "<tr><td colspan='7' class='small'>No receivable checks yet.</td></tr>";
 
-  await loadAllocatableDeliveries();
+  await loadAllocatableVisits();
 }
 
 function escapeHtml(str) {
@@ -1257,26 +1478,32 @@ async function saveReceivableCheck() {
 // Deliveries with an outstanding balance in the selected direction (still owed,
 // fully or partially) - the status views compute this from actual allocations,
 // never a manually-set "paid" flag.
-async function loadAllocatableDeliveries() {
+async function loadAllocatableVisits() {
   const direction = document.getElementById("asgnDirection").value;
-  const view = direction === "supplier" ? "fuel_delivery_supplier_payment_status" : "fuel_delivery_receivable_payment_status";
-  const { data } = await supabase.from(view).select("*, fuel_deliveries(branches(code), fuel_products(name))")
-    .gt("amount_remaining", 0).order("delivery_date", { ascending: false }).limit(100);
-  document.getElementById("asgnDelivery").innerHTML = (data || []).map(d => `
-    <option value="${d.delivery_id}">${d.delivery_date} — ${d.fuel_deliveries?.branches?.code || ""} ${d.fuel_deliveries?.fuel_products?.name || ""} — ${peso(d.amount_remaining)} remaining</option>
-  `).join("") || "<option value=''>Nothing outstanding</option>";
-  await loadDeliveryPaymentStatus();
+  const view = direction === "supplier" ? "fuel_visit_supplier_payment_status" : "fuel_visit_receivable_payment_status";
+  const { data } = await supabase.from(view).select("*")
+    .gt("amount_remaining", 0).order("visit_date", { ascending: false }).limit(100);
+  const visitIds = (data || []).map(v => v.visit_id);
+  const { data: visits } = visitIds.length
+    ? await supabase.from("delivery_visits").select("id, branches(code), fuel_vendors(name)").in("id", visitIds)
+    : { data: [] };
+  const visitById = {}; (visits || []).forEach(v => { visitById[v.id] = v; });
+  document.getElementById("asgnVisit").innerHTML = (data || []).map(v => {
+    const info = visitById[v.visit_id] || {};
+    return `<option value="${v.visit_id}">${v.visit_date} — ${info.branches?.code || ""} — ${info.fuel_vendors?.name || ""} — ${peso(v.amount_remaining)} remaining</option>`;
+  }).join("") || "<option value=''>Nothing outstanding</option>";
+  await loadVisitPaymentStatus();
 }
 
-async function loadDeliveryPaymentStatus() {
+async function loadVisitPaymentStatus() {
   const direction = document.getElementById("asgnDirection").value;
-  const deliveryId = document.getElementById("asgnDelivery").value;
+  const visitId = document.getElementById("asgnVisit").value;
   const grid = document.getElementById("asgnStatusGrid");
-  if (!deliveryId) { grid.style.display = "none"; document.getElementById("asgnAllocationsTable").querySelector("tbody").innerHTML = ""; return; }
+  if (!visitId) { grid.style.display = "none"; document.getElementById("asgnAllocationsTable").querySelector("tbody").innerHTML = ""; return; }
 
-  const view = direction === "supplier" ? "fuel_delivery_supplier_payment_status" : "fuel_delivery_receivable_payment_status";
+  const view = direction === "supplier" ? "fuel_visit_supplier_payment_status" : "fuel_visit_receivable_payment_status";
   const totalField = direction === "supplier" ? "total_cost" : "billed_total_amount";
-  const { data: status } = await supabase.from(view).select("*").eq("delivery_id", deliveryId).single();
+  const { data: status } = await supabase.from(view).select("*").eq("visit_id", visitId).single();
   grid.style.display = "grid";
   document.getElementById("asgnTotal").textContent = peso(status[totalField]);
   document.getElementById("asgnAllocated").textContent = peso(status.amount_allocated);
@@ -1286,7 +1513,7 @@ async function loadDeliveryPaymentStatus() {
 
   const allocTable = direction === "supplier" ? "fuel_delivery_supplier_check_allocations" : "fuel_delivery_receivable_check_allocations";
   const checkTable = direction === "supplier" ? "fuel_supplier_check_payments" : "fuel_branch_receivable_payments";
-  const { data: allocs } = await supabase.from(allocTable).select(`*, ${checkTable}(check_number, check_date, status)`).eq("delivery_id", deliveryId);
+  const { data: allocs } = await supabase.from(allocTable).select(`*, ${checkTable}(check_number, check_date, status)`).eq("visit_id", visitId);
   document.getElementById("asgnAllocationsTable").querySelector("tbody").innerHTML = (allocs || []).map(a => {
     const check = a[checkTable];
     return `<tr><td>${check?.check_number || ""}</td><td>${check?.check_date || ""}</td><td>${peso(a.amount)}</td><td>${check?.status || ""}</td></tr>`;
@@ -1305,19 +1532,19 @@ async function loadDeliveryPaymentStatus() {
 async function addCheckAllocation() {
   const msg = document.getElementById("asgnMsg");
   const direction = document.getElementById("asgnDirection").value;
-  const deliveryId = document.getElementById("asgnDelivery").value;
+  const visitId = document.getElementById("asgnVisit").value;
   const checkId = document.getElementById("asgnCheck").value;
   const amount = parseFloat(document.getElementById("asgnAmount").value);
-  if (!deliveryId || !checkId || !amount || amount <= 0) { msg.textContent = "Pick a delivery, a check, and a valid amount."; msg.className = "msg err"; return; }
+  if (!visitId || !checkId || !amount || amount <= 0) { msg.textContent = "Pick a visit, a check, and a valid amount."; msg.className = "msg err"; return; }
 
   const table = direction === "supplier" ? "fuel_delivery_supplier_check_allocations" : "fuel_delivery_receivable_check_allocations";
-  const { error } = await supabase.from(table).insert({ delivery_id: deliveryId, check_id: checkId, amount });
+  const { error } = await supabase.from(table).insert({ visit_id: visitId, check_id: checkId, amount });
   if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
 
-  // Wrap up: pull the delivery's own info for a clear confirmation, then return
+  // Wrap up: pull the visit's own info for a clear confirmation, then return
   // to Deliveries so the encoder lands back where they were, not stranded here.
-  const { data: d } = await supabase.from("fuel_deliveries").select("delivery_date, branches(code), fuel_products(name)").eq("id", deliveryId).single();
-  const label = d ? `${d.delivery_date} — ${d.branches?.code || ""} ${d.fuel_products?.name || ""}` : "that delivery";
+  const { data: v } = await supabase.from("delivery_visits").select("visit_date, branches(code), fuel_vendors(name)").eq("id", visitId).single();
+  const label = v ? `${v.visit_date} — ${v.branches?.code || ""} ${v.fuel_vendors?.name || ""}` : "that visit";
 
   document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
   document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
@@ -1357,19 +1584,40 @@ async function showDeliveryDetail(deliveryId) {
     <div class="stat"><div class="k">Dipstick Before → After</div><div class="v">${liters(d.dipstick_before_liters)} → ${liters(d.dipstick_after_liters)}</div></div>
   `;
 
-  // Payments (both directions)
-  const { data: scAllocs } = await supabase.from("fuel_delivery_supplier_check_allocations")
-    .select("*, fuel_supplier_check_payments(check_number, check_date, status)").eq("delivery_id", deliveryId);
-  const { data: rcAllocs } = await supabase.from("fuel_delivery_receivable_check_allocations")
-    .select("*, fuel_branch_receivable_payments(check_number, check_date, status)").eq("delivery_id", deliveryId);
+  // Sibling products from the same visit (checks attach to the visit, not
+  // this one product row, so payment status below is combined across these).
+  const { data: siblings } = d.visit_id
+    ? await supabase.from("fuel_deliveries").select("id, invoiced_liters, total_cost, fuel_products(name)").eq("visit_id", d.visit_id)
+    : { data: [] };
+  document.getElementById("ddVisitCard").style.display = d.visit_id ? "block" : "none";
+  document.getElementById("ddVisitSiblings").querySelector("tbody").innerHTML = (siblings || []).map(s => `
+    <tr ${s.id !== d.id ? `style="cursor:pointer;" onclick="showDeliveryDetail('${s.id}')"` : 'style="font-weight:700;"'}>
+      <td>${s.fuel_products?.name || ""}${s.id === d.id ? " (this one)" : ""}</td><td>${liters(s.invoiced_liters)}</td><td>${peso(s.total_cost)}</td>
+    </tr>`).join("") || "<tr><td colspan='3' class='small'>None.</td></tr>";
+  const visitTotalCost = (siblings || []).reduce((s, r) => s + Number(r.total_cost), 0);
+
+  // Payments (both directions) -- keyed by visit_id now, since checks cover
+  // the visit's combined total across however many products it has.
+  const { data: scAllocs } = d.visit_id
+    ? await supabase.from("fuel_delivery_supplier_check_allocations")
+        .select("*, fuel_supplier_check_payments(check_number, check_date, status)").eq("visit_id", d.visit_id)
+    : { data: [] };
+  const { data: rcAllocs } = d.visit_id
+    ? await supabase.from("fuel_delivery_receivable_check_allocations")
+        .select("*, fuel_branch_receivable_payments(check_number, check_date, status)").eq("visit_id", d.visit_id)
+    : { data: [] };
   const scPaid = (scAllocs || []).reduce((s,a) => s + Number(a.amount), 0);
   const rcPaid = (rcAllocs || []).reduce((s,a) => s + Number(a.amount), 0);
+  const { data: siblingsWithBilling } = d.visit_id
+    ? await supabase.from("fuel_deliveries").select("billed_total_amount").eq("visit_id", d.visit_id)
+    : { data: [] };
+  const visitBilled = (siblingsWithBilling || []).reduce((s, r) => s + Number(r.billed_total_amount || 0), 0);
   document.getElementById("ddPaymentSummary").innerHTML = `
-    <div class="stat"><div class="k">Owed to Supplier</div><div class="v">${peso(d.total_cost)}</div></div>
-    <div class="stat ${scPaid >= d.total_cost ? 'good' : 'warn'}"><div class="k">Paid So Far</div><div class="v">${peso(scPaid)} (${peso(d.total_cost - scPaid)} left)</div></div>
-    ${d.billed_total_amount ? `
-    <div class="stat"><div class="k">Owed by Branch</div><div class="v">${peso(d.billed_total_amount)}</div></div>
-    <div class="stat ${rcPaid >= d.billed_total_amount ? 'good' : 'warn'}"><div class="k">Received So Far</div><div class="v">${peso(rcPaid)} (${peso(d.billed_total_amount - rcPaid)} left)</div></div>` : ''}
+    <div class="stat"><div class="k">Owed to Supplier (visit)</div><div class="v">${peso(visitTotalCost)}</div></div>
+    <div class="stat ${scPaid >= visitTotalCost ? 'good' : 'warn'}"><div class="k">Paid So Far</div><div class="v">${peso(scPaid)} (${peso(visitTotalCost - scPaid)} left)</div></div>
+    ${visitBilled ? `
+    <div class="stat"><div class="k">Owed by Branch (visit)</div><div class="v">${peso(visitBilled)}</div></div>
+    <div class="stat ${rcPaid >= visitBilled ? 'good' : 'warn'}"><div class="k">Received So Far</div><div class="v">${peso(rcPaid)} (${peso(visitBilled - rcPaid)} left)</div></div>` : ''}
   `;
   document.getElementById("ddSupplierChecks").querySelector("tbody").innerHTML = (scAllocs || []).map(a =>
     `<tr><td>${a.fuel_supplier_check_payments?.check_number}</td><td>${a.fuel_supplier_check_payments?.check_date}</td><td>${peso(a.amount)}</td><td>${a.fuel_supplier_check_payments?.status}</td></tr>`
@@ -1446,9 +1694,9 @@ function closeDeliveryDetail() {
   document.getElementById("deliveryDetailOverlay").style.display = "none";
 }
 
-// Carries a delivery's ID directly into the Checks tab, pre-selected — no
+// Carries a visit's ID directly into the Checks tab, pre-selected — no
 // searching for it again on a separate, disconnected screen.
-async function goToChecksForDelivery(deliveryId) {
+async function goToChecksForVisit(visitId) {
   document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
   document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
   document.querySelector('.tab[data-tab="checks"]').classList.add("active");
@@ -1456,48 +1704,57 @@ async function goToChecksForDelivery(deliveryId) {
 
   await loadChecksTab();
 
-  document.getElementById("asgnDirection").value = "supplier"; // always applicable; switch to "receivable" manually if this was a GS4/GS5 wholesale delivery
-  await loadAllocatableDeliveries();
+  document.getElementById("asgnDirection").value = "supplier"; // always applicable; switch to "receivable" manually if this was a GS4/GS5 wholesale visit
+  await loadAllocatableVisits();
 
-  // Make sure this exact delivery is selectable even if it's already fully paid
+  // Make sure this exact visit is selectable even if it's already fully paid
   // (and so wouldn't otherwise appear in the "still outstanding" list).
-  const sel = document.getElementById("asgnDelivery");
-  if (![...sel.options].some(o => o.value === deliveryId)) {
-    const { data: d } = await supabase.from("fuel_deliveries").select("delivery_date, branches(code), fuel_products(name)").eq("id", deliveryId).single();
+  const sel = document.getElementById("asgnVisit");
+  if (![...sel.options].some(o => o.value === visitId)) {
+    const { data: v } = await supabase.from("delivery_visits").select("visit_date, branches(code), fuel_vendors(name)").eq("id", visitId).single();
     const opt = document.createElement("option");
-    opt.value = deliveryId;
-    opt.textContent = `${d?.delivery_date || ""} — ${d?.branches?.code || ""} ${d?.fuel_products?.name || ""} (already fully paid)`;
+    opt.value = visitId;
+    opt.textContent = `${v?.visit_date || ""} — ${v?.branches?.code || ""} ${v?.fuel_vendors?.name || ""} (already fully paid)`;
     sel.insertBefore(opt, sel.firstChild);
   }
-  sel.value = deliveryId;
-  await loadDeliveryPaymentStatus();
+  sel.value = visitId;
+  await loadVisitPaymentStatus();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 async function loadDeliveries() {
   if (!currentBranch) return;
-  await loadShiftOptions("dlvShift");
-  await applyDeliverySmartDefaults();
+  if (!document.getElementById("dlvShift").value) await loadShiftOptions("dlvShift"); // don't clobber a mid-entry or restored-draft selection
   const { data } = await supabase.from("fuel_deliveries").select("*, fuel_products(name), fuel_vendors(name)")
     .eq("branch_id", currentBranch).order("created_at", { ascending: false }).limit(20);
   deliveriesCache = data || [];
 
-  // Real payment status per delivery, pulled from actual check allocations - not a manual flag.
-  const deliveryIds = deliveriesCache.map(d => d.id);
-  const { data: allocs } = deliveryIds.length
-    ? await supabase.from("fuel_delivery_supplier_check_allocations").select("delivery_id, amount, fuel_supplier_check_payments(check_number)").in("delivery_id", deliveryIds)
+  // Payment status is visit-level now -- checks cover a visit's combined total
+  // across however many products it has, not any single product's own total,
+  // so every product row from the same visit shows the same combined status.
+  const visitIds = [...new Set(deliveriesCache.map(d => d.visit_id).filter(Boolean))];
+  const { data: visitTotals } = visitIds.length
+    ? await supabase.from("fuel_deliveries").select("visit_id, total_cost").in("visit_id", visitIds)
     : { data: [] };
-  const paidByDelivery = {}, checksByDelivery = {};
+  const totalByVisit = {};
+  (visitTotals || []).forEach(r => { totalByVisit[r.visit_id] = (totalByVisit[r.visit_id] || 0) + Number(r.total_cost); });
+
+  const { data: allocs } = visitIds.length
+    ? await supabase.from("fuel_delivery_supplier_check_allocations").select("visit_id, amount, fuel_supplier_check_payments(check_number)").in("visit_id", visitIds)
+    : { data: [] };
+  const paidByVisit = {}, checksByVisit = {};
   (allocs || []).forEach(a => {
-    paidByDelivery[a.delivery_id] = (paidByDelivery[a.delivery_id] || 0) + Number(a.amount);
-    (checksByDelivery[a.delivery_id] ||= []).push(a.fuel_supplier_check_payments?.check_number);
+    paidByVisit[a.visit_id] = (paidByVisit[a.visit_id] || 0) + Number(a.amount);
+    (checksByVisit[a.visit_id] ||= []).push(a.fuel_supplier_check_payments?.check_number);
   });
   function paymentCell(d) {
-    const paid = paidByDelivery[d.id] || 0;
-    const checks = checksByDelivery[d.id] || [];
+    if (!d.visit_id) return `<span class="small" style="color:var(--muted);">No visit on record</span>`;
+    const total = totalByVisit[d.visit_id] || 0;
+    const paid = paidByVisit[d.visit_id] || 0;
+    const checks = checksByVisit[d.visit_id] || [];
     if (paid <= 0) return `<span class="small" style="color:var(--danger);">Unpaid</span>`;
-    if (paid < d.total_cost) return `<span class="small" style="color:var(--orange);">${peso(paid)} of ${peso(d.total_cost)}<br>${checks.join(", ")}</span>`;
-    return `<span class="small" style="color:var(--accent);">✅ Paid<br>${checks.join(", ")}</span>`;
+    if (paid < total) return `<span class="small" style="color:var(--orange);">${peso(paid)} of ${peso(total)} (visit)<br>${checks.join(", ")}</span>`;
+    return `<span class="small" style="color:var(--accent);">✅ Paid (visit)<br>${checks.join(", ")}</span>`;
   }
 
   document.getElementById("deliveriesEditHint").textContent = isOwner ? "(click a row to edit)" : "(only the owner can edit a saved delivery)";
@@ -1513,18 +1770,27 @@ async function loadDeliveries() {
       <td>${paymentCell(d)}</td>
       <td>
         <button class="small" style="margin:0 0 4px; padding:6px 10px; display:block; width:100%;" onclick="event.stopPropagation(); showDeliveryDetail('${d.id}')">Details</button>
-        <button class="secondary small" style="margin:0 0 4px; padding:6px 10px; display:block; width:100%;" onclick="event.stopPropagation(); goToChecksForDelivery('${d.id}')">Checks</button>
+        ${d.visit_id ? `<button class="secondary small" style="margin:0 0 4px; padding:6px 10px; display:block; width:100%;" onclick="event.stopPropagation(); goToChecksForVisit('${d.visit_id}')">Checks</button>` : ""}
         ${isOwner ? `<button class="secondary small" style="margin:0; padding:6px 10px; display:block; width:100%;" onclick="event.stopPropagation(); deleteDelivery('${d.id}')">Delete</button>` : ""}
       </td>
     </tr>`).join("") || "<tr><td colspan='9' class='small'>No deliveries yet.</td></tr>";
 }
 
+// NOTE: this only ever deletes one product row, not the whole visit -- if the
+// visit's checks were saved summing to its ORIGINAL combined total across all
+// its products, deleting one product here leaves the remaining products'
+// combined total lower than what the checks add up to. The sum-match rule is
+// only enforced at visit save time, not as a standing invariant, so nothing
+// blocks this -- if that happens, the visit's Payment Status in Delivery
+// Detail (or Track Payments for a Visit) will show a negative "remaining"
+// (over-paid), which is your signal a check needs re-splitting elsewhere.
 async function deleteDelivery(deliveryId) {
   const { data: d } = await supabase.from("fuel_deliveries").select("*, fuel_products(name)").eq("id", deliveryId).single();
   if (!d) { alert("Couldn't find that delivery."); return; }
   const confirmed = confirm(
     `Delete this delivery permanently?\n\n${d.delivery_date} — ${d.fuel_products?.name} — ${liters(d.invoiced_liters)} @ ${peso(d.cost_per_liter)}\n\n` +
-    `This cannot be undone. The WAC cost chain for this product will be recalculated afterward to stay accurate.`
+    `This cannot be undone. The WAC cost chain for this product will be recalculated afterward to stay accurate.\n\n` +
+    `If this product was part of a multi-product visit whose checks already summed to the full combined total, deleting it will leave that visit looking over-paid -- check its Payment Status afterward.`
   );
   if (!confirmed) return;
 
@@ -1537,33 +1803,55 @@ async function deleteDelivery(deliveryId) {
   loadDeliveries();
 }
 
+// Edit mode only ever touches ONE existing fuel_deliveries row (the schema is
+// unchanged, still one row per product) -- so it narrows the visit UI down to
+// just that product's slot, hides the other two and the whole check section
+// (checks for an already-saved visit are managed from the Checks tab instead).
 function editDelivery(i) {
   if (!isOwner) return;
   const d = deliveriesCache[i];
   editingDeliveryId = d.id;
-  document.getElementById("dlvProduct").value = d.product_id;
-  populateTankSelectForDelivery();
-  document.getElementById("dlvTank").value = d.tank_id;
+  const code = products.find(p => p.id === d.product_id)?.code;
+
   document.getElementById("dlvVendor").value = d.vendor_id || "";
   document.getElementById("dlvDriver").value = d.driver_id || "";
   document.getElementById("dlvPlate").value = d.plate_number || "";
   document.getElementById("dlvShift").value = d.shift_id || "";
   document.getElementById("dlvInvoice").value = d.invoice_number || "";
   document.getElementById("dlvDate").value = d.delivery_date;
-  document.getElementById("dlvLiters").value = d.invoiced_liters;
-  document.getElementById("dlvCost").value = d.cost_per_liter;
-  document.getElementById("dlvMarket").value = d.market_reference_price_per_liter || "";
-  document.getElementById("dlvBeforeCm").value = d.dipstick_before_cm || "";
-  document.getElementById("dlvBeforeL").value = d.dipstick_before_liters;
-  document.getElementById("dlvAfterCm").value = d.dipstick_after_cm || "";
-  document.getElementById("dlvAfterL").value = d.dipstick_after_liters;
   document.getElementById("dlvPaid").checked = d.paid;
-  if (d.markup_type) {
-    document.getElementById("dlvMarkupBox").style.display = "block";
-    document.getElementById("dlvMarkupType").value = d.markup_type;
-    document.getElementById("dlvMarkupValue").value = d.markup_value;
-    updateBilledPreview();
-  }
+
+  DELIVERY_PRODUCT_ORDER.forEach(c => {
+    const block = document.getElementById(`slotBlock_${c}`);
+    const notDelivered = document.getElementById(`slotNotDelivered_${c}`);
+    if (c === code) {
+      block.style.display = "block";
+      notDelivered.checked = false;
+      notDelivered.disabled = true;
+      document.getElementById(`slotFields_${c}`).style.display = "block";
+      populateSlotTank(c);
+      document.getElementById(`slotTank_${c}`).value = d.tank_id;
+      document.getElementById(`slotLiters_${c}`).value = d.invoiced_liters;
+      document.getElementById(`slotCost_${c}`).value = d.cost_per_liter;
+      document.getElementById(`slotMarket_${c}`).value = d.market_reference_price_per_liter || "";
+      document.getElementById(`slotBeforeCm_${c}`).value = d.dipstick_before_cm || "";
+      document.getElementById(`slotBeforeL_${c}`).value = d.dipstick_before_liters;
+      document.getElementById(`slotAfterCm_${c}`).value = d.dipstick_after_cm || "";
+      document.getElementById(`slotAfterL_${c}`).value = d.dipstick_after_liters;
+      if (d.markup_type) {
+        document.getElementById(`slotMarkupBox_${c}`).style.display = "block";
+        document.getElementById(`slotMarkupType_${c}`).value = d.markup_type;
+        document.getElementById(`slotMarkupValue_${c}`).value = d.markup_value;
+        updateSlotBilledPreview(c);
+      }
+    } else {
+      block.style.display = "none";
+      notDelivered.checked = true;
+      notDelivered.disabled = true;
+    }
+  });
+
+  updateVisitSummary();
   document.getElementById("dlvSaveBtn").textContent = "Update Delivery (recalculates WAC chain)";
   document.getElementById("dlvSaveBtn").disabled = false; // editing bypasses the check-balance gate entirely
   document.getElementById("dlvCancelBtn").textContent = "Cancel Edit";
@@ -1574,34 +1862,46 @@ function editDelivery(i) {
 
 function cancelEditDelivery() {
   editingDeliveryId = null;
-  document.getElementById("dlvSaveBtn").textContent = "Save Delivery";
+  document.getElementById("dlvSaveBtn").textContent = "Save Delivery Visit";
   document.getElementById("dlvCancelBtn").textContent = "Cancel";
   document.getElementById("dlvCheckBox").style.display = "block";
-  resetDeliveryFormFields();
+  DELIVERY_PRODUCT_ORDER.forEach(c => {
+    document.getElementById(`slotBlock_${c}`).style.display = "block";
+    document.getElementById(`slotNotDelivered_${c}`).disabled = false;
+  });
+  startNewVisit();
 }
 
-function resetDeliveryFormFields() {
-  // Full reset - used by the Cancel button, for genuinely starting over.
-  ["dlvPlate","dlvInvoice","dlvLiters","dlvCost","dlvMarket","dlvBeforeCm","dlvBeforeL","dlvAfterCm","dlvAfterL"].forEach(id => document.getElementById(id).value = "");
+// Resets the visible form to a fresh, empty visit for the current branch --
+// new client-generated visit ID, every slot back to unresolved, checks back
+// to one blank row. Does NOT touch the local draft; callers decide that.
+function resetVisitFormFields() {
+  currentVisitId = crypto.randomUUID();
+  ["dlvPlate","dlvInvoice"].forEach(id => document.getElementById(id).value = "");
   document.getElementById("dlvPaid").checked = false;
   document.getElementById("dlvDate").value = todayIso();
-  document.getElementById("dlvProduct").selectedIndex = 0;
-  populateTankSelectForDelivery();
   document.getElementById("dlvVendor").value = "";
   document.getElementById("dlvDriver").value = "";
   document.getElementById("dlvShift").value = "";
-  lastUsedCheckId = null;
+  DELIVERY_PRODUCT_ORDER.forEach(c => {
+    document.getElementById(`slotNotDelivered_${c}`).checked = false;
+    document.getElementById(`slotFields_${c}`).style.display = "block";
+    ["slotLiters","slotCost","slotMarket","slotBeforeCm","slotBeforeL","slotAfterCm","slotAfterL"].forEach(prefix => {
+      document.getElementById(`${prefix}_${c}`).value = "";
+    });
+    populateSlotTank(c); // also re-checks the markup box for the current branch
+  });
   resetCheckRows();
+  updateVisitSummary();
+  updateCheckLockState();
+  updateCheckBalance();
 }
 
-function clearProductSpecificFields() {
-  // After a successful save: one supplier visit is usually 2-3 products on
-  // the same truck, so vendor/driver/plate/date stay filled in -- only the
-  // per-product figures (liters, cost, dipstick, and the checks, which sum
-  // to a different total per product) need re-entering.
-  ["dlvLiters","dlvCost","dlvMarket","dlvBeforeCm","dlvBeforeL","dlvAfterCm","dlvAfterL"].forEach(id => document.getElementById(id).value = "");
-  document.getElementById("dlvPaid").checked = false;
-  resetCheckRows();
+// Starts a brand new, empty visit and discards any local draft -- used by
+// the Cancel button and right after a successful save.
+function startNewVisit() {
+  resetVisitFormFields();
+  clearVisitDraft();
 }
 
 // Looks up the tank's real calibration curve and linearly interpolates -- this is
@@ -1622,61 +1922,64 @@ async function lookupLitersFromCm(tankId, cm) {
   }
   return null;
 }
-async function wireCmToLiters(cmFieldId, litersFieldId) {
-  document.getElementById(cmFieldId).addEventListener("input", async () => {
-    const cmVal = parseFloat(document.getElementById(cmFieldId).value);
-    const tankId = document.getElementById("dlvTank").value;
-    if (isNaN(cmVal) || !tankId) return;
-    const liters = await lookupLitersFromCm(tankId, cmVal);
-    if (liters !== null) document.getElementById(litersFieldId).value = liters.toFixed(2);
-  });
-}
-wireCmToLiters("dlvBeforeCm", "dlvBeforeL");
-wireCmToLiters("dlvAfterCm", "dlvAfterL");
 
 let isSavingDelivery = false;
-let lastUsedCheckId = null; // carries the check used for one product forward as the default for the next, within the same visit
+let currentVisitId = null; // client-generated (crypto.randomUUID()) the moment a visit starts, same convention as other client-side IDs in this app (e.g. timesheet-clock.html's offline queue entries)
 
-async function saveDelivery() {
+function slotPayload(code) {
+  const markupBoxVisible = document.getElementById(`slotMarkupBox_${code}`).style.display === "block";
+  return {
+    product_id: productIdFor(code),
+    tank_id: document.getElementById(`slotTank_${code}`).value,
+    invoiced_liters: parseFloat(document.getElementById(`slotLiters_${code}`).value),
+    cost_per_liter: parseFloat(document.getElementById(`slotCost_${code}`).value),
+    market_reference_price_per_liter: document.getElementById(`slotMarket_${code}`).value ? parseFloat(document.getElementById(`slotMarket_${code}`).value) : null,
+    dipstick_before_cm: document.getElementById(`slotBeforeCm_${code}`).value ? parseFloat(document.getElementById(`slotBeforeCm_${code}`).value) : null,
+    dipstick_before_liters: parseFloat(document.getElementById(`slotBeforeL_${code}`).value),
+    dipstick_after_cm: document.getElementById(`slotAfterCm_${code}`).value ? parseFloat(document.getElementById(`slotAfterCm_${code}`).value) : null,
+    dipstick_after_liters: parseFloat(document.getElementById(`slotAfterL_${code}`).value),
+    markup_type: markupBoxVisible ? document.getElementById(`slotMarkupType_${code}`).value : null,
+    markup_value: markupBoxVisible ? (parseFloat(document.getElementById(`slotMarkupValue_${code}`).value) || 0) : null
+  };
+}
+
+async function saveDeliveryVisit() {
   if (isSavingDelivery) return; // guard against double-tap / double-submit creating duplicate rows
   const msg = document.getElementById("dlvMsg");
   msg.textContent = ""; msg.className = "msg";
-  const productId = document.getElementById("dlvProduct").value;
-  const payload = {
-    branch_id: currentBranch,
-    product_id: productId,
-    tank_id: document.getElementById("dlvTank").value,
+
+  const shared = {
     vendor_id: document.getElementById("dlvVendor").value || null,
     driver_id: document.getElementById("dlvDriver").value || null,
     plate_number: document.getElementById("dlvPlate").value || null,
     invoice_number: document.getElementById("dlvInvoice").value || null,
     shift_id: document.getElementById("dlvShift").value || null,
     delivery_date: document.getElementById("dlvDate").value,
-    invoiced_liters: parseFloat(document.getElementById("dlvLiters").value),
-    cost_per_liter: parseFloat(document.getElementById("dlvCost").value),
-    market_reference_price_per_liter: document.getElementById("dlvMarket").value ? parseFloat(document.getElementById("dlvMarket").value) : null,
-    dipstick_before_cm: document.getElementById("dlvBeforeCm").value ? parseFloat(document.getElementById("dlvBeforeCm").value) : null,
-    dipstick_before_liters: parseFloat(document.getElementById("dlvBeforeL").value),
-    dipstick_after_cm: document.getElementById("dlvAfterCm").value ? parseFloat(document.getElementById("dlvAfterCm").value) : null,
-    dipstick_after_liters: parseFloat(document.getElementById("dlvAfterL").value),
-    paid: document.getElementById("dlvPaid").checked,
-    markup_type: document.getElementById("dlvMarkupBox").style.display === "block" ? document.getElementById("dlvMarkupType").value : null,
-    markup_value: document.getElementById("dlvMarkupBox").style.display === "block" ? (parseFloat(document.getElementById("dlvMarkupValue").value) || 0) : null
+    paid: document.getElementById("dlvPaid").checked
   };
-  if (!payload.tank_id) { msg.textContent = "No tank set up for this product/branch — add one in Setup first."; msg.className = "msg err"; return; }
 
   isSavingDelivery = true;
   const saveBtn = document.getElementById("dlvSaveBtn");
   saveBtn.disabled = true;
   try {
     if (editingDeliveryId) {
+      const code = DELIVERY_PRODUCT_ORDER.find(c => !document.getElementById(`slotNotDelivered_${c}`).checked);
+      const payload = { branch_id: currentBranch, ...shared, ...slotPayload(code) };
+      if (!payload.tank_id) { msg.textContent = "No tank set up for this product/branch — add one in Setup first."; msg.className = "msg err"; return; }
       const { error } = await supabase.from("fuel_deliveries").update(payload).eq("id", editingDeliveryId);
       if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
-      const { error: rpcErr } = await supabase.rpc("fn_fuel_recompute_wac_chain", { p_branch_id: currentBranch, p_product_id: productId });
+      const { error: rpcErr } = await supabase.rpc("fn_fuel_recompute_wac_chain", { p_branch_id: currentBranch, p_product_id: payload.product_id });
       if (rpcErr) { msg.textContent = "Saved, but WAC recompute failed: " + rpcErr.message; msg.className = "msg err"; return; }
       msg.textContent = "Delivery updated — WAC chain recalculated for every delivery of this product."; msg.className = "msg ok";
       cancelEditDelivery();
     } else {
+      const productsPayload = DELIVERY_PRODUCT_ORDER
+        .filter(c => getSlotState(c).filled)
+        .map(c => slotPayload(c));
+
+      const missingTank = productsPayload.find(p => !p.tank_id);
+      if (missingTank) { msg.textContent = "No tank set up for one of these products/branch — add one in Setup first."; msg.className = "msg err"; return; }
+
       const checksPayload = [];
       let rowsOk = true;
       for (const id of activeCheckRowIds) {
@@ -1697,34 +2000,30 @@ async function saveDelivery() {
       // Defense in depth: Save is already disabled unless this holds, but the
       // RPC itself is the real backstop (checked again server-side) - this
       // just avoids a wasted round-trip and shows the same inline message.
-      if (!rowsOk || !checksPayload.length || !updateCheckBalance()) {
-        msg.textContent = "Fix the checks below — each row needs an amount and a date (or an existing check), and they must sum exactly to the total delivery cost.";
+      if (!allSlotsResolved() || !productsPayload.length || !rowsOk || !checksPayload.length || !updateCheckBalance()) {
+        msg.textContent = "Fix the form below — resolve every product slot, add checks that sum exactly to the combined total, then save.";
         msg.className = "msg err";
         return;
       }
 
-      const { data: newDeliveryId, error } = await supabase.rpc("fn_save_delivery_with_check", {
-        p_branch_id: payload.branch_id, p_product_id: payload.product_id, p_tank_id: payload.tank_id,
-        p_vendor_id: payload.vendor_id, p_driver_id: payload.driver_id, p_plate_number: payload.plate_number,
-        p_invoice_number: payload.invoice_number, p_shift_id: payload.shift_id, p_delivery_date: payload.delivery_date,
-        p_invoiced_liters: payload.invoiced_liters, p_cost_per_liter: payload.cost_per_liter,
-        p_market_reference_price_per_liter: payload.market_reference_price_per_liter,
-        p_dipstick_before_cm: payload.dipstick_before_cm, p_dipstick_before_liters: payload.dipstick_before_liters,
-        p_dipstick_after_cm: payload.dipstick_after_cm, p_dipstick_after_liters: payload.dipstick_after_liters,
-        p_paid: payload.paid, p_markup_type: payload.markup_type, p_markup_value: payload.markup_value,
-        p_checks: checksPayload
+      const { data: savedVisitId, error } = await supabase.rpc("fn_save_delivery_visit", {
+        p_visit_id: currentVisitId, p_branch_id: currentBranch,
+        p_vendor_id: shared.vendor_id, p_driver_id: shared.driver_id, p_plate_number: shared.plate_number,
+        p_invoice_number: shared.invoice_number, p_shift_id: shared.shift_id, p_visit_date: shared.delivery_date,
+        p_paid: shared.paid, p_products: productsPayload, p_checks: checksPayload
       });
       if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
 
-      // Remember the last check used, so the next product in this same visit defaults to reusing it.
-      const { data: allocs } = await supabase.from("fuel_delivery_supplier_check_allocations")
-        .select("check_id").eq("delivery_id", newDeliveryId).order("created_at", { ascending: false }).limit(1);
-      lastUsedCheckId = allocs && allocs[0] ? allocs[0].check_id : null;
-
-      msg.innerHTML = `Delivery saved with ${checksPayload.length} check${checksPayload.length > 1 ? "s" : ""} attached. <button class="small" style="margin:6px 0 0; padding:8px 12px;" onclick="showDeliveryDetail('${newDeliveryId}')">View Details →</button>`;
+      const { data: createdDeliveries } = await supabase.from("fuel_deliveries")
+        .select("id, fuel_products(name)").eq("visit_id", savedVisitId);
+      const links = (createdDeliveries || [])
+        .map(d => `<button class="small" style="margin:4px 6px 0 0; padding:8px 12px;" onclick="showDeliveryDetail('${d.id}')">${escapeHtml(d.fuel_products?.name || "")} Details →</button>`)
+        .join("");
+      msg.innerHTML = `Visit saved — ${productsPayload.length} product${productsPayload.length > 1 ? "s" : ""}, ${checksPayload.length} check${checksPayload.length > 1 ? "s" : ""} attached.<br>${links}`;
       msg.className = "msg ok";
+      startNewVisit();
     }
-    await loadDeliveries(); // also re-applies smart defaults for the next entry
+    await loadDeliveries();
   } finally {
     isSavingDelivery = false;
     saveBtn.disabled = false;

@@ -378,17 +378,21 @@ async function runReport() {
       const { data, error } = await q.order("delivery_date", { ascending: false });
       if (error) throw error;
 
-      const deliveryIds = (data || []).map(d => d.id);
-      const { data: scAllocs } = deliveryIds.length
-        ? await supabase.from("fuel_delivery_supplier_check_allocations").select("*, fuel_supplier_check_payments(check_number, check_date, status)").in("delivery_id", deliveryIds)
+      // Checks attach to the delivery's visit (delivery_visits), not the
+      // individual product row -- one truck visit's checks cover however
+      // many products it delivered combined, so every product row from the
+      // same visit shows that visit's full check list here, not just its own.
+      const visitIds = [...new Set((data || []).map(d => d.visit_id).filter(Boolean))];
+      const { data: scAllocs } = visitIds.length
+        ? await supabase.from("fuel_delivery_supplier_check_allocations").select("*, fuel_supplier_check_payments(check_number, check_date, status)").in("visit_id", visitIds)
         : { data: [] };
-      const { data: rcAllocs } = deliveryIds.length
-        ? await supabase.from("fuel_delivery_receivable_check_allocations").select("*, fuel_branch_receivable_payments(check_number, check_date, status)").in("delivery_id", deliveryIds)
+      const { data: rcAllocs } = visitIds.length
+        ? await supabase.from("fuel_delivery_receivable_check_allocations").select("*, fuel_branch_receivable_payments(check_number, check_date, status)").in("visit_id", visitIds)
         : { data: [] };
 
-      const scByDelivery = {}, rcByDelivery = {};
-      (scAllocs || []).forEach(a => { (scByDelivery[a.delivery_id] ||= []).push(a); });
-      (rcAllocs || []).forEach(a => { (rcByDelivery[a.delivery_id] ||= []).push(a); });
+      const scByVisit = {}, rcByVisit = {};
+      (scAllocs || []).forEach(a => { (scByVisit[a.visit_id] ||= []).push(a); });
+      (rcAllocs || []).forEach(a => { (rcByVisit[a.visit_id] ||= []).push(a); });
 
       function fmtAllocs(list, checkField) {
         if (!list || !list.length) return { numbers: "—", dates: "—", statuses: "—", total: 0 };
@@ -402,8 +406,8 @@ async function runReport() {
       }
 
       currentRows = (data || []).map(d => {
-        const sc = fmtAllocs(scByDelivery[d.id], "fuel_supplier_check_payments");
-        const rc = fmtAllocs(rcByDelivery[d.id], "fuel_branch_receivable_payments");
+        const sc = fmtAllocs(scByVisit[d.visit_id], "fuel_supplier_check_payments");
+        const rc = fmtAllocs(rcByVisit[d.visit_id], "fuel_branch_receivable_payments");
         return {
           delivery_date: d.delivery_date, branch: d.branches?.code || "", product: d.fuel_products?.name || "",
           liters: d.invoiced_liters, cost_per_liter: d.cost_per_liter,
