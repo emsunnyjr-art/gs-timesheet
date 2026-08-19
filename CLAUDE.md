@@ -98,13 +98,13 @@ Before applying any migration or Postgres function change with `apply_migration`
 
 `user_branch_roles.role` has a Postgres CHECK constraint (`user_branch_roles_role_check`) limiting it to exactly `'owner'`, `'manager'`, `'supervisor'`, `'cashier'`. Verify this constraint via Supabase MCP (`execute_sql` against `pg_constraint`) before adding any new role option to `enroll.html`'s UI — a role value not in this list will fail the insert (in `enroll-employee`'s `adminClient.from("user_branch_roles").insert(...)`) rather than silently working, and the constraint is the source of truth, not this list (it can change without this file being updated).
 
-## Per-branch data differences that aren't visible in code
+## Dipstick mode is an explicit per-tank toggle, not inferred from data
 
-`fuel_tank_calibration` has both a `height_cm` and a `liters` column. In practice:
-- **GS1** has tanks in `fuel_tanks` but **zero** rows in `fuel_tank_calibration` — its physical dipstick is graduated directly in liters, so readings are used as-is with no curve lookup.
-- **GS2–GS5** each have hundreds of `fuel_tank_calibration` rows per tank, all with `height_cm` populated — dipstick readings there are a height in cm that must be converted to liters via that tank's own calibration curve.
+`fuel_tanks.dipstick_mode` (`'calibration_curve'` | `'direct_liter'`, default `'calibration_curve'`) explicitly decides how `sales-clock.html`'s Dipstick Check panel interprets a reading for that tank — set in Sales Admin → Setup → Tanks (`toggleDipstickMode()`), not derived from whether `fuel_tank_calibration` happens to have rows. `applyDipstickModeUI()` in `sales-clock.html` reads the selected tank's mode and shows/hides the Height (cm) field accordingly:
+- **`calibration_curve`** (GS2–GS5 today): Height (cm) is shown; `lookupLitersFromCm()` linearly interpolates it to Liters via that tank's `fuel_tank_calibration` rows.
+- **`direct_liter`** (GS1 today, all 3 tanks): Height (cm) is hidden entirely; the dipstick's physical graduation is already in liters, so Liters is entered directly with no conversion.
 
-This is purely a data-level fact (which branches happen to have calibration rows) — nothing in the app code enforces or branches on it structurally. Don't assume a new branch will/won't have a calibration table, or that dipstick-reading UI can treat all branches identically; check `fuel_tank_calibration` for that branch's tanks first.
+This was backfilled from each tank's existing behavior at migration time (zero `fuel_tank_calibration` rows → `direct_liter`, otherwise → `calibration_curve`), so don't assume the current GS1-vs-GS2–5 split is permanent or hardcoded — check `fuel_tanks.dipstick_mode` for a given tank rather than inferring it from calibration-row presence, since Mario can flip it per tank (e.g. a curve becomes unreliable, or dipstick hardware changes). Flipping the mode only affects `fuel_dipstick_checks` rows entered *after* the change — nothing recomputes `height_cm`/`liters` on historical rows (there's no trigger on that table at all), so a reading taken under one mode stays exactly as entered even if the tank's mode later changes.
 
 ## Delivery visits: `delivery_visits` sits above `fuel_deliveries`, checks attach to the visit
 

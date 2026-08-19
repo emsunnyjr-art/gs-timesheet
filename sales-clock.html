@@ -101,9 +101,11 @@
       <input type="text" id="dsEstimationReason" placeholder="e.g. Heavy rain, unsafe to open tank">
       <div class="small">Liters below is the system's calculated running balance (deliveries minus sales/expenses/withdrawals), not a physical reading.</div>
     </div>
-    <label id="dsHeightCmLabel">Height (cm) — optional</label>
-    <input type="number" step="0.01" id="dsHeightCm">
-    <label>Liters</label>
+    <div id="dsHeightRow">
+      <label id="dsHeightCmLabel">Height (cm) — optional, converts via this tank's calibration curve</label>
+      <input type="number" step="0.01" id="dsHeightCm">
+    </div>
+    <label id="dsLitersLabel">Liters</label>
     <input type="number" step="0.01" id="dsLiters">
     <div class="small" id="dsConvertHint"></div>
     <button class="btn-secondary" onclick="openStillCamera('dsPhoto')">📷 Take Photo of Stick</button>
@@ -663,13 +665,39 @@ async function saveDelivery() {
 // DIPSTICK
 // ============================================================
 async function loadTanksForDipstick() {
-  document.getElementById("dsTank").innerHTML = tanks.map(t => `<option value="${t.id}" data-branch="${t.branch_id}" data-product="${t.product_id}">${t.fuel_products?.name} — ${t.tank_label}</option>`).join("");
+  document.getElementById("dsTank").innerHTML = tanks.map(t => `<option value="${t.id}" data-branch="${t.branch_id}" data-product="${t.product_id}" data-mode="${t.dipstick_mode || 'calibration_curve'}">${t.fuel_products?.name} — ${t.tank_label}</option>`).join("");
   document.getElementById("dsHeightCm").value = "";
   document.getElementById("dsLiters").value = "";
   document.getElementById("dsConvertHint").textContent = "";
   document.getElementById("dsEstimated").checked = false;
   document.getElementById("dsEstimationReason").value = "";
+  applyDipstickModeUI();
   onDipstickEstimatedToggle();
+}
+
+// This tank's dipstick_mode (set in Sales Admin > Setup > Tanks) decides
+// whether Height even shows up -- calibration_curve tanks convert height to
+// liters via fuel_tank_calibration, direct_liter tanks (e.g. GS1, where the
+// physical dipstick is already graduated in liters) skip that step entirely
+// and take the Liters field as the reading itself. Changing a tank's mode
+// only affects readings taken after the change -- historical
+// fuel_dipstick_checks rows keep whatever height_cm/liters they were saved
+// with; nothing here re-derives them under the tank's current mode.
+function applyDipstickModeUI() {
+  const tankSel = document.getElementById("dsTank");
+  const opt = tankSel.options[tankSel.selectedIndex];
+  const mode = opt?.dataset.mode || "calibration_curve";
+  const heightRow = document.getElementById("dsHeightRow");
+  if (mode === "direct_liter") {
+    heightRow.style.display = "none";
+    document.getElementById("dsHeightCm").value = "";
+    document.getElementById("dsLitersLabel").textContent = "Liters (direct dipstick reading)";
+    document.getElementById("dsConvertHint").textContent = "This tank's dipstick is graduated directly in liters — no calibration conversion needed.";
+  } else {
+    heightRow.style.display = "block";
+    document.getElementById("dsLitersLabel").textContent = "Liters";
+    document.getElementById("dsConvertHint").textContent = "";
+  }
 }
 
 // Looks up the tank's real calibration curve and linearly interpolates between
@@ -709,6 +737,9 @@ document.getElementById("dsHeightCm").addEventListener("input", async () => {
 });
 
 async function onDipstickTankChange() {
+  document.getElementById("dsHeightCm").value = "";
+  document.getElementById("dsLiters").value = "";
+  applyDipstickModeUI();
   if (document.getElementById("dsEstimated").checked) await fillEstimatedLiters();
 }
 

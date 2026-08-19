@@ -516,10 +516,11 @@
           </div>
           <button onclick="saveTank()">Save Tank</button>
           <div class="msg" id="tkMsg"></div>
-          <table id="tanksTable" style="margin-top:14px;"><thead><tr><th>Product</th><th>Label</th></tr></thead><tbody></tbody></table>
+          <table id="tanksTable" style="margin-top:14px;"><thead><tr><th>Product</th><th>Label</th><th>Dipstick Mode</th></tr></thead><tbody></tbody></table>
         </div>
         <div class="card">
           <h2>Tank Calibration (Height → Liters)</h2>
+          <p class="small">Only used by tanks set to Calibration Curve mode above — a tank in Direct Liters mode ignores its calibration points entirely.</p>
           <div class="row">
             <div><label>Tank</label><select id="calTank"></select></div>
             <div><label>Height (cm)</label><input type="number" step="0.01" id="calHeight"></div>
@@ -2337,8 +2338,13 @@ async function loadSetupTab() {
 
   const { data: tk } = await supabase.from("fuel_tanks").select("*, fuel_products(name)").eq("branch_id", currentBranch);
   tanks = tk || [];
-  document.getElementById("tanksTable").querySelector("tbody").innerHTML = tanks.map(t =>
-    `<tr><td>${t.fuel_products?.name || ""}</td><td>${t.tank_label}</td></tr>`).join("");
+  document.getElementById("tanksTable").querySelector("tbody").innerHTML = tanks.map(t => `
+    <tr><td>${t.fuel_products?.name || ""}</td><td>${t.tank_label}</td>
+      <td><select onchange="toggleDipstickMode('${t.id}', this.value)">
+        <option value="calibration_curve" ${t.dipstick_mode === "calibration_curve" ? "selected" : ""}>Calibration Curve</option>
+        <option value="direct_liter" ${t.dipstick_mode === "direct_liter" ? "selected" : ""}>Direct Liters</option>
+      </select></td>
+    </tr>`).join("");
   document.getElementById("calTank").innerHTML = tanks.map(t => `<option value="${t.id}">${t.fuel_products?.name} — ${t.tank_label}</option>`).join("");
 
   const { data: pm } = await supabase.from("fuel_pumps").select("*, fuel_products(name)").eq("branch_id", currentBranch).order("pump_label");
@@ -2448,6 +2454,17 @@ async function saveTank() {
   if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
   msg.textContent = "Tank saved."; msg.className = "msg ok";
   document.getElementById("tkLabel").value = "";
+  loadSetupTab();
+}
+
+// Lets Mario flip a tank between the two dipstick interpretations without a
+// code change (e.g. a calibration curve becomes unreliable, or the physical
+// dipstick hardware changes). Only affects new fuel_dipstick_checks entries
+// going forward -- historical rows keep whatever height_cm/liters they were
+// saved with, since nothing here re-derives them from the tank's current mode.
+async function toggleDipstickMode(tankId, newMode) {
+  const { error } = await supabase.from("fuel_tanks").update({ dipstick_mode: newMode }).eq("id", tankId);
+  if (error) { alert("Error: " + error.message); loadSetupTab(); return; }
   loadSetupTab();
 }
 
