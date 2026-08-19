@@ -43,6 +43,7 @@
   .badge.balanced { background:#22c55e33; color:var(--accent); }
   .badge.orange { background:#f59e0b33; color:var(--orange); }
   .badge.red { background:#ef444433; color:var(--danger); }
+  .table-scroll { overflow-x:auto; }
   .badge.red_bold { background:var(--danger); color:#fff; font-weight:800; box-shadow:0 0 0 2px #ef444455; }
   .stat-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-top:8px; }
   .stat { background:#0f172a; border:1px solid var(--border); border-radius:10px; padding:12px; }
@@ -104,6 +105,7 @@
       <div class="tab" data-tab="cashrecon">Cash Reconciliation</div>
       <div class="tab" data-tab="debt">Debt</div>
       <div class="tab" data-tab="transfers">Transfers</div>
+      <div class="tab" data-tab="capacity">Capacity</div>
       <div class="tab" data-tab="setup">Setup</div>
     </div>
 
@@ -477,6 +479,17 @@
       </div>
     </div>
 
+    <!-- ============ CAPACITY ============ -->
+    <div class="panel" id="panel-capacity">
+      <div class="card">
+        <h2>Cross-Branch Capacity Planning</h2>
+        <p class="small">Every branch's current stock and remaining tank room at a glance, before deciding how to split a truck's load or where a transfer should come from. Read-only — ignores the Branch selector above; always shows every branch you have access to.</p>
+        <div class="table-scroll">
+          <table id="capacityTable"><thead><tr><th>Branch</th><th>Product</th><th>Tank Stock (L)</th><th>Tank Capacity (L)</th><th>Remaining Room (L)</th><th>Held/External (L)</th><th>WAC</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+    </div>
+
     <div class="panel" id="panel-setup">
       <div class="subtabs">
         <div class="subtab active" data-sub="products">Products & Price</div>
@@ -535,10 +548,10 @@
         <div class="card">
           <h2>Add Tank</h2>
           <div class="row">
-            <div><label>Product</label><select id="tkProduct"></select></div>
-            <div><label>Tank Label</label><input id="tkLabel" placeholder="e.g. Main"></div>
+            <div><label>Product</label><select id="tkProduct" onchange="checkTankDuplicate()"></select></div>
+            <div><label>Tank Label</label><input id="tkLabel" placeholder="e.g. Main" oninput="checkTankDuplicate()"></div>
           </div>
-          <button onclick="saveTank()">Save Tank</button>
+          <button id="tkSaveBtn" onclick="saveTank()">Save Tank</button>
           <div class="msg" id="tkMsg"></div>
           <table id="tanksTable" style="margin-top:14px;"><thead><tr><th>Product</th><th>Label</th><th>Dipstick Mode</th><th>Capacity (L)</th></tr></thead><tbody></tbody></table>
         </div>
@@ -676,6 +689,7 @@ const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 let myRoles = [], isOwner = false, myBranchIds = [];
 let currentUserEmail = null;
 let branches = [], products = [], vendors = [], drivers = [], tanks = [], pumps = [], creditCustomers = [];
+let currentBranchTanks = []; // this branch's tanks, refreshed each time Setup > Tanks loads; used for the Add Tank duplicate check
 let currentBranch = null;
 let activePeriod = null; // currently open fuel_meter_periods row for selected pump
 
@@ -748,6 +762,7 @@ function onTabShown(tab) {
   if (tab === "checks") loadChecksTab();
   if (tab === "debt") loadDebtTab();
   if (tab === "transfers") loadTransfersTab();
+  if (tab === "capacity") loadCapacityTab();
   if (tab === "dispensing") loadShiftsForDispensing();
   if (tab === "credit") loadCreditTab();
   if (tab === "cashrecon") loadCashReconTab();
@@ -913,12 +928,12 @@ function renderProductSlots(vidx) {
           <div><label>Market Reference Price / Liter</label><input type="number" step="0.0001" id="slotMarket_${vidx}_${code}" placeholder="for monitoring only"></div>
         </div>
         <div class="row">
-          <div><label>Dipstick BEFORE unloading — cm</label><input type="number" step="0.01" id="slotBeforeCm_${vidx}_${code}"></div>
-          <div><label>Dipstick BEFORE — Liters</label><input type="number" step="0.01" id="slotBeforeL_${vidx}_${code}"></div>
+          <div id="slotBeforeCmWrap_${vidx}_${code}"><label>Dipstick BEFORE unloading — cm</label><input type="number" step="0.01" id="slotBeforeCm_${vidx}_${code}"></div>
+          <div><label id="slotBeforeLLabel_${vidx}_${code}">Dipstick BEFORE — Liters</label><input type="number" step="0.01" id="slotBeforeL_${vidx}_${code}"></div>
         </div>
         <div class="row">
-          <div><label>Dipstick AFTER unloading — cm</label><input type="number" step="0.01" id="slotAfterCm_${vidx}_${code}"></div>
-          <div><label>Dipstick AFTER — Liters</label><input type="number" step="0.01" id="slotAfterL_${vidx}_${code}"></div>
+          <div id="slotAfterCmWrap_${vidx}_${code}"><label>Dipstick AFTER unloading — cm</label><input type="number" step="0.01" id="slotAfterCm_${vidx}_${code}"></div>
+          <div><label id="slotAfterLLabel_${vidx}_${code}">Dipstick AFTER — Liters</label><input type="number" step="0.01" id="slotAfterL_${vidx}_${code}"></div>
         </div>
         <div id="slotMarkupBox_${vidx}_${code}" style="display:none; margin-top:10px; padding:12px; border-radius:8px; border:1px solid var(--border); background:#1e293b;">
           <p class="small" style="margin:0 0 8px;">This branch receives wholesale-supplied stock — billed amount below is what they owe for this product.</p>
@@ -942,6 +957,7 @@ function renderProductSlots(vidx) {
     document.getElementById(`slotLiters_${vidx}_${code}`).addEventListener("input", () => {
       updateSlotBilledPreview(vidx, code); updateOverflowPreview(vidx, code); onVisitFieldChange();
     });
+    document.getElementById(`slotTank_${vidx}_${code}`).addEventListener("change", () => applySlotDipstickModeUI(vidx, code));
     wireSlotCmToLiters(vidx, code, "Before");
     wireSlotCmToLiters(vidx, code, "After");
   });
@@ -968,6 +984,28 @@ function populateSlotTank(vidx, code) {
   document.getElementById(`slotTank_${vidx}_${code}`).innerHTML = opts || "<option value=''>No tank set up for this product/branch</option>";
   checkMarkupForSlot(vidx, code);
   updateOverflowPreview(vidx, code);
+  applySlotDipstickModeUI(vidx, code);
+}
+
+// This slot's selected tank's dipstick_mode (set in Setup > Tanks) decides
+// whether the cm field means anything -- direct_liter tanks (e.g. GS1) have a
+// dipstick already graduated in liters, so cm is meaningless there and typing
+// into it silently does nothing (lookupLitersFromCm finds zero calibration
+// rows for that tank and no-ops). Hide it rather than leave it looking live.
+// Mirrors sales-clock.html's applyDipstickModeUI(). Re-run on every tank
+// selection change, not just once, since a product can have more than one
+// tank option and they can be in different modes.
+function applySlotDipstickModeUI(vidx, code) {
+  const tankId = document.getElementById(`slotTank_${vidx}_${code}`).value;
+  const tank = tanks.find(t => t.id === tankId);
+  const directLiter = tank?.dipstick_mode === "direct_liter";
+  ["Before", "After"].forEach(which => {
+    const wrap = document.getElementById(`slot${which}CmWrap_${vidx}_${code}`);
+    const label = document.getElementById(`slot${which}LLabel_${vidx}_${code}`);
+    wrap.style.display = directLiter ? "none" : "";
+    if (directLiter) document.getElementById(`slot${which}Cm_${vidx}_${code}`).value = "";
+    label.textContent = `Dipstick ${which === "Before" ? "BEFORE" : "AFTER"} — Liters${directLiter ? " (direct dipstick reading)" : ""}`;
+  });
 }
 
 // Shows/hides and pre-fills the markup box based on whether this branch+product
@@ -1234,6 +1272,7 @@ async function restoreVisitDraft() {
       if (s.markupValue) document.getElementById(`slotMarkupValue_${vidx}_${code}`).value = s.markupValue;
       updateSlotBilledPreview(vidx, code);
       updateOverflowPreview(vidx, code);
+      applySlotDipstickModeUI(vidx, code); // last, so it authoritatively clears/hides a stale cm value from an older draft rather than being overwritten by the restore above
     });
   }
 
@@ -1606,6 +1645,49 @@ async function saveBranchTransfer() {
   msg.textContent = "Transfer saved."; msg.className = "msg ok";
   document.getElementById("xfLiters").value = "";
   loadTransfersTab();
+}
+
+// Read-only, cross-branch -- deliberately ignores the global branch selector
+// (currentBranch) since the whole point is seeing every branch at once before
+// deciding delivery routing/transfers. Same underlying tables the per-branch
+// tabs already read (fuel_inventory_state, fuel_tanks, fuel_tank_held_stock),
+// just aggregated across every branch+product instead of filtered to one.
+async function loadCapacityTab() {
+  const { data: inv } = await supabase.from("fuel_inventory_state").select("branch_id, product_id, current_liters, current_wac");
+  const { data: held } = await supabase.from("fuel_tank_held_stock").select("branch_id, product_id, held_liters");
+  const invByKey = {}; (inv || []).forEach(r => { invByKey[`${r.branch_id}_${r.product_id}`] = r; });
+  const heldByKey = {}; (held || []).forEach(r => { heldByKey[`${r.branch_id}_${r.product_id}`] = r; });
+
+  // Sum capacity across every tank a branch+product has (usually one). If none
+  // of that branch+product's tanks has capacity_liters set, treat it as
+  // "no limit configured" rather than 0 -- same null-means-unlimited meaning
+  // capacity_liters carries at the single-tank level.
+  const capByKey = {};
+  tanks.forEach(t => {
+    if (t.capacity_liters == null) return;
+    const key = `${t.branch_id}_${t.product_id}`;
+    capByKey[key] = (capByKey[key] || 0) + Number(t.capacity_liters);
+  });
+
+  const rows = [];
+  branches.forEach(b => {
+    products.forEach(p => {
+      const key = `${b.id}_${p.id}`;
+      const invRow = invByKey[key];
+      const currentLiters = invRow ? Number(invRow.current_liters) : 0;
+      const capacity = capByKey[key]; // undefined = no limit configured for this branch+product
+      const remaining = capacity !== undefined ? Math.max(capacity - currentLiters, 0) : null;
+      const heldLiters = heldByKey[key] ? Number(heldByKey[key].held_liters) : 0;
+      rows.push({ branchCode: b.code, productCode: p.code, currentLiters, capacity, remaining, heldLiters, wac: invRow ? Number(invRow.current_wac) : 0 });
+    });
+  });
+
+  document.getElementById("capacityTable").querySelector("tbody").innerHTML = rows.map(r => `
+    <tr><td>${r.branchCode}</td><td>${r.productCode}</td><td>${liters(r.currentLiters)}</td>
+    <td>${r.capacity !== undefined ? liters(r.capacity) : "no limit set"}</td>
+    <td>${r.remaining !== null ? liters(r.remaining) : "—"}</td>
+    <td>${liters(r.heldLiters)}</td>
+    <td>${peso(r.wac)}</td></tr>`).join("") || "<tr><td colspan='7' class='small'>No data yet.</td></tr>";
 }
 
 async function loadChecksTab() {
@@ -2139,6 +2221,7 @@ function editDelivery(i) {
       document.getElementById(`slotBeforeL_0_${c}`).value = d.dipstick_before_liters;
       document.getElementById(`slotAfterCm_0_${c}`).value = d.dipstick_after_cm || "";
       document.getElementById(`slotAfterL_0_${c}`).value = d.dipstick_after_liters;
+      applySlotDipstickModeUI(0, c); // re-run for the actual tank_id just set above, not the tank populateSlotTank defaulted to
       if (d.markup_type) {
         document.getElementById(`slotMarkupBox_0_${c}`).style.display = "block";
         document.getElementById(`slotMarkupType_0_${c}`).value = d.markup_type;
@@ -2664,6 +2747,8 @@ async function loadSetupTab() {
   // than currentBranch). This is its own branch-scoped list, for this tab only.
   const { data: tk } = await supabase.from("fuel_tanks").select("*, fuel_products(name)").eq("branch_id", currentBranch);
   const branchTanks = tk || [];
+  currentBranchTanks = branchTanks; // module-level copy so saveTank()'s duplicate check has this branch's tanks without a re-query
+  checkTankDuplicate();
   document.getElementById("tanksTable").querySelector("tbody").innerHTML = branchTanks.map(t => `
     <tr><td>${t.fuel_products?.name || ""}</td><td>${t.tank_label}</td>
       <td><select onchange="toggleDipstickMode('${t.id}', this.value)">
@@ -2781,8 +2866,30 @@ async function saveDriver() {
   loadSetupTab();
 }
 
+// Client-side pre-check against the already-loaded currentBranchTanks list --
+// mirrors the DB's real unique constraint on (branch_id, product_id,
+// tank_label) so the mismatch surfaces as an inline message before a save
+// attempt, instead of only as a raw Postgres constraint error after one.
+function checkTankDuplicate() {
+  const msg = document.getElementById("tkMsg");
+  const saveBtn = document.getElementById("tkSaveBtn");
+  const productId = document.getElementById("tkProduct").value;
+  const label = document.getElementById("tkLabel").value.trim() || "Main";
+  const dupe = currentBranchTanks.some(t => t.product_id === productId && t.tank_label.trim().toLowerCase() === label.toLowerCase());
+  if (dupe) {
+    msg.textContent = "A tank with this Product + Label already exists for this branch.";
+    msg.className = "msg err";
+    saveBtn.disabled = true;
+  } else {
+    msg.textContent = "";
+    saveBtn.disabled = false;
+  }
+  return dupe;
+}
+
 async function saveTank() {
   const msg = document.getElementById("tkMsg");
+  if (checkTankDuplicate()) return;
   const { error } = await supabase.from("fuel_tanks").insert({
     branch_id: currentBranch,
     product_id: document.getElementById("tkProduct").value,
