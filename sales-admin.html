@@ -103,6 +103,7 @@
       <div class="tab" data-tab="credit">Credit / PO</div>
       <div class="tab" data-tab="cashrecon">Cash Reconciliation</div>
       <div class="tab" data-tab="debt">Debt</div>
+      <div class="tab" data-tab="transfers">Transfers</div>
       <div class="tab" data-tab="setup">Setup</div>
     </div>
 
@@ -453,6 +454,29 @@
       </div>
     </div>
 
+    <!-- ============ TRANSFERS ============ -->
+    <div class="panel" id="panel-transfers">
+      <div class="card">
+        <h2>Transfer Stock Between Branches</h2>
+        <p class="small">Internal movement of already-owned stock when a branch runs low and can't wait for a bulk supplier delivery — no supplier, no check, no payment. The receiving branch's WAC blends the incoming stock at the sending branch's most recent delivery cost (not their current blended WAC); the sending branch's own WAC is untouched, same as a sale.</p>
+        <div class="row">
+          <div><label>From Branch (sending)</label><select id="xfFromBranch"></select></div>
+          <div><label>To Branch (receiving)</label><select id="xfToBranch"></select></div>
+          <div><label>Product</label><select id="xfProduct"></select></div>
+        </div>
+        <div class="row">
+          <div><label>Liters</label><input type="number" step="0.01" id="xfLiters"></div>
+          <div><label>Transfer Date</label><input type="date" id="xfDate"></div>
+        </div>
+        <button onclick="saveBranchTransfer()">Save Transfer</button>
+        <div class="msg" id="xfMsg"></div>
+      </div>
+      <div class="card">
+        <h2>Recent Transfers</h2>
+        <table id="transfersTable"><thead><tr><th>Date</th><th>Product</th><th>From</th><th>To</th><th>Liters</th><th>Cost/L Used</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+
     <div class="panel" id="panel-setup">
       <div class="subtabs">
         <div class="subtab active" data-sub="products">Products & Price</div>
@@ -723,6 +747,7 @@ function onTabShown(tab) {
   if (tab === "deliveries") loadDeliveries();
   if (tab === "checks") loadChecksTab();
   if (tab === "debt") loadDebtTab();
+  if (tab === "transfers") loadTransfersTab();
   if (tab === "dispensing") loadShiftsForDispensing();
   if (tab === "credit") loadCreditTab();
   if (tab === "cashrecon") loadCashReconTab();
@@ -1539,6 +1564,48 @@ async function saveDebtPayment() {
   msg.textContent = "Payment logged."; msg.className = "msg ok";
   document.getElementById("dpayAmount").value = "";
   loadDebtTab();
+}
+
+async function loadTransfersTab() {
+  const branchOpts = branches.map(b => `<option value="${b.id}">${b.code} — ${b.name}</option>`).join("");
+  document.getElementById("xfFromBranch").innerHTML = branchOpts;
+  document.getElementById("xfToBranch").innerHTML = branchOpts;
+  document.getElementById("xfProduct").innerHTML = products.map(p => `<option value="${p.id}">${p.code}</option>`).join("");
+  if (!document.getElementById("xfDate").value) document.getElementById("xfDate").value = todayIso();
+
+  const { data: xf } = await supabase.from("fuel_branch_transfers")
+    .select("*, fuel_products(code), from:from_branch_id(code), to:to_branch_id(code)")
+    .order("transfer_date", { ascending: false }).order("created_at", { ascending: false }).limit(50);
+  document.getElementById("transfersTable").querySelector("tbody").innerHTML = (xf || []).map(t => `
+    <tr><td>${t.transfer_date}</td><td>${t.fuel_products?.code || "—"}</td><td>${t.from?.code || "—"}</td><td>${t.to?.code || "—"}</td>
+    <td>${liters(t.liters)}</td><td>${peso(t.cost_per_liter_used)}</td></tr>`).join("")
+    || "<tr><td colspan='6' class='small'>No transfers recorded yet.</td></tr>";
+}
+
+async function saveBranchTransfer() {
+  const msg = document.getElementById("xfMsg");
+  const fromBranch = document.getElementById("xfFromBranch").value;
+  const toBranch = document.getElementById("xfToBranch").value;
+  const productId = document.getElementById("xfProduct").value;
+  const litersVal = parseFloat(document.getElementById("xfLiters").value);
+  const transferDate = document.getElementById("xfDate").value;
+
+  if (fromBranch === toBranch) { msg.textContent = "Sending and receiving branch must be different."; msg.className = "msg err"; return; }
+  if (!litersVal || litersVal <= 0) { msg.textContent = "Enter a valid liters amount."; msg.className = "msg err"; return; }
+  if (!transferDate) { msg.textContent = "Pick a transfer date."; msg.className = "msg err"; return; }
+
+  const { error } = await supabase.rpc("fn_transfer_branch_stock", {
+    p_from_branch_id: fromBranch,
+    p_to_branch_id: toBranch,
+    p_product_id: productId,
+    p_liters: litersVal,
+    p_transfer_date: transferDate,
+    p_created_by: currentUserEmail
+  });
+  if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+  msg.textContent = "Transfer saved."; msg.className = "msg ok";
+  document.getElementById("xfLiters").value = "";
+  loadTransfersTab();
 }
 
 async function loadChecksTab() {
