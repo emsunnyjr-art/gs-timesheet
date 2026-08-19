@@ -378,20 +378,28 @@ async function runReport() {
       const { data, error } = await q.order("delivery_date", { ascending: false });
       if (error) throw error;
 
-      // Checks attach to the delivery's visit (delivery_visits), not the
-      // individual product row -- one truck visit's checks cover however
-      // many products it delivered combined, so every product row from the
-      // same visit shows that visit's full check list here, not just its own.
+      // Supplier checks attach to the delivery's TRIP now (a truck run may
+      // span several branches), split proportionally by liters back to each
+      // branch -- fuel_trip_check_visit_splits is that per-branch share,
+      // still keyed by visit_id, so every product row from the same visit
+      // shows that visit's own share of the trip's checks, not the whole
+      // trip's total. Receivable checks (branch owing GS1 back) stay
+      // visit-scoped directly, unrelated to which truck delivered the fuel.
       const visitIds = [...new Set((data || []).map(d => d.visit_id).filter(Boolean))];
       const { data: scAllocs } = visitIds.length
-        ? await supabase.from("fuel_delivery_supplier_check_allocations").select("*, fuel_supplier_check_payments(check_number, check_date, status)").in("visit_id", visitIds)
+        ? await supabase.from("fuel_trip_check_visit_splits")
+            .select("*, fuel_delivery_supplier_check_allocations(fuel_supplier_check_payments(check_number, check_date, status))")
+            .in("visit_id", visitIds)
         : { data: [] };
       const { data: rcAllocs } = visitIds.length
         ? await supabase.from("fuel_delivery_receivable_check_allocations").select("*, fuel_branch_receivable_payments(check_number, check_date, status)").in("visit_id", visitIds)
         : { data: [] };
 
       const scByVisit = {}, rcByVisit = {};
-      (scAllocs || []).forEach(a => { (scByVisit[a.visit_id] ||= []).push(a); });
+      (scAllocs || []).forEach(a => {
+        const check = a.fuel_delivery_supplier_check_allocations?.fuel_supplier_check_payments;
+        (scByVisit[a.visit_id] ||= []).push({ amount: a.amount, fuel_supplier_check_payments: check });
+      });
       (rcAllocs || []).forEach(a => { (rcByVisit[a.visit_id] ||= []).push(a); });
 
       function fmtAllocs(list, checkField) {

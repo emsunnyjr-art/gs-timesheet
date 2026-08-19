@@ -126,42 +126,36 @@
     <!-- ============ DELIVERIES ============ -->
     <div class="panel" id="panel-deliveries">
       <div class="card" id="visitDraftBanner" style="display:none; border:1px solid var(--orange);">
-        <p class="small" style="margin:0 0 10px;">You have an unsaved delivery visit draft, last edited <span id="draftTimestamp"></span>.</p>
+        <p class="small" style="margin:0 0 10px;">You have an unsaved delivery trip draft, last edited <span id="draftTimestamp"></span>.</p>
         <div class="row">
           <button type="button" style="margin:0;" onclick="restoreVisitDraft()">Restore Draft</button>
           <button type="button" class="secondary" style="margin:0;" onclick="discardVisitDraft()">Discard</button>
         </div>
       </div>
       <div class="card">
-        <h2>Log a Delivery Visit</h2>
-        <p class="small">Enter every product this truck delivered (up to 3), then attach checks covering the combined total, and save once at the end — nothing is written to the database until you save.</p>
+        <h2>Log a Delivery Trip</h2>
+        <p class="small">Enter every product this truck delivered (up to 3 per branch). If the same truck also delivered to another branch, add it below — otherwise ignore that button entirely. Attach checks covering the combined trip total and save once at the end; nothing is written to the database until you save.</p>
         <div class="row">
           <div><label>Vendor</label><select id="dlvVendor"></select></div>
           <div><label>Driver</label><select id="dlvDriver"></select></div>
           <div><label>Plate Number</label><input id="dlvPlate"></div>
         </div>
-        <div class="row">
-          <div><label>Invoice #</label><input id="dlvInvoice"></div>
-          <div><label>Shift (optional)</label><select id="dlvShift"></select></div>
-          <div><label>Delivery Date</label><input type="date" id="dlvDate"></div>
-        </div>
+        <div><label>Trip Date</label><input type="date" id="dlvDate" style="max-width:220px;"></div>
         <label style="display:flex; align-items:center; gap:8px; margin-top:14px;"><input type="checkbox" id="dlvPaid" style="width:auto;"> Paid (outside the check system, e.g. cash)</label>
 
-        <div id="visitProductSlots" style="margin-top:10px;"></div>
+        <div id="tripVisitsContainer" style="margin-top:14px;"></div>
+        <button type="button" class="secondary" id="dlvAddBranchBtn" style="margin-top:10px;" onclick="addTripVisit()">+ Add Another Branch to This Trip</button>
 
         <div class="stat-grid" style="margin-top:14px;">
-          <div class="stat"><div class="k">Diesel</div><div class="v" id="visitSummary_DIESEL">— not yet entered</div></div>
-          <div class="stat"><div class="k">Premium</div><div class="v" id="visitSummary_PREMIUM">— not yet entered</div></div>
-          <div class="stat"><div class="k">Unleaded</div><div class="v" id="visitSummary_UNLEADED">— not yet entered</div></div>
-          <div class="stat good"><div class="k">Combined Visit Total</div><div class="v" id="visitCombinedTotal">₱0.00</div></div>
+          <div class="stat good"><div class="k">Combined Trip Total</div><div class="v" id="visitCombinedTotal">₱0.00</div></div>
         </div>
 
         <div id="dlvCheckBox" style="margin-top:14px; padding:12px; border-radius:8px; border:1px solid var(--accent); background:#0f172a;">
-          <p class="small" id="dlvCheckLockNote" style="margin:0 0 8px; color:var(--orange); display:none;">🔒 Resolve all 3 product slots above (fill one in, or mark "Not delivered this visit") before checks unlock.</p>
+          <p class="small" id="dlvCheckLockNote" style="margin:0 0 8px; color:var(--orange); display:none;">🔒 Resolve every product slot in every branch above (fill in, or mark "Not delivered this visit") before checks unlock.</p>
           <div id="dlvCheckContent">
-            <p class="small" style="margin:0 0 8px;"><strong>Checks for This Visit (required)</strong> — the visit can't be saved until the checks below sum exactly to the combined total. Reuse the same check across products from one truck visit, or start a new one.</p>
+            <p class="small" style="margin:0 0 8px;"><strong>Checks for This Trip (required)</strong> — the trip can't be saved until the checks below sum exactly to the combined total across every branch. Reuse the same check across branches/products in one truck run, or start a new one.</p>
             <div class="stat-grid">
-              <div class="stat"><div class="k">Combined Visit Total</div><div class="v" id="dlvCheckTotalCost">—</div></div>
+              <div class="stat"><div class="k">Combined Trip Total</div><div class="v" id="dlvCheckTotalCost">—</div></div>
               <div class="stat" id="dlvCheckBalanceStat"><div class="k">Balance Remaining</div><div class="v" id="dlvCheckBalance">—</div></div>
             </div>
             <div id="dlvCheckRows" style="margin-top:10px;"></div>
@@ -169,13 +163,13 @@
             <div class="small" id="dlvCheckValidation" style="color:var(--danger); margin-top:8px; min-height:16px;"></div>
           </div>
         </div>
-        <button onclick="saveDeliveryVisit()" id="dlvSaveBtn">Save Delivery Visit</button>
+        <button onclick="saveDeliveryVisit()" id="dlvSaveBtn">Save Delivery Trip</button>
         <button class="secondary" onclick="cancelEditDelivery()" id="dlvCancelBtn">Cancel</button>
         <div class="msg" id="dlvMsg"></div>
       </div>
       <div class="card">
         <h2>Recent Deliveries <span class="small" id="deliveriesEditHint"></span></h2>
-        <table id="deliveriesTable"><thead><tr><th>Date</th><th>Product</th><th>Vendor</th><th>Liters</th><th>Cost/L</th><th>WAC After</th><th>Delivered vs Invoiced</th><th>Payment (visit)</th><th></th></tr></thead><tbody></tbody></table>
+        <table id="deliveriesTable"><thead><tr><th>Date</th><th>Branch</th><th>Product</th><th>Vendor</th><th>Liters</th><th>Cost/L</th><th>WAC After</th><th>Delivered vs Invoiced</th><th>Payment (trip)</th><th></th></tr></thead><tbody></tbody></table>
       </div>
     </div>
 
@@ -218,11 +212,11 @@
       </div>
 
       <div class="card">
-        <h2>Track Payments for a Visit</h2>
-        <p class="small">Pick a delivery visit — you'll see how much is paid so far (across all its products combined) and how much remains. Add each check as its own allocation, so a visit paid across 2+ checks on different dates stays fully traceable, not just "paid: yes/no."</p>
+        <h2>Track Payments for a Trip / Visit</h2>
+        <p class="small">What You Owe the Supplier is tracked per <strong>trip</strong> (checks may cover several branches on one truck run). What GS4/GS5 Owes You is tracked per <strong>visit</strong> (a branch's own receivable, unrelated to which truck delivered it). Add each check as its own allocation, so payment across 2+ checks on different dates stays fully traceable, not just "paid: yes/no."</p>
         <div class="row">
           <div><label>Direction</label><select id="asgnDirection" onchange="loadAllocatableVisits()"><option value="supplier">What You Owe the Supplier</option><option value="receivable">What GS4/GS5 Owes You</option></select></div>
-          <div><label>Visit</label><select id="asgnVisit" onchange="loadVisitPaymentStatus()"></select></div>
+          <div><label>Trip / Visit</label><select id="asgnVisit" onchange="loadVisitPaymentStatus()"></select></div>
         </div>
         <div class="stat-grid" id="asgnStatusGrid" style="display:none;">
           <div class="stat"><div class="k">Total</div><div class="v" id="asgnTotal">—</div></div>
@@ -407,6 +401,12 @@
       </div>
 
       <div class="card">
+        <h2>Fuel Supplier Debt — By Branch</h2>
+        <p class="small">Checks to the supplier are often written per <strong>trip</strong> (one truck run may cover several branches) — this splits that back out to each branch's own share, by liters delivered.</p>
+        <table id="debtByBranchTable"><thead><tr><th>Branch</th><th>Owed</th><th>Paid (cleared)</th><th>Remaining</th></tr></thead><tbody></tbody></table>
+      </div>
+
+      <div class="card">
         <h2>2-Year Payoff Target</h2>
         <p class="small">Required pace = total owed ÷ 24 months. Actual pace = your real payments over the last 3 months, averaged. Extra payments whenever funds allow will pull the actual pace ahead of target — that's the goal.</p>
         <div class="stat-grid" id="debtPaceComparison"></div>
@@ -516,7 +516,7 @@
           </div>
           <button onclick="saveTank()">Save Tank</button>
           <div class="msg" id="tkMsg"></div>
-          <table id="tanksTable" style="margin-top:14px;"><thead><tr><th>Product</th><th>Label</th><th>Dipstick Mode</th></tr></thead><tbody></tbody></table>
+          <table id="tanksTable" style="margin-top:14px;"><thead><tr><th>Product</th><th>Label</th><th>Dipstick Mode</th><th>Capacity (L)</th></tr></thead><tbody></tbody></table>
         </div>
         <div class="card">
           <h2>Tank Calibration (Height → Liters)</h2>
@@ -528,6 +528,12 @@
           </div>
           <button onclick="saveCalibration()">Add Calibration Point</button>
           <div class="msg" id="calMsg"></div>
+        </div>
+        <div class="card">
+          <h2>External / Held Stock</h2>
+          <p class="small">Delivered stock that overflowed a tank's capacity — real, paid-for inventory, but not sellable until transferred into the tank. Set a tank's Capacity above to enable overflow tracking for it; leave Capacity blank for no limit (the default).</p>
+          <table id="heldStockTable"><thead><tr><th>Product</th><th>Held Liters</th><th>Held WAC</th><th></th></tr></thead><tbody></tbody></table>
+          <div class="msg" id="transferMsg"></div>
         </div>
       </div>
 
@@ -644,6 +650,7 @@ const SUPABASE_ANON_KEY = "sb_publishable_eBOzdnFAdfFavl2QAYY6bA_lfAIJUhh";
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 let myRoles = [], isOwner = false, myBranchIds = [];
+let currentUserEmail = null;
 let branches = [], products = [], vendors = [], drivers = [], tanks = [], pumps = [], creditCustomers = [];
 let currentBranch = null;
 let activePeriod = null; // currently open fuel_meter_periods row for selected pump
@@ -685,6 +692,7 @@ async function afterLogin(user) {
     return;
   }
   myBranchIds = myRoles.filter(r => r.branch_id !== null).map(r => r.branch_id);
+  currentUserEmail = user.email;
   document.getElementById("whoAmI").textContent = `${user.email} · ${isOwner ? "All branches" : "Branch access: " + myRoles.length}`;
   document.getElementById("pinScreen").style.display = "none";
   document.getElementById("app").style.display = "block";
@@ -745,15 +753,14 @@ async function initApp() {
 
   populateProductSelects();
   populateVendorDriverSelects();
-  renderProductSlots();
-  resetVisitFormFields(); // blank starting state; does not touch a stored draft
+  startNewVisit(); // blank starting state (renders visit 0's slots); does not touch a stored draft
   checkForVisitDraft(); // offers to restore it if one exists, on top of the blank state above
   onTabShown("dashboard");
 }
 
 function onBranchChange() {
   currentBranch = document.getElementById("globalBranch").value;
-  if (!editingDeliveryId) resetVisitFormFields(); // a visit is branch-scoped; slot tank options depend on currentBranch
+  if (!editingDeliveryId) resetVisitFormFields(); // visit 0 follows currentBranch; its slot tank options depend on it
   onTabShown(document.querySelector(".tab.active").dataset.tab);
 }
 
@@ -772,141 +779,270 @@ function populateProductSelects() {
 // ============================================================
 const DELIVERY_PRODUCT_ORDER = ["DIESEL", "PREMIUM", "UNLEADED"];
 let markupSettingsCache = [];
+let inventoryStateCache = {}; // `${branchId}_${productId}` -> current_liters, for the overflow preview
+let tripVisitCount = 0; // number of rendered visit blocks (branches added to this trip), always >= 1
 
 function productIdFor(code) { return products.find(p => p.code === code)?.id || null; }
 function productNameFor(code) { return products.find(p => p.code === code)?.name || code; }
 
-function renderProductSlots() {
-  document.getElementById("visitProductSlots").innerHTML = DELIVERY_PRODUCT_ORDER.map(code => `
-    <div class="check-row" id="slotBlock_${code}" style="margin-top:14px; padding-top:14px; border-top:1px solid var(--border);">
+// Visit 0 always follows the global branch selector, so the common
+// single-branch case shows zero extra branch-picking UI. Any visit added
+// afterward (a genuine multi-branch trip) gets its own explicit picker.
+function branchForVisit(vidx) {
+  if (vidx === 0) return currentBranch;
+  const sel = document.getElementById(`visitBranch_${vidx}`);
+  return sel ? sel.value : null;
+}
+function usedBranchIds(excludeVidx) {
+  const ids = [];
+  for (let i = 0; i < tripVisitCount; i++) {
+    if (i === excludeVidx) continue;
+    const b = branchForVisit(i);
+    if (b) ids.push(b);
+  }
+  return ids;
+}
+function populateVisitBranchSelect(vidx) {
+  const used = usedBranchIds(vidx);
+  const available = branches.filter(b => !used.includes(b.id));
+  const sel = document.getElementById(`visitBranch_${vidx}`);
+  sel.innerHTML = available.map(b => `<option value="${b.id}">${b.code} — ${b.name}</option>`).join("");
+}
+async function onVisitBranchChange(vidx) {
+  DELIVERY_PRODUCT_ORDER.forEach(code => populateSlotTank(vidx, code));
+  await loadShiftOptionsForBranch(`visitShift_${vidx}`, branchForVisit(vidx));
+  onVisitFieldChange();
+}
+
+// Renders one branch's visit block: its own Invoice#/Shift, its own 3 product
+// slots, its own mini-summary. Only visits beyond the first show a branch
+// picker + Remove button -- keeps the default single-branch trip visually
+// identical to before "Add Another Branch" is ever clicked.
+function renderTripVisit(vidx) {
+  const isFirst = vidx === 0;
+  const html = `
+    <div class="card" id="visitBlock_${vidx}" style="background:#0f172a; border:1px solid var(--border);">
+      <h2>${isFirst ? "This Branch" : `Branch ${vidx + 1} on This Trip`}</h2>
+      ${isFirst ? "" : `
+      <div class="row">
+        <div><label>Branch</label><select id="visitBranch_${vidx}" onchange="onVisitBranchChange(${vidx})"></select></div>
+      </div>`}
+      <div class="row">
+        <div><label>Invoice #</label><input id="visitInvoice_${vidx}"></div>
+        <div><label>Shift (optional)</label><select id="visitShift_${vidx}"></select></div>
+      </div>
+      ${isFirst ? "" : `<button type="button" class="secondary small" style="margin-top:10px;" onclick="removeTripVisit(${vidx})">Remove This Branch</button>`}
+      <div id="visitProductSlots_${vidx}" style="margin-top:6px;"></div>
+      <div class="stat-grid" style="margin-top:10px;">
+        <div class="stat"><div class="k">Diesel</div><div class="v" id="visitSummary_${vidx}_DIESEL">— not yet entered</div></div>
+        <div class="stat"><div class="k">Premium</div><div class="v" id="visitSummary_${vidx}_PREMIUM">— not yet entered</div></div>
+        <div class="stat"><div class="k">Unleaded</div><div class="v" id="visitSummary_${vidx}_UNLEADED">— not yet entered</div></div>
+      </div>
+    </div>`;
+  document.getElementById("tripVisitsContainer").insertAdjacentHTML("beforeend", html);
+
+  if (!isFirst) populateVisitBranchSelect(vidx);
+  renderProductSlots(vidx);
+  loadShiftOptionsForBranch(`visitShift_${vidx}`, branchForVisit(vidx));
+
+  document.getElementById(`visitInvoice_${vidx}`).addEventListener("input", onVisitFieldChange);
+  document.getElementById(`visitShift_${vidx}`).addEventListener("change", onVisitFieldChange);
+}
+
+function addTripVisit() {
+  const used = usedBranchIds(-1);
+  if (used.length >= branches.length) { alert("Every branch you have access to is already on this trip."); return; }
+  const vidx = tripVisitCount++;
+  renderTripVisit(vidx);
+  document.getElementById("dlvAddBranchBtn").style.display = tripVisitCount >= branches.length ? "none" : "block";
+  onVisitFieldChange();
+}
+
+// Only the most-recently-added branch can be removed, to avoid renumbering
+// every other visit block's ids mid-entry.
+function removeTripVisit(vidx) {
+  if (vidx !== tripVisitCount - 1 || vidx === 0) return;
+  document.getElementById(`visitBlock_${vidx}`).remove();
+  tripVisitCount--;
+  document.getElementById("dlvAddBranchBtn").style.display = "block";
+  onVisitFieldChange();
+}
+
+function renderProductSlots(vidx) {
+  document.getElementById(`visitProductSlots_${vidx}`).innerHTML = DELIVERY_PRODUCT_ORDER.map(code => `
+    <div class="check-row" id="slotBlock_${vidx}_${code}" style="margin-top:14px; padding-top:14px; border-top:1px solid var(--border);">
       <div class="row" style="align-items:center;">
         <label style="font-weight:600; flex:1; margin:0;">${escapeHtml(productNameFor(code))}</label>
         <label style="display:flex; align-items:center; gap:6px; flex:0 0 auto; margin:0;">
-          <input type="checkbox" id="slotNotDelivered_${code}" style="width:auto;" onchange="onSlotNotDeliveredChange('${code}')"> Not delivered this visit
+          <input type="checkbox" id="slotNotDelivered_${vidx}_${code}" style="width:auto;" onchange="onSlotNotDeliveredChange(${vidx},'${code}')"> Not delivered this visit
         </label>
       </div>
-      <div id="slotFields_${code}">
+      <div id="slotFields_${vidx}_${code}">
         <div class="row">
-          <div><label>Tank</label><select id="slotTank_${code}"></select></div>
-          <div><label>Invoiced Liters</label><input type="number" step="0.01" id="slotLiters_${code}"></div>
-          <div><label>Cost / Liter (actual paid)</label><input type="number" step="0.0001" id="slotCost_${code}"></div>
+          <div><label>Tank</label><select id="slotTank_${vidx}_${code}"></select></div>
+          <div><label>Invoiced Liters</label><input type="number" step="0.01" id="slotLiters_${vidx}_${code}"></div>
+          <div><label>Cost / Liter (actual paid)</label><input type="number" step="0.0001" id="slotCost_${vidx}_${code}"></div>
+        </div>
+        <div class="small" id="slotOverflowHint_${vidx}_${code}" style="margin-top:2px; min-height:14px;"></div>
+        <div class="row">
+          <div><label>Market Reference Price / Liter</label><input type="number" step="0.0001" id="slotMarket_${vidx}_${code}" placeholder="for monitoring only"></div>
         </div>
         <div class="row">
-          <div><label>Market Reference Price / Liter</label><input type="number" step="0.0001" id="slotMarket_${code}" placeholder="for monitoring only"></div>
+          <div><label>Dipstick BEFORE unloading — cm</label><input type="number" step="0.01" id="slotBeforeCm_${vidx}_${code}"></div>
+          <div><label>Dipstick BEFORE — Liters</label><input type="number" step="0.01" id="slotBeforeL_${vidx}_${code}"></div>
         </div>
         <div class="row">
-          <div><label>Dipstick BEFORE unloading — cm</label><input type="number" step="0.01" id="slotBeforeCm_${code}"></div>
-          <div><label>Dipstick BEFORE — Liters</label><input type="number" step="0.01" id="slotBeforeL_${code}"></div>
+          <div><label>Dipstick AFTER unloading — cm</label><input type="number" step="0.01" id="slotAfterCm_${vidx}_${code}"></div>
+          <div><label>Dipstick AFTER — Liters</label><input type="number" step="0.01" id="slotAfterL_${vidx}_${code}"></div>
         </div>
-        <div class="row">
-          <div><label>Dipstick AFTER unloading — cm</label><input type="number" step="0.01" id="slotAfterCm_${code}"></div>
-          <div><label>Dipstick AFTER — Liters</label><input type="number" step="0.01" id="slotAfterL_${code}"></div>
-        </div>
-        <div id="slotMarkupBox_${code}" style="display:none; margin-top:10px; padding:12px; border-radius:8px; border:1px solid var(--border); background:#0f172a;">
+        <div id="slotMarkupBox_${vidx}_${code}" style="display:none; margin-top:10px; padding:12px; border-radius:8px; border:1px solid var(--border); background:#1e293b;">
           <p class="small" style="margin:0 0 8px;">This branch receives wholesale-supplied stock — billed amount below is what they owe for this product.</p>
           <div class="row">
-            <div><label>Markup Type</label><select id="slotMarkupType_${code}"><option value="per_liter">Peso per Liter</option><option value="percentage">Percentage</option></select></div>
-            <div><label>Markup Value</label><input type="number" step="0.01" id="slotMarkupValue_${code}"></div>
+            <div><label>Markup Type</label><select id="slotMarkupType_${vidx}_${code}"><option value="per_liter">Peso per Liter</option><option value="percentage">Percentage</option></select></div>
+            <div><label>Markup Value</label><input type="number" step="0.01" id="slotMarkupValue_${vidx}_${code}"></div>
           </div>
           <div class="stat-grid">
-            <div class="stat"><div class="k">Billed Price / Liter</div><div class="v" id="slotBilledPricePreview_${code}">—</div></div>
-            <div class="stat"><div class="k">Billed Total</div><div class="v" id="slotBilledTotalPreview_${code}">—</div></div>
+            <div class="stat"><div class="k">Billed Price / Liter</div><div class="v" id="slotBilledPricePreview_${vidx}_${code}">—</div></div>
+            <div class="stat"><div class="k">Billed Total</div><div class="v" id="slotBilledTotalPreview_${vidx}_${code}">—</div></div>
           </div>
         </div>
       </div>
     </div>`).join("");
 
   DELIVERY_PRODUCT_ORDER.forEach(code => {
-    populateSlotTank(code);
-    ["slotLiters","slotCost","slotMarket","slotMarkupType","slotMarkupValue"].forEach(prefix => {
-      document.getElementById(`${prefix}_${code}`).addEventListener("input", () => { updateSlotBilledPreview(code); onVisitFieldChange(); });
+    populateSlotTank(vidx, code);
+    ["slotCost","slotMarket","slotMarkupType","slotMarkupValue"].forEach(prefix => {
+      document.getElementById(`${prefix}_${vidx}_${code}`).addEventListener("input", () => { updateSlotBilledPreview(vidx, code); onVisitFieldChange(); });
     });
-    wireSlotCmToLiters(code, "Before");
-    wireSlotCmToLiters(code, "After");
+    document.getElementById(`slotLiters_${vidx}_${code}`).addEventListener("input", () => {
+      updateSlotBilledPreview(vidx, code); updateOverflowPreview(vidx, code); onVisitFieldChange();
+    });
+    wireSlotCmToLiters(vidx, code, "Before");
+    wireSlotCmToLiters(vidx, code, "After");
   });
 }
 
-function onSlotNotDeliveredChange(code) {
-  const notDelivered = document.getElementById(`slotNotDelivered_${code}`).checked;
-  const fields = document.getElementById(`slotFields_${code}`);
+function onSlotNotDeliveredChange(vidx, code) {
+  const notDelivered = document.getElementById(`slotNotDelivered_${vidx}_${code}`).checked;
+  const fields = document.getElementById(`slotFields_${vidx}_${code}`);
   fields.style.display = notDelivered ? "none" : "block";
   if (notDelivered) {
     ["slotLiters","slotCost","slotMarket","slotBeforeCm","slotBeforeL","slotAfterCm","slotAfterL"].forEach(prefix => {
-      document.getElementById(`${prefix}_${code}`).value = "";
+      document.getElementById(`${prefix}_${vidx}_${code}`).value = "";
     });
+    document.getElementById(`slotOverflowHint_${vidx}_${code}`).textContent = "";
   }
   onVisitFieldChange();
 }
 
-function populateSlotTank(code) {
+function populateSlotTank(vidx, code) {
   const pid = productIdFor(code);
-  const opts = tanks.filter(t => t.product_id === pid && t.branch_id === currentBranch)
+  const branchId = branchForVisit(vidx);
+  const opts = tanks.filter(t => t.product_id === pid && t.branch_id === branchId)
     .map(t => `<option value="${t.id}">${t.tank_label}</option>`).join("");
-  document.getElementById(`slotTank_${code}`).innerHTML = opts || "<option value=''>No tank set up for this product/branch</option>";
-  checkMarkupForSlot(code);
+  document.getElementById(`slotTank_${vidx}_${code}`).innerHTML = opts || "<option value=''>No tank set up for this product/branch</option>";
+  checkMarkupForSlot(vidx, code);
+  updateOverflowPreview(vidx, code);
 }
 
 // Shows/hides and pre-fills the markup box based on whether this branch+product
 // has a standing wholesale markup relationship configured (e.g. GS4, GS5).
 // Branches with none (e.g. GS1, your own direct operation) just don't show it.
-async function checkMarkupForSlot(code) {
+async function checkMarkupForSlot(vidx, code) {
   const pid = productIdFor(code);
-  const box = document.getElementById(`slotMarkupBox_${code}`);
+  const branchId = branchForVisit(vidx);
+  const box = document.getElementById(`slotMarkupBox_${vidx}_${code}`);
   if (!markupSettingsCache.length) {
     const { data } = await supabase.from("fuel_branch_markup_settings").select("*");
     markupSettingsCache = data || [];
   }
-  const setting = markupSettingsCache.find(m => m.branch_id === currentBranch && m.product_id === pid);
+  const setting = markupSettingsCache.find(m => m.branch_id === branchId && m.product_id === pid);
   if (!setting) { box.style.display = "none"; return; }
   box.style.display = "block";
-  document.getElementById(`slotMarkupType_${code}`).value = setting.markup_type;
-  document.getElementById(`slotMarkupValue_${code}`).value = setting.markup_value;
-  updateSlotBilledPreview(code);
+  document.getElementById(`slotMarkupType_${vidx}_${code}`).value = setting.markup_type;
+  document.getElementById(`slotMarkupValue_${vidx}_${code}`).value = setting.markup_value;
+  updateSlotBilledPreview(vidx, code);
 }
 
-function updateSlotBilledPreview(code) {
-  const cost = parseFloat(document.getElementById(`slotCost_${code}`).value) || 0;
-  const liters = parseFloat(document.getElementById(`slotLiters_${code}`).value) || 0;
-  const type = document.getElementById(`slotMarkupType_${code}`).value;
-  const val = parseFloat(document.getElementById(`slotMarkupValue_${code}`).value) || 0;
+function updateSlotBilledPreview(vidx, code) {
+  const cost = parseFloat(document.getElementById(`slotCost_${vidx}_${code}`).value) || 0;
+  const litersVal = parseFloat(document.getElementById(`slotLiters_${vidx}_${code}`).value) || 0;
+  const type = document.getElementById(`slotMarkupType_${vidx}_${code}`).value;
+  const val = parseFloat(document.getElementById(`slotMarkupValue_${vidx}_${code}`).value) || 0;
   const billedPrice = type === "percentage" ? cost * (1 + val / 100) : cost + val;
-  document.getElementById(`slotBilledPricePreview_${code}`).textContent = peso(billedPrice);
-  document.getElementById(`slotBilledTotalPreview_${code}`).textContent = peso(billedPrice * liters);
+  document.getElementById(`slotBilledPricePreview_${vidx}_${code}`).textContent = peso(billedPrice);
+  document.getElementById(`slotBilledTotalPreview_${vidx}_${code}`).textContent = peso(billedPrice * litersVal);
+}
+
+// Live, informational only -- the DB trigger (fn_fuel_delivery_apply_wac) is
+// the real authority on the tank/held split at save time. This just warns the
+// TM up front when a delivery is about to exceed the tank's remaining space,
+// so the overflow into the external container isn't a surprise later.
+async function getCurrentTankLiters(branchId, productId) {
+  const key = `${branchId}_${productId}`;
+  if (inventoryStateCache[key] !== undefined) return inventoryStateCache[key];
+  const { data } = await supabase.from("fuel_inventory_state").select("current_liters")
+    .eq("branch_id", branchId).eq("product_id", productId).maybeSingle();
+  const val = data ? Number(data.current_liters) : 0;
+  inventoryStateCache[key] = val;
+  return val;
+}
+async function updateOverflowPreview(vidx, code) {
+  const hintEl = document.getElementById(`slotOverflowHint_${vidx}_${code}`);
+  const tankId = document.getElementById(`slotTank_${vidx}_${code}`).value;
+  const tank = tanks.find(t => t.id === tankId);
+  const litersVal = parseFloat(document.getElementById(`slotLiters_${vidx}_${code}`).value);
+  if (!tank || !tank.capacity_liters || isNaN(litersVal) || litersVal <= 0) { hintEl.textContent = ""; return; }
+  const currentLiters = await getCurrentTankLiters(tank.branch_id, tank.product_id);
+  const remaining = Math.max(tank.capacity_liters - currentLiters, 0);
+  if (litersVal > remaining) {
+    const toHeld = litersVal - remaining;
+    hintEl.innerHTML = `⚠ Tank has ${liters(remaining)} of space left (capacity ${liters(tank.capacity_liters)}, currently ${liters(currentLiters)}). ${liters(remaining)} will go into the tank, <strong>${liters(toHeld)} will overflow into the external container</strong> (held, not sellable until transferred in).`;
+    hintEl.style.color = "var(--orange)";
+  } else {
+    hintEl.textContent = "";
+  }
 }
 
 // A slot is "resolved" once it's either explicitly marked not-delivered, or
-// has enough filled in to compute a cost. Every slot must be resolved before
-// checks unlock -- this is what "up to 3 products, each an explicit choice,
-// never an implicit default" actually gates on.
-function getSlotState(code) {
-  const notDelivered = document.getElementById(`slotNotDelivered_${code}`).checked;
+// has enough filled in to compute a cost. Every slot in every branch on the
+// trip must be resolved before checks unlock -- this is what "each product,
+// each branch, an explicit choice, never an implicit default" gates on.
+function getSlotState(vidx, code) {
+  const notDelivered = document.getElementById(`slotNotDelivered_${vidx}_${code}`).checked;
   if (notDelivered) return { resolved: true, notDelivered: true, filled: false, cost: 0 };
-  const liters = parseFloat(document.getElementById(`slotLiters_${code}`).value);
-  const cost = parseFloat(document.getElementById(`slotCost_${code}`).value);
-  const tank = document.getElementById(`slotTank_${code}`).value;
-  const beforeL = document.getElementById(`slotBeforeL_${code}`).value;
-  const afterL = document.getElementById(`slotAfterL_${code}`).value;
-  const filled = !!(liters > 0 && cost > 0 && tank && beforeL !== "" && afterL !== "");
-  return { resolved: filled, notDelivered: false, filled, cost: filled ? liters * cost : 0 };
+  const litersVal = parseFloat(document.getElementById(`slotLiters_${vidx}_${code}`).value);
+  const cost = parseFloat(document.getElementById(`slotCost_${vidx}_${code}`).value);
+  const tank = document.getElementById(`slotTank_${vidx}_${code}`).value;
+  const beforeL = document.getElementById(`slotBeforeL_${vidx}_${code}`).value;
+  const afterL = document.getElementById(`slotAfterL_${vidx}_${code}`).value;
+  const filled = !!(litersVal > 0 && cost > 0 && tank && beforeL !== "" && afterL !== "");
+  return { resolved: filled, notDelivered: false, filled, cost: filled ? litersVal * cost : 0 };
 }
-function allSlotsResolved() { return DELIVERY_PRODUCT_ORDER.every(code => getSlotState(code).resolved); }
-function anySlotFilled() { return DELIVERY_PRODUCT_ORDER.some(code => getSlotState(code).filled); }
-function visitCombinedTotal() { return DELIVERY_PRODUCT_ORDER.reduce((sum, code) => sum + getSlotState(code).cost, 0); }
+function visitResolved(vidx) { return DELIVERY_PRODUCT_ORDER.every(code => getSlotState(vidx, code).resolved); }
+function visitFilled(vidx) { return DELIVERY_PRODUCT_ORDER.some(code => getSlotState(vidx, code).filled); }
+function visitTotal(vidx) { return DELIVERY_PRODUCT_ORDER.reduce((sum, code) => sum + getSlotState(vidx, code).cost, 0); }
+function allSlotsResolved() { for (let i = 0; i < tripVisitCount; i++) if (!visitResolved(i)) return false; return true; }
+function anySlotFilled() { for (let i = 0; i < tripVisitCount; i++) if (visitFilled(i)) return true; return false; }
+function visitCombinedTotal() { let t = 0; for (let i = 0; i < tripVisitCount; i++) t += visitTotal(i); return t; }
 
 function updateVisitSummary() {
-  DELIVERY_PRODUCT_ORDER.forEach(code => {
-    const s = getSlotState(code);
-    const el = document.getElementById(`visitSummary_${code}`);
-    if (s.notDelivered) el.textContent = "— not delivered this visit";
-    else if (s.filled) el.textContent = `✓ ${liters(parseFloat(document.getElementById(`slotLiters_${code}`).value))} — ${peso(s.cost)}`;
-    else el.textContent = "— not yet entered";
-  });
+  for (let vidx = 0; vidx < tripVisitCount; vidx++) {
+    DELIVERY_PRODUCT_ORDER.forEach(code => {
+      const s = getSlotState(vidx, code);
+      const el = document.getElementById(`visitSummary_${vidx}_${code}`);
+      if (!el) return;
+      if (s.notDelivered) el.textContent = "— not delivered this visit";
+      else if (s.filled) el.textContent = `✓ ${liters(parseFloat(document.getElementById(`slotLiters_${vidx}_${code}`).value))} — ${peso(s.cost)}`;
+      else el.textContent = "— not yet entered";
+    });
+  }
   document.getElementById("visitCombinedTotal").textContent = peso(visitCombinedTotal());
 }
 
-// Checks stay visible but locked (dimmed, inputs disabled) until every slot is
-// resolved -- entered check data is preserved underneath, not wiped, so
-// toggling a slot back and forth doesn't lose work already typed in.
+// Checks stay visible but locked (dimmed, inputs disabled) until every slot in
+// every branch is resolved -- entered check data is preserved underneath, not
+// wiped, so toggling a slot back and forth doesn't lose work already typed in.
 function setCheckSectionLocked(locked) {
   document.getElementById("dlvCheckLockNote").style.display = locked ? "block" : "none";
   const content = document.getElementById("dlvCheckContent");
@@ -927,18 +1063,18 @@ function onVisitFieldChange() {
   saveVisitDraftDebounced();
 }
 
-async function wireSlotCmToLiters(code, which) {
-  const cmField = document.getElementById(`slot${which}Cm_${code}`);
-  const litersField = document.getElementById(`slot${which}L_${code}`);
+async function wireSlotCmToLiters(vidx, code, which) {
+  const cmField = document.getElementById(`slot${which}Cm_${vidx}_${code}`);
+  const litersField = document.getElementById(`slot${which}L_${vidx}_${code}`);
   cmField.addEventListener("input", async () => {
     const cmVal = parseFloat(cmField.value);
-    const tankId = document.getElementById(`slotTank_${code}`).value;
+    const tankId = document.getElementById(`slotTank_${vidx}_${code}`).value;
     if (isNaN(cmVal) || !tankId) return;
-    const liters = await lookupLitersFromCm(tankId, cmVal);
-    if (liters !== null) { litersField.value = liters.toFixed(2); onVisitFieldChange(); }
+    const litersVal = await lookupLitersFromCm(tankId, cmVal);
+    if (litersVal !== null) { litersField.value = litersVal.toFixed(2); onVisitFieldChange(); }
   });
 }
-["dlvVendor","dlvDriver","dlvPlate","dlvInvoice","dlvShift","dlvDate","dlvPaid"].forEach(id => {
+["dlvVendor","dlvDriver","dlvPlate","dlvDate","dlvPaid"].forEach(id => {
   document.getElementById(id).addEventListener("input", onVisitFieldChange);
   document.getElementById(id).addEventListener("change", onVisitFieldChange);
 });
@@ -950,19 +1086,19 @@ async function wireSlotCmToLiters(code, which) {
 const VISIT_DRAFT_KEY = "gs_delivery_visit_draft";
 let draftSaveTimer = null;
 
-function collectSlotDraft(code) {
+function collectSlotDraft(vidx, code) {
   return {
-    notDelivered: document.getElementById(`slotNotDelivered_${code}`).checked,
-    tank: document.getElementById(`slotTank_${code}`).value,
-    liters: document.getElementById(`slotLiters_${code}`).value,
-    cost: document.getElementById(`slotCost_${code}`).value,
-    market: document.getElementById(`slotMarket_${code}`).value,
-    beforeCm: document.getElementById(`slotBeforeCm_${code}`).value,
-    beforeL: document.getElementById(`slotBeforeL_${code}`).value,
-    afterCm: document.getElementById(`slotAfterCm_${code}`).value,
-    afterL: document.getElementById(`slotAfterL_${code}`).value,
-    markupType: document.getElementById(`slotMarkupType_${code}`).value,
-    markupValue: document.getElementById(`slotMarkupValue_${code}`).value
+    notDelivered: document.getElementById(`slotNotDelivered_${vidx}_${code}`).checked,
+    tank: document.getElementById(`slotTank_${vidx}_${code}`).value,
+    liters: document.getElementById(`slotLiters_${vidx}_${code}`).value,
+    cost: document.getElementById(`slotCost_${vidx}_${code}`).value,
+    market: document.getElementById(`slotMarket_${vidx}_${code}`).value,
+    beforeCm: document.getElementById(`slotBeforeCm_${vidx}_${code}`).value,
+    beforeL: document.getElementById(`slotBeforeL_${vidx}_${code}`).value,
+    afterCm: document.getElementById(`slotAfterCm_${vidx}_${code}`).value,
+    afterL: document.getElementById(`slotAfterL_${vidx}_${code}`).value,
+    markupType: document.getElementById(`slotMarkupType_${vidx}_${code}`).value,
+    markupValue: document.getElementById(`slotMarkupValue_${vidx}_${code}`).value
   };
 }
 function collectCheckRowDraft(id) {
@@ -975,18 +1111,25 @@ function collectCheckRowDraft(id) {
   };
 }
 function collectVisitDraft() {
+  const visits = [];
+  for (let vidx = 0; vidx < tripVisitCount; vidx++) {
+    visits.push({
+      visitId: tripVisitIds[vidx],
+      branchId: branchForVisit(vidx),
+      invoice: document.getElementById(`visitInvoice_${vidx}`)?.value || "",
+      shift: document.getElementById(`visitShift_${vidx}`)?.value || "",
+      slots: Object.fromEntries(DELIVERY_PRODUCT_ORDER.map(code => [code, collectSlotDraft(vidx, code)]))
+    });
+  }
   return {
-    visitId: currentVisitId,
+    tripId: currentVisitId,
     savedAt: new Date().toISOString(),
-    branchId: currentBranch,
     vendor: document.getElementById("dlvVendor").value,
     driver: document.getElementById("dlvDriver").value,
     plate: document.getElementById("dlvPlate").value,
-    invoice: document.getElementById("dlvInvoice").value,
-    shift: document.getElementById("dlvShift").value,
     date: document.getElementById("dlvDate").value,
     paid: document.getElementById("dlvPaid").checked,
-    slots: Object.fromEntries(DELIVERY_PRODUCT_ORDER.map(code => [code, collectSlotDraft(code)])),
+    visits,
     checks: activeCheckRowIds.map(collectCheckRowDraft)
   };
 }
@@ -1017,40 +1160,57 @@ async function restoreVisitDraft() {
   if (!raw) return;
   const draft = JSON.parse(raw);
 
-  if (draft.branchId && draft.branchId !== currentBranch && [...document.getElementById("globalBranch").options].some(o => o.value === draft.branchId)) {
-    document.getElementById("globalBranch").value = draft.branchId;
-    currentBranch = draft.branchId;
-    renderProductSlots();
-  }
-
-  currentVisitId = draft.visitId || crypto.randomUUID();
+  currentVisitId = draft.tripId || crypto.randomUUID();
   document.getElementById("dlvVendor").value = draft.vendor || "";
   document.getElementById("dlvDriver").value = draft.driver || "";
   document.getElementById("dlvPlate").value = draft.plate || "";
-  document.getElementById("dlvInvoice").value = draft.invoice || "";
   document.getElementById("dlvDate").value = draft.date || todayIso();
-
-  await loadShiftOptions("dlvShift");
-  document.getElementById("dlvShift").value = draft.shift || "";
   document.getElementById("dlvPaid").checked = !!draft.paid;
 
-  DELIVERY_PRODUCT_ORDER.forEach(code => {
-    const s = (draft.slots || {})[code];
-    if (!s) return;
-    document.getElementById(`slotNotDelivered_${code}`).checked = !!s.notDelivered;
-    document.getElementById(`slotFields_${code}`).style.display = s.notDelivered ? "none" : "block";
-    if (s.tank) document.getElementById(`slotTank_${code}`).value = s.tank;
-    document.getElementById(`slotLiters_${code}`).value = s.liters || "";
-    document.getElementById(`slotCost_${code}`).value = s.cost || "";
-    document.getElementById(`slotMarket_${code}`).value = s.market || "";
-    document.getElementById(`slotBeforeCm_${code}`).value = s.beforeCm || "";
-    document.getElementById(`slotBeforeL_${code}`).value = s.beforeL || "";
-    document.getElementById(`slotAfterCm_${code}`).value = s.afterCm || "";
-    document.getElementById(`slotAfterL_${code}`).value = s.afterL || "";
-    if (s.markupType) document.getElementById(`slotMarkupType_${code}`).value = s.markupType;
-    if (s.markupValue) document.getElementById(`slotMarkupValue_${code}`).value = s.markupValue;
-    updateSlotBilledPreview(code);
-  });
+  // Rebuild one visit block per branch in the draft. The first draft visit's
+  // branch becomes the global branch selector (visit 0 always follows it).
+  document.getElementById("tripVisitsContainer").innerHTML = "";
+  tripVisitCount = 0;
+  tripVisitIds = [];
+  const draftVisits = (draft.visits && draft.visits.length) ? draft.visits : [{ branchId: currentBranch, slots: {} }];
+
+  if (draftVisits[0].branchId && [...document.getElementById("globalBranch").options].some(o => o.value === draftVisits[0].branchId)) {
+    document.getElementById("globalBranch").value = draftVisits[0].branchId;
+    currentBranch = draftVisits[0].branchId;
+  }
+
+  for (let i = 0; i < draftVisits.length; i++) {
+    const vidx = tripVisitCount++;
+    tripVisitIds[vidx] = draftVisits[i].visitId || crypto.randomUUID();
+    renderTripVisit(vidx);
+    if (vidx > 0 && draftVisits[i].branchId) document.getElementById(`visitBranch_${vidx}`).value = draftVisits[i].branchId;
+    await onVisitBranchChange(vidx); // repopulates tanks/shift for the restored branch, no-op for vidx 0
+  }
+  document.getElementById("dlvAddBranchBtn").style.display = tripVisitCount >= branches.length ? "none" : "block";
+
+  for (let vidx = 0; vidx < draftVisits.length; vidx++) {
+    const dv = draftVisits[vidx];
+    document.getElementById(`visitInvoice_${vidx}`).value = dv.invoice || "";
+    if (dv.shift) document.getElementById(`visitShift_${vidx}`).value = dv.shift;
+    DELIVERY_PRODUCT_ORDER.forEach(code => {
+      const s = (dv.slots || {})[code];
+      if (!s) return;
+      document.getElementById(`slotNotDelivered_${vidx}_${code}`).checked = !!s.notDelivered;
+      document.getElementById(`slotFields_${vidx}_${code}`).style.display = s.notDelivered ? "none" : "block";
+      if (s.tank) document.getElementById(`slotTank_${vidx}_${code}`).value = s.tank;
+      document.getElementById(`slotLiters_${vidx}_${code}`).value = s.liters || "";
+      document.getElementById(`slotCost_${vidx}_${code}`).value = s.cost || "";
+      document.getElementById(`slotMarket_${vidx}_${code}`).value = s.market || "";
+      document.getElementById(`slotBeforeCm_${vidx}_${code}`).value = s.beforeCm || "";
+      document.getElementById(`slotBeforeL_${vidx}_${code}`).value = s.beforeL || "";
+      document.getElementById(`slotAfterCm_${vidx}_${code}`).value = s.afterCm || "";
+      document.getElementById(`slotAfterL_${vidx}_${code}`).value = s.afterL || "";
+      if (s.markupType) document.getElementById(`slotMarkupType_${vidx}_${code}`).value = s.markupType;
+      if (s.markupValue) document.getElementById(`slotMarkupValue_${vidx}_${code}`).value = s.markupValue;
+      updateSlotBilledPreview(vidx, code);
+      updateOverflowPreview(vidx, code);
+    });
+  }
 
   document.getElementById("dlvCheckRows").innerHTML = "";
   activeCheckRowIds = [];
@@ -1310,6 +1470,28 @@ async function loadDebtTab() {
     `;
   }
 
+  // Fuel debt broken out per branch -- checks attach at the trip level (may
+  // span several branches), so this sums fuel_visit_debt_breakdown (each
+  // branch's own liters-proportional share) grouped by branch across every
+  // visit that branch has ever had, on any trip.
+  const { data: breakdowns } = await supabase.from("fuel_visit_debt_breakdown").select("*");
+  const visitIdsForDebt = [...new Set((breakdowns || []).map(b => b.visit_id))];
+  const { data: debtVisits } = visitIdsForDebt.length
+    ? await supabase.from("delivery_visits").select("id, branches(code)").in("id", visitIdsForDebt)
+    : { data: [] };
+  const debtVisitById = {}; (debtVisits || []).forEach(v => { debtVisitById[v.id] = v; });
+  const byBranch = {};
+  (breakdowns || []).forEach(b => {
+    const code = debtVisitById[b.visit_id]?.branches?.code || "—";
+    if (!byBranch[code]) byBranch[code] = { owed: 0, paid: 0 };
+    byBranch[code].owed += Number(b.owed);
+    byBranch[code].paid += Number(b.paid_cleared);
+  });
+  document.getElementById("debtByBranchTable").querySelector("tbody").innerHTML = Object.entries(byBranch)
+    .sort((a,b) => a[0].localeCompare(b[0]))
+    .map(([code, v]) => `<tr><td>${code}</td><td>${peso(v.owed)}</td><td>${peso(v.paid)}</td><td>${peso(v.owed - v.paid)}</td></tr>`)
+    .join("") || "<tr><td colspan='4' class='small'>No fuel deliveries recorded yet.</td></tr>";
+
   const { data: schedule } = await supabase.from("business_debt_schedule").select("*").limit(30);
   document.getElementById("debtScheduleTable").querySelector("tbody").innerHTML = (schedule || []).map(s =>
     `<tr><td>${s.source === "fuel" ? "Fuel Supplier" : "Other Debt"}</td><td>${s.payment_date}</td><td>${peso(s.amount)}</td><td>${s.reference || "—"}</td></tr>`
@@ -1479,73 +1661,110 @@ async function saveReceivableCheck() {
 // Deliveries with an outstanding balance in the selected direction (still owed,
 // fully or partially) - the status views compute this from actual allocations,
 // never a manually-set "paid" flag.
+// Supplier-side "Track Payments" is trip-scoped now (checks attach to
+// supplier_trips, possibly spanning several branches); receivable-side stays
+// visit-scoped, unchanged -- a branch's receivable to GS1 has nothing to do
+// with which supplier truck run delivered the fuel. The dropdown holds
+// either a trip_id or a visit_id depending on direction.
 async function loadAllocatableVisits() {
   const direction = document.getElementById("asgnDirection").value;
-  const view = direction === "supplier" ? "fuel_visit_supplier_payment_status" : "fuel_visit_receivable_payment_status";
-  const { data } = await supabase.from(view).select("*")
-    .gt("amount_remaining", 0).order("visit_date", { ascending: false }).limit(100);
-  const visitIds = (data || []).map(v => v.visit_id);
-  const { data: visits } = visitIds.length
-    ? await supabase.from("delivery_visits").select("id, branches(code), fuel_vendors(name)").in("id", visitIds)
-    : { data: [] };
-  const visitById = {}; (visits || []).forEach(v => { visitById[v.id] = v; });
-  document.getElementById("asgnVisit").innerHTML = (data || []).map(v => {
-    const info = visitById[v.visit_id] || {};
-    return `<option value="${v.visit_id}">${v.visit_date} — ${info.branches?.code || ""} — ${info.fuel_vendors?.name || ""} — ${peso(v.amount_remaining)} remaining</option>`;
-  }).join("") || "<option value=''>Nothing outstanding</option>";
+  if (direction === "supplier") {
+    const { data } = await supabase.from("fuel_trip_supplier_payment_status").select("*")
+      .gt("amount_remaining", 0).order("trip_date", { ascending: false }).limit(100);
+    const tripIds = (data || []).map(t => t.trip_id);
+    const { data: trips } = tripIds.length
+      ? await supabase.from("supplier_trips").select("id, fuel_vendors(name)").in("id", tripIds)
+      : { data: [] };
+    const tripById = {}; (trips || []).forEach(t => { tripById[t.id] = t; });
+    document.getElementById("asgnVisit").innerHTML = (data || []).map(t => {
+      const info = tripById[t.trip_id] || {};
+      return `<option value="${t.trip_id}">${t.trip_date} — ${info.fuel_vendors?.name || ""} (trip) — ${peso(t.amount_remaining)} remaining</option>`;
+    }).join("") || "<option value=''>Nothing outstanding</option>";
+  } else {
+    const { data } = await supabase.from("fuel_visit_receivable_payment_status").select("*")
+      .gt("amount_remaining", 0).order("visit_date", { ascending: false }).limit(100);
+    const visitIds = (data || []).map(v => v.visit_id);
+    const { data: visits } = visitIds.length
+      ? await supabase.from("delivery_visits").select("id, branches(code)").in("id", visitIds)
+      : { data: [] };
+    const visitById = {}; (visits || []).forEach(v => { visitById[v.id] = v; });
+    document.getElementById("asgnVisit").innerHTML = (data || []).map(v => {
+      const info = visitById[v.visit_id] || {};
+      return `<option value="${v.visit_id}">${v.visit_date} — ${info.branches?.code || ""} — ${peso(v.amount_remaining)} remaining</option>`;
+    }).join("") || "<option value=''>Nothing outstanding</option>";
+  }
   await loadVisitPaymentStatus();
 }
 
 async function loadVisitPaymentStatus() {
   const direction = document.getElementById("asgnDirection").value;
-  const visitId = document.getElementById("asgnVisit").value;
+  const targetId = document.getElementById("asgnVisit").value;
   const grid = document.getElementById("asgnStatusGrid");
-  if (!visitId) { grid.style.display = "none"; document.getElementById("asgnAllocationsTable").querySelector("tbody").innerHTML = ""; return; }
+  if (!targetId) { grid.style.display = "none"; document.getElementById("asgnAllocationsTable").querySelector("tbody").innerHTML = ""; return; }
 
-  const view = direction === "supplier" ? "fuel_visit_supplier_payment_status" : "fuel_visit_receivable_payment_status";
-  const totalField = direction === "supplier" ? "total_cost" : "billed_total_amount";
-  const { data: status } = await supabase.from(view).select("*").eq("visit_id", visitId).single();
-  grid.style.display = "grid";
-  document.getElementById("asgnTotal").textContent = peso(status[totalField]);
-  document.getElementById("asgnAllocated").textContent = peso(status.amount_allocated);
-  document.getElementById("asgnRemaining").textContent = peso(status.amount_remaining);
-  document.getElementById("asgnRemainingStat").className = "stat" + (status.amount_remaining > 0 ? " warn" : " good");
-  document.getElementById("asgnAmount").value = status.amount_remaining > 0 ? status.amount_remaining : "";
-
-  const allocTable = direction === "supplier" ? "fuel_delivery_supplier_check_allocations" : "fuel_delivery_receivable_check_allocations";
-  const checkTable = direction === "supplier" ? "fuel_supplier_check_payments" : "fuel_branch_receivable_payments";
-  const { data: allocs } = await supabase.from(allocTable).select(`*, ${checkTable}(check_number, check_date, status)`).eq("visit_id", visitId);
-  document.getElementById("asgnAllocationsTable").querySelector("tbody").innerHTML = (allocs || []).map(a => {
-    const check = a[checkTable];
-    return `<tr><td>${check?.check_number || ""}</td><td>${check?.check_date || ""}</td><td>${peso(a.amount)}</td><td>${check?.status || ""}</td></tr>`;
-  }).join("") || "<tr><td colspan='4' class='small'>No checks allocated yet.</td></tr>";
-
-  const checkSel = document.getElementById("asgnCheck");
   if (direction === "supplier") {
+    const { data: status } = await supabase.from("fuel_trip_supplier_payment_status").select("*").eq("trip_id", targetId).single();
+    grid.style.display = "grid";
+    document.getElementById("asgnTotal").textContent = peso(status.total_cost);
+    document.getElementById("asgnAllocated").textContent = peso(status.amount_allocated);
+    document.getElementById("asgnRemaining").textContent = peso(status.amount_remaining);
+    document.getElementById("asgnRemainingStat").className = "stat" + (status.amount_remaining > 0 ? " warn" : " good");
+    document.getElementById("asgnAmount").value = status.amount_remaining > 0 ? status.amount_remaining : "";
+
+    const { data: allocs } = await supabase.from("fuel_delivery_supplier_check_allocations")
+      .select("*, fuel_supplier_check_payments(check_number, check_date, status)").eq("trip_id", targetId);
+    document.getElementById("asgnAllocationsTable").querySelector("tbody").innerHTML = (allocs || []).map(a => {
+      const check = a.fuel_supplier_check_payments;
+      return `<tr><td>${check?.check_number || ""}</td><td>${check?.check_date || ""}</td><td>${peso(a.amount)}</td><td>${check?.status || ""}</td></tr>`;
+    }).join("") || "<tr><td colspan='4' class='small'>No checks allocated yet.</td></tr>";
+
     const { data } = await supabase.from("fuel_supplier_check_payments").select("*, fuel_vendors(name)").order("check_date", { ascending: false });
-    checkSel.innerHTML = (data || []).map(c => `<option value="${c.id}">${c.check_number} — ${c.fuel_vendors?.name || ""} — ${c.check_date}</option>`).join("");
+    document.getElementById("asgnCheck").innerHTML = (data || []).map(c => `<option value="${c.id}">${c.check_number} — ${c.fuel_vendors?.name || ""} — ${c.check_date}</option>`).join("");
   } else {
+    const { data: status } = await supabase.from("fuel_visit_receivable_payment_status").select("*").eq("visit_id", targetId).single();
+    grid.style.display = "grid";
+    document.getElementById("asgnTotal").textContent = peso(status.billed_total_amount);
+    document.getElementById("asgnAllocated").textContent = peso(status.amount_allocated);
+    document.getElementById("asgnRemaining").textContent = peso(status.amount_remaining);
+    document.getElementById("asgnRemainingStat").className = "stat" + (status.amount_remaining > 0 ? " warn" : " good");
+    document.getElementById("asgnAmount").value = status.amount_remaining > 0 ? status.amount_remaining : "";
+
+    const { data: allocs } = await supabase.from("fuel_delivery_receivable_check_allocations")
+      .select("*, fuel_branch_receivable_payments(check_number, check_date, status)").eq("visit_id", targetId);
+    document.getElementById("asgnAllocationsTable").querySelector("tbody").innerHTML = (allocs || []).map(a => {
+      const check = a.fuel_branch_receivable_payments;
+      return `<tr><td>${check?.check_number || ""}</td><td>${check?.check_date || ""}</td><td>${peso(a.amount)}</td><td>${check?.status || ""}</td></tr>`;
+    }).join("") || "<tr><td colspan='4' class='small'>No checks allocated yet.</td></tr>";
+
     const { data } = await supabase.from("fuel_branch_receivable_payments").select("*, branches(code)").order("check_date", { ascending: false });
-    checkSel.innerHTML = (data || []).map(c => `<option value="${c.id}">${c.check_number} — ${c.branches?.code || ""} — ${c.check_date}</option>`).join("");
+    document.getElementById("asgnCheck").innerHTML = (data || []).map(c => `<option value="${c.id}">${c.check_number} — ${c.branches?.code || ""} — ${c.check_date}</option>`).join("");
   }
 }
 
 async function addCheckAllocation() {
   const msg = document.getElementById("asgnMsg");
   const direction = document.getElementById("asgnDirection").value;
-  const visitId = document.getElementById("asgnVisit").value;
+  const targetId = document.getElementById("asgnVisit").value;
   const checkId = document.getElementById("asgnCheck").value;
   const amount = parseFloat(document.getElementById("asgnAmount").value);
-  if (!visitId || !checkId || !amount || amount <= 0) { msg.textContent = "Pick a visit, a check, and a valid amount."; msg.className = "msg err"; return; }
+  if (!targetId || !checkId || !amount || amount <= 0) { msg.textContent = `Pick a ${direction === "supplier" ? "trip" : "visit"}, a check, and a valid amount.`; msg.className = "msg err"; return; }
 
-  const table = direction === "supplier" ? "fuel_delivery_supplier_check_allocations" : "fuel_delivery_receivable_check_allocations";
-  const { error } = await supabase.from(table).insert({ visit_id: visitId, check_id: checkId, amount });
-  if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
-
-  // Wrap up: pull the visit's own info for a clear confirmation, then return
-  // to Deliveries so the encoder lands back where they were, not stranded here.
-  const { data: v } = await supabase.from("delivery_visits").select("visit_date, branches(code), fuel_vendors(name)").eq("id", visitId).single();
-  const label = v ? `${v.visit_date} — ${v.branches?.code || ""} ${v.fuel_vendors?.name || ""}` : "that visit";
+  let label;
+  if (direction === "supplier") {
+    // fn_allocate_check_to_trip inserts the trip-level allocation AND
+    // computes/stores the liters-proportional per-branch split in one call --
+    // same shared logic the atomic trip save uses, so a check added later
+    // splits exactly the same way as one added at save time.
+    const { error } = await supabase.rpc("fn_allocate_check_to_trip", { p_trip_id: targetId, p_check_id: checkId, p_amount: amount });
+    if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+    const { data: t } = await supabase.from("supplier_trips").select("trip_date, fuel_vendors(name)").eq("id", targetId).single();
+    label = t ? `${t.trip_date} — ${t.fuel_vendors?.name || ""} (trip)` : "that trip";
+  } else {
+    const { error } = await supabase.from("fuel_delivery_receivable_check_allocations").insert({ visit_id: targetId, check_id: checkId, amount });
+    if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+    const { data: v } = await supabase.from("delivery_visits").select("visit_date, branches(code)").eq("id", targetId).single();
+    label = v ? `${v.visit_date} — ${v.branches?.code || ""}` : "that visit";
+  }
 
   document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
   document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
@@ -1569,9 +1788,10 @@ async function showDeliveryDetail(deliveryId) {
   document.getElementById("ddContent").style.display = "none";
 
   const { data: d } = await supabase.from("fuel_deliveries")
-    .select("*, branches(code,name), fuel_products(name), fuel_vendors(name), fuel_delivery_drivers(name)")
+    .select("*, branches(code,name), fuel_products(name), fuel_vendors(name), fuel_delivery_drivers(name), delivery_visits(trip_id)")
     .eq("id", deliveryId).single();
   if (!d) { document.getElementById("ddLoading").textContent = "Couldn't find that delivery."; return; }
+  const tripId = d.delivery_visits?.trip_id || null;
 
   document.getElementById("ddTitle").textContent = `${d.branches?.code} — ${d.fuel_products?.name} — ${d.delivery_date}`;
   document.getElementById("ddDeliveryInfo").innerHTML = `
@@ -1597,32 +1817,40 @@ async function showDeliveryDetail(deliveryId) {
     </tr>`).join("") || "<tr><td colspan='3' class='small'>None.</td></tr>";
   const visitTotalCost = (siblings || []).reduce((s, r) => s + Number(r.total_cost), 0);
 
-  // Payments (both directions) -- keyed by visit_id now, since checks cover
-  // the visit's combined total across however many products it has.
-  const { data: scAllocs } = d.visit_id
-    ? await supabase.from("fuel_delivery_supplier_check_allocations")
-        .select("*, fuel_supplier_check_payments(check_number, check_date, status)").eq("visit_id", d.visit_id)
+  // Payments: supplier checks attach to the TRIP (possibly several branches),
+  // so what's shown here is THIS branch's own liters-proportional share --
+  // fuel_trip_check_visit_splits, not the raw trip-level allocation amounts.
+  // Receivable checks (branch owing GS1 back) stay visit-scoped, unchanged.
+  const { data: scSplits } = d.visit_id
+    ? await supabase.from("fuel_trip_check_visit_splits")
+        .select("*, fuel_delivery_supplier_check_allocations(fuel_supplier_check_payments(check_number, check_date, status))")
+        .eq("visit_id", d.visit_id)
     : { data: [] };
   const { data: rcAllocs } = d.visit_id
     ? await supabase.from("fuel_delivery_receivable_check_allocations")
         .select("*, fuel_branch_receivable_payments(check_number, check_date, status)").eq("visit_id", d.visit_id)
     : { data: [] };
-  const scPaid = (scAllocs || []).reduce((s,a) => s + Number(a.amount), 0);
+  const { data: breakdown } = d.visit_id
+    ? await supabase.from("fuel_visit_debt_breakdown").select("*").eq("visit_id", d.visit_id).single()
+    : { data: null };
+  const owedShare = breakdown ? Number(breakdown.owed) : visitTotalCost;
+  const paidShare = breakdown ? Number(breakdown.allocated_total) : 0;
   const rcPaid = (rcAllocs || []).reduce((s,a) => s + Number(a.amount), 0);
   const { data: siblingsWithBilling } = d.visit_id
     ? await supabase.from("fuel_deliveries").select("billed_total_amount").eq("visit_id", d.visit_id)
     : { data: [] };
   const visitBilled = (siblingsWithBilling || []).reduce((s, r) => s + Number(r.billed_total_amount || 0), 0);
   document.getElementById("ddPaymentSummary").innerHTML = `
-    <div class="stat"><div class="k">Owed to Supplier (visit)</div><div class="v">${peso(visitTotalCost)}</div></div>
-    <div class="stat ${scPaid >= visitTotalCost ? 'good' : 'warn'}"><div class="k">Paid So Far</div><div class="v">${peso(scPaid)} (${peso(visitTotalCost - scPaid)} left)</div></div>
+    <div class="stat"><div class="k">Owed to Supplier (this branch's share)</div><div class="v">${peso(owedShare)}</div></div>
+    <div class="stat ${paidShare >= owedShare ? 'good' : 'warn'}"><div class="k">Paid So Far</div><div class="v">${peso(paidShare)} (${peso(owedShare - paidShare)} left)</div></div>
     ${visitBilled ? `
     <div class="stat"><div class="k">Owed by Branch (visit)</div><div class="v">${peso(visitBilled)}</div></div>
     <div class="stat ${rcPaid >= visitBilled ? 'good' : 'warn'}"><div class="k">Received So Far</div><div class="v">${peso(rcPaid)} (${peso(visitBilled - rcPaid)} left)</div></div>` : ''}
   `;
-  document.getElementById("ddSupplierChecks").querySelector("tbody").innerHTML = (scAllocs || []).map(a =>
-    `<tr><td>${a.fuel_supplier_check_payments?.check_number}</td><td>${a.fuel_supplier_check_payments?.check_date}</td><td>${peso(a.amount)}</td><td>${a.fuel_supplier_check_payments?.status}</td></tr>`
-  ).join("") || "<tr><td colspan='4' class='small'>None yet.</td></tr>";
+  document.getElementById("ddSupplierChecks").querySelector("tbody").innerHTML = (scSplits || []).map(a => {
+    const check = a.fuel_delivery_supplier_check_allocations?.fuel_supplier_check_payments;
+    return `<tr><td>${check?.check_number || ""}</td><td>${check?.check_date || ""}</td><td>${peso(a.amount)} (this branch's share)</td><td>${check?.status || ""}</td></tr>`;
+  }).join("") || "<tr><td colspan='4' class='small'>None yet.</td></tr>";
   document.getElementById("ddReceivableChecks").querySelector("tbody").innerHTML = (rcAllocs || []).map(a =>
     `<tr><td>${a.fuel_branch_receivable_payments?.check_number}</td><td>${a.fuel_branch_receivable_payments?.check_date}</td><td>${peso(a.amount)}</td><td>${a.fuel_branch_receivable_payments?.status}</td></tr>`
   ).join("") || "<tr><td colspan='4' class='small'>Not applicable, or none yet.</td></tr>";
@@ -1695,9 +1923,9 @@ function closeDeliveryDetail() {
   document.getElementById("deliveryDetailOverlay").style.display = "none";
 }
 
-// Carries a visit's ID directly into the Checks tab, pre-selected — no
+// Carries a trip's ID directly into the Checks tab, pre-selected — no
 // searching for it again on a separate, disconnected screen.
-async function goToChecksForVisit(visitId) {
+async function goToChecksForTrip(tripId) {
   document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
   document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
   document.querySelector('.tab[data-tab="checks"]').classList.add("active");
@@ -1708,60 +1936,54 @@ async function goToChecksForVisit(visitId) {
   document.getElementById("asgnDirection").value = "supplier"; // always applicable; switch to "receivable" manually if this was a GS4/GS5 wholesale visit
   await loadAllocatableVisits();
 
-  // Make sure this exact visit is selectable even if it's already fully paid
+  // Make sure this exact trip is selectable even if it's already fully paid
   // (and so wouldn't otherwise appear in the "still outstanding" list).
   const sel = document.getElementById("asgnVisit");
-  if (![...sel.options].some(o => o.value === visitId)) {
-    const { data: v } = await supabase.from("delivery_visits").select("visit_date, branches(code), fuel_vendors(name)").eq("id", visitId).single();
+  if (![...sel.options].some(o => o.value === tripId)) {
+    const { data: t } = await supabase.from("supplier_trips").select("trip_date, fuel_vendors(name)").eq("id", tripId).single();
     const opt = document.createElement("option");
-    opt.value = visitId;
-    opt.textContent = `${v?.visit_date || ""} — ${v?.branches?.code || ""} ${v?.fuel_vendors?.name || ""} (already fully paid)`;
+    opt.value = tripId;
+    opt.textContent = `${t?.trip_date || ""} — ${t?.fuel_vendors?.name || ""} (trip, already fully paid)`;
     sel.insertBefore(opt, sel.firstChild);
   }
-  sel.value = visitId;
+  sel.value = tripId;
   await loadVisitPaymentStatus();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 async function loadDeliveries() {
   if (!currentBranch) return;
-  if (!document.getElementById("dlvShift").value) await loadShiftOptions("dlvShift"); // don't clobber a mid-entry or restored-draft selection
-  const { data } = await supabase.from("fuel_deliveries").select("*, fuel_products(name), fuel_vendors(name)")
+  const { data } = await supabase.from("fuel_deliveries")
+    .select("*, fuel_products(name), fuel_vendors(name), delivery_visits(trip_id, branches(code))")
     .eq("branch_id", currentBranch).order("created_at", { ascending: false }).limit(20);
   deliveriesCache = data || [];
 
-  // Payment status is visit-level now -- checks cover a visit's combined total
-  // across however many products it has, not any single product's own total,
-  // so every product row from the same visit shows the same combined status.
+  // Payment status comes straight from fuel_visit_debt_breakdown (per-branch
+  // figures within a possibly-multi-branch trip) -- owed is this branch's own
+  // fuel_deliveries total; allocated_total is however much of that has ANY
+  // check attached (regardless of cleared status, matching this cell's old
+  // "has a check been written" semantics -- see Checks tab for clear status).
   const visitIds = [...new Set(deliveriesCache.map(d => d.visit_id).filter(Boolean))];
-  const { data: visitTotals } = visitIds.length
-    ? await supabase.from("fuel_deliveries").select("visit_id, total_cost").in("visit_id", visitIds)
+  const { data: breakdowns } = visitIds.length
+    ? await supabase.from("fuel_visit_debt_breakdown").select("*").in("visit_id", visitIds)
     : { data: [] };
-  const totalByVisit = {};
-  (visitTotals || []).forEach(r => { totalByVisit[r.visit_id] = (totalByVisit[r.visit_id] || 0) + Number(r.total_cost); });
+  const breakdownByVisit = {};
+  (breakdowns || []).forEach(b => { breakdownByVisit[b.visit_id] = b; });
 
-  const { data: allocs } = visitIds.length
-    ? await supabase.from("fuel_delivery_supplier_check_allocations").select("visit_id, amount, fuel_supplier_check_payments(check_number)").in("visit_id", visitIds)
-    : { data: [] };
-  const paidByVisit = {}, checksByVisit = {};
-  (allocs || []).forEach(a => {
-    paidByVisit[a.visit_id] = (paidByVisit[a.visit_id] || 0) + Number(a.amount);
-    (checksByVisit[a.visit_id] ||= []).push(a.fuel_supplier_check_payments?.check_number);
-  });
   function paymentCell(d) {
     if (!d.visit_id) return `<span class="small" style="color:var(--muted);">No visit on record</span>`;
-    const total = totalByVisit[d.visit_id] || 0;
-    const paid = paidByVisit[d.visit_id] || 0;
-    const checks = checksByVisit[d.visit_id] || [];
-    if (paid <= 0) return `<span class="small" style="color:var(--danger);">Unpaid</span>`;
-    if (paid < total) return `<span class="small" style="color:var(--orange);">${peso(paid)} of ${peso(total)} (visit)<br>${checks.join(", ")}</span>`;
-    return `<span class="small" style="color:var(--accent);">✅ Paid (visit)<br>${checks.join(", ")}</span>`;
+    const b = breakdownByVisit[d.visit_id];
+    if (!b) return `<span class="small" style="color:var(--muted);">—</span>`;
+    if (b.allocated_total <= 0) return `<span class="small" style="color:var(--danger);">Unpaid</span>`;
+    if (b.allocated_total < b.owed) return `<span class="small" style="color:var(--orange);">${peso(b.allocated_total)} of ${peso(b.owed)}<br>(trip, this branch's share)</span>`;
+    return `<span class="small" style="color:var(--accent);">✅ Fully allocated<br>(trip, this branch's share)</span>`;
   }
 
   document.getElementById("deliveriesEditHint").textContent = isOwner ? "(click a row to edit)" : "(only the owner can edit a saved delivery)";
   document.getElementById("deliveriesTable").querySelector("tbody").innerHTML = (data || []).map((d,i) => `
     <tr>
       <td ${isOwner ? `style="cursor:pointer;" onclick="editDelivery(${i})"` : ""}>${d.delivery_date}</td>
+      <td ${isOwner ? `style="cursor:pointer;" onclick="editDelivery(${i})"` : ""}>${d.delivery_visits?.branches?.code || ""}</td>
       <td ${isOwner ? `style="cursor:pointer;" onclick="editDelivery(${i})"` : ""}>${d.fuel_products?.name || ""}</td>
       <td ${isOwner ? `style="cursor:pointer;" onclick="editDelivery(${i})"` : ""}>${d.fuel_vendors?.name || "—"}</td>
       <td ${isOwner ? `style="cursor:pointer;" onclick="editDelivery(${i})"` : ""}>${liters(d.invoiced_liters)}</td>
@@ -1771,10 +1993,10 @@ async function loadDeliveries() {
       <td>${paymentCell(d)}</td>
       <td>
         <button class="small" style="margin:0 0 4px; padding:6px 10px; display:block; width:100%;" onclick="event.stopPropagation(); showDeliveryDetail('${d.id}')">Details</button>
-        ${d.visit_id ? `<button class="secondary small" style="margin:0 0 4px; padding:6px 10px; display:block; width:100%;" onclick="event.stopPropagation(); goToChecksForVisit('${d.visit_id}')">Checks</button>` : ""}
+        ${d.delivery_visits?.trip_id ? `<button class="secondary small" style="margin:0 0 4px; padding:6px 10px; display:block; width:100%;" onclick="event.stopPropagation(); goToChecksForTrip('${d.delivery_visits.trip_id}')">Checks</button>` : ""}
         ${isOwner ? `<button class="secondary small" style="margin:0; padding:6px 10px; display:block; width:100%;" onclick="event.stopPropagation(); deleteDelivery('${d.id}')">Delete</button>` : ""}
       </td>
-    </tr>`).join("") || "<tr><td colspan='9' class='small'>No deliveries yet.</td></tr>";
+    </tr>`).join("") || "<tr><td colspan='10' class='small'>No deliveries yet.</td></tr>";
 }
 
 // NOTE: this only ever deletes one product row, not the whole visit -- if the
@@ -1814,36 +2036,47 @@ function editDelivery(i) {
   editingDeliveryId = d.id;
   const code = products.find(p => p.id === d.product_id)?.code;
 
+  // Edit mode only ever shows visit 0 (this delivery's own product); any
+  // other branches added to the current draft trip are discarded since
+  // editing an existing row is a separate, single-row correction flow.
+  document.getElementById("tripVisitsContainer").innerHTML = "";
+  tripVisitCount = 0;
+  tripVisitIds = [];
+  const vidx = tripVisitCount++;
+  tripVisitIds[vidx] = d.visit_id;
+  renderTripVisit(vidx);
+  document.getElementById("dlvAddBranchBtn").style.display = "none";
+
   document.getElementById("dlvVendor").value = d.vendor_id || "";
   document.getElementById("dlvDriver").value = d.driver_id || "";
   document.getElementById("dlvPlate").value = d.plate_number || "";
-  document.getElementById("dlvShift").value = d.shift_id || "";
-  document.getElementById("dlvInvoice").value = d.invoice_number || "";
+  document.getElementById("visitShift_0").value = d.shift_id || "";
+  document.getElementById("visitInvoice_0").value = d.invoice_number || "";
   document.getElementById("dlvDate").value = d.delivery_date;
   document.getElementById("dlvPaid").checked = d.paid;
 
   DELIVERY_PRODUCT_ORDER.forEach(c => {
-    const block = document.getElementById(`slotBlock_${c}`);
-    const notDelivered = document.getElementById(`slotNotDelivered_${c}`);
+    const block = document.getElementById(`slotBlock_0_${c}`);
+    const notDelivered = document.getElementById(`slotNotDelivered_0_${c}`);
     if (c === code) {
       block.style.display = "block";
       notDelivered.checked = false;
       notDelivered.disabled = true;
-      document.getElementById(`slotFields_${c}`).style.display = "block";
-      populateSlotTank(c);
-      document.getElementById(`slotTank_${c}`).value = d.tank_id;
-      document.getElementById(`slotLiters_${c}`).value = d.invoiced_liters;
-      document.getElementById(`slotCost_${c}`).value = d.cost_per_liter;
-      document.getElementById(`slotMarket_${c}`).value = d.market_reference_price_per_liter || "";
-      document.getElementById(`slotBeforeCm_${c}`).value = d.dipstick_before_cm || "";
-      document.getElementById(`slotBeforeL_${c}`).value = d.dipstick_before_liters;
-      document.getElementById(`slotAfterCm_${c}`).value = d.dipstick_after_cm || "";
-      document.getElementById(`slotAfterL_${c}`).value = d.dipstick_after_liters;
+      document.getElementById(`slotFields_0_${c}`).style.display = "block";
+      populateSlotTank(0, c);
+      document.getElementById(`slotTank_0_${c}`).value = d.tank_id;
+      document.getElementById(`slotLiters_0_${c}`).value = d.invoiced_liters;
+      document.getElementById(`slotCost_0_${c}`).value = d.cost_per_liter;
+      document.getElementById(`slotMarket_0_${c}`).value = d.market_reference_price_per_liter || "";
+      document.getElementById(`slotBeforeCm_0_${c}`).value = d.dipstick_before_cm || "";
+      document.getElementById(`slotBeforeL_0_${c}`).value = d.dipstick_before_liters;
+      document.getElementById(`slotAfterCm_0_${c}`).value = d.dipstick_after_cm || "";
+      document.getElementById(`slotAfterL_0_${c}`).value = d.dipstick_after_liters;
       if (d.markup_type) {
-        document.getElementById(`slotMarkupBox_${c}`).style.display = "block";
-        document.getElementById(`slotMarkupType_${c}`).value = d.markup_type;
-        document.getElementById(`slotMarkupValue_${c}`).value = d.markup_value;
-        updateSlotBilledPreview(c);
+        document.getElementById(`slotMarkupBox_0_${c}`).style.display = "block";
+        document.getElementById(`slotMarkupType_0_${c}`).value = d.markup_type;
+        document.getElementById(`slotMarkupValue_0_${c}`).value = d.markup_value;
+        updateSlotBilledPreview(0, c);
       }
     } else {
       block.style.display = "none";
@@ -1863,42 +2096,42 @@ function editDelivery(i) {
 
 function cancelEditDelivery() {
   editingDeliveryId = null;
-  document.getElementById("dlvSaveBtn").textContent = "Save Delivery Visit";
+  document.getElementById("dlvSaveBtn").textContent = "Save Delivery Trip";
   document.getElementById("dlvCancelBtn").textContent = "Cancel";
   document.getElementById("dlvCheckBox").style.display = "block";
-  DELIVERY_PRODUCT_ORDER.forEach(c => {
-    document.getElementById(`slotBlock_${c}`).style.display = "block";
-    document.getElementById(`slotNotDelivered_${c}`).disabled = false;
-  });
   startNewVisit();
 }
 
 // Resets the visible form to a fresh, empty visit for the current branch --
 // new client-generated visit ID, every slot back to unresolved, checks back
 // to one blank row. Does NOT touch the local draft; callers decide that.
+// Resets the visible form to a fresh, empty single-branch trip -- new
+// client-generated trip ID, back down to just visit 0 (following
+// currentBranch), every slot unresolved, checks back to one blank row.
+// Does NOT touch the local draft; callers decide that.
 function resetVisitFormFields() {
   currentVisitId = crypto.randomUUID();
-  ["dlvPlate","dlvInvoice"].forEach(id => document.getElementById(id).value = "");
+  document.getElementById("dlvPlate").value = "";
   document.getElementById("dlvPaid").checked = false;
   document.getElementById("dlvDate").value = todayIso();
   document.getElementById("dlvVendor").value = "";
   document.getElementById("dlvDriver").value = "";
-  document.getElementById("dlvShift").value = "";
-  DELIVERY_PRODUCT_ORDER.forEach(c => {
-    document.getElementById(`slotNotDelivered_${c}`).checked = false;
-    document.getElementById(`slotFields_${c}`).style.display = "block";
-    ["slotLiters","slotCost","slotMarket","slotBeforeCm","slotBeforeL","slotAfterCm","slotAfterL"].forEach(prefix => {
-      document.getElementById(`${prefix}_${c}`).value = "";
-    });
-    populateSlotTank(c); // also re-checks the markup box for the current branch
-  });
+
+  document.getElementById("tripVisitsContainer").innerHTML = "";
+  tripVisitCount = 0;
+  tripVisitIds = [];
+  const vidx = tripVisitCount++;
+  tripVisitIds[vidx] = crypto.randomUUID();
+  renderTripVisit(vidx);
+  document.getElementById("dlvAddBranchBtn").style.display = tripVisitCount >= branches.length ? "none" : "block";
+
   resetCheckRows();
   updateVisitSummary();
   updateCheckLockState();
   updateCheckBalance();
 }
 
-// Starts a brand new, empty visit and discards any local draft -- used by
+// Starts a brand new, empty trip and discards any local draft -- used by
 // the Cancel button and right after a successful save.
 function startNewVisit() {
   resetVisitFormFields();
@@ -1925,22 +2158,23 @@ async function lookupLitersFromCm(tankId, cm) {
 }
 
 let isSavingDelivery = false;
-let currentVisitId = null; // client-generated (crypto.randomUUID()) the moment a visit starts, same convention as other client-side IDs in this app (e.g. timesheet-clock.html's offline queue entries)
+let currentVisitId = null; // actually the current TRIP's id -- client-generated (crypto.randomUUID()) the moment a trip starts, same convention as other client-side IDs in this app (e.g. timesheet-clock.html's offline queue entries)
+let tripVisitIds = []; // tripVisitIds[vidx] -> that visit block's own client-generated visit id
 
-function slotPayload(code) {
-  const markupBoxVisible = document.getElementById(`slotMarkupBox_${code}`).style.display === "block";
+function slotPayload(vidx, code) {
+  const markupBoxVisible = document.getElementById(`slotMarkupBox_${vidx}_${code}`).style.display === "block";
   return {
     product_id: productIdFor(code),
-    tank_id: document.getElementById(`slotTank_${code}`).value,
-    invoiced_liters: parseFloat(document.getElementById(`slotLiters_${code}`).value),
-    cost_per_liter: parseFloat(document.getElementById(`slotCost_${code}`).value),
-    market_reference_price_per_liter: document.getElementById(`slotMarket_${code}`).value ? parseFloat(document.getElementById(`slotMarket_${code}`).value) : null,
-    dipstick_before_cm: document.getElementById(`slotBeforeCm_${code}`).value ? parseFloat(document.getElementById(`slotBeforeCm_${code}`).value) : null,
-    dipstick_before_liters: parseFloat(document.getElementById(`slotBeforeL_${code}`).value),
-    dipstick_after_cm: document.getElementById(`slotAfterCm_${code}`).value ? parseFloat(document.getElementById(`slotAfterCm_${code}`).value) : null,
-    dipstick_after_liters: parseFloat(document.getElementById(`slotAfterL_${code}`).value),
-    markup_type: markupBoxVisible ? document.getElementById(`slotMarkupType_${code}`).value : null,
-    markup_value: markupBoxVisible ? (parseFloat(document.getElementById(`slotMarkupValue_${code}`).value) || 0) : null
+    tank_id: document.getElementById(`slotTank_${vidx}_${code}`).value,
+    invoiced_liters: parseFloat(document.getElementById(`slotLiters_${vidx}_${code}`).value),
+    cost_per_liter: parseFloat(document.getElementById(`slotCost_${vidx}_${code}`).value),
+    market_reference_price_per_liter: document.getElementById(`slotMarket_${vidx}_${code}`).value ? parseFloat(document.getElementById(`slotMarket_${vidx}_${code}`).value) : null,
+    dipstick_before_cm: document.getElementById(`slotBeforeCm_${vidx}_${code}`).value ? parseFloat(document.getElementById(`slotBeforeCm_${vidx}_${code}`).value) : null,
+    dipstick_before_liters: parseFloat(document.getElementById(`slotBeforeL_${vidx}_${code}`).value),
+    dipstick_after_cm: document.getElementById(`slotAfterCm_${vidx}_${code}`).value ? parseFloat(document.getElementById(`slotAfterCm_${vidx}_${code}`).value) : null,
+    dipstick_after_liters: parseFloat(document.getElementById(`slotAfterL_${vidx}_${code}`).value),
+    markup_type: markupBoxVisible ? document.getElementById(`slotMarkupType_${vidx}_${code}`).value : null,
+    markup_value: markupBoxVisible ? (parseFloat(document.getElementById(`slotMarkupValue_${vidx}_${code}`).value) || 0) : null
   };
 }
 
@@ -1953,9 +2187,7 @@ async function saveDeliveryVisit() {
     vendor_id: document.getElementById("dlvVendor").value || null,
     driver_id: document.getElementById("dlvDriver").value || null,
     plate_number: document.getElementById("dlvPlate").value || null,
-    invoice_number: document.getElementById("dlvInvoice").value || null,
-    shift_id: document.getElementById("dlvShift").value || null,
-    delivery_date: document.getElementById("dlvDate").value,
+    trip_date: document.getElementById("dlvDate").value,
     paid: document.getElementById("dlvPaid").checked
   };
 
@@ -1964,8 +2196,17 @@ async function saveDeliveryVisit() {
   saveBtn.disabled = true;
   try {
     if (editingDeliveryId) {
-      const code = DELIVERY_PRODUCT_ORDER.find(c => !document.getElementById(`slotNotDelivered_${c}`).checked);
-      const payload = { branch_id: currentBranch, ...shared, ...slotPayload(code) };
+      // Edit mode only ever touches visit 0's single resolved slot (see
+      // editDelivery()) -- a plain UPDATE on that one fuel_deliveries row,
+      // same as before the trip restructure.
+      const code = DELIVERY_PRODUCT_ORDER.find(c => !document.getElementById(`slotNotDelivered_0_${c}`).checked);
+      const payload = {
+        branch_id: currentBranch, vendor_id: shared.vendor_id, driver_id: shared.driver_id,
+        plate_number: shared.plate_number, delivery_date: shared.trip_date, paid: shared.paid,
+        invoice_number: document.getElementById("visitInvoice_0").value || null,
+        shift_id: document.getElementById("visitShift_0").value || null,
+        ...slotPayload(0, code)
+      };
       if (!payload.tank_id) { msg.textContent = "No tank set up for this product/branch — add one in Setup first."; msg.className = "msg err"; return; }
       const { error } = await supabase.from("fuel_deliveries").update(payload).eq("id", editingDeliveryId);
       if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
@@ -1974,11 +2215,19 @@ async function saveDeliveryVisit() {
       msg.textContent = "Delivery updated — WAC chain recalculated for every delivery of this product."; msg.className = "msg ok";
       cancelEditDelivery();
     } else {
-      const productsPayload = DELIVERY_PRODUCT_ORDER
-        .filter(c => getSlotState(c).filled)
-        .map(c => slotPayload(c));
+      const visitsPayload = [];
+      for (let vidx = 0; vidx < tripVisitCount; vidx++) {
+        const productsForVisit = DELIVERY_PRODUCT_ORDER.filter(c => getSlotState(vidx, c).filled).map(c => slotPayload(vidx, c));
+        visitsPayload.push({
+          visit_id: tripVisitIds[vidx],
+          branch_id: branchForVisit(vidx),
+          invoice_number: document.getElementById(`visitInvoice_${vidx}`).value || null,
+          shift_id: document.getElementById(`visitShift_${vidx}`).value || null,
+          products: productsForVisit
+        });
+      }
 
-      const missingTank = productsPayload.find(p => !p.tank_id);
+      const missingTank = visitsPayload.flatMap(v => v.products).find(p => !p.tank_id);
       if (missingTank) { msg.textContent = "No tank set up for one of these products/branch — add one in Setup first."; msg.className = "msg err"; return; }
 
       const checksPayload = [];
@@ -2001,26 +2250,26 @@ async function saveDeliveryVisit() {
       // Defense in depth: Save is already disabled unless this holds, but the
       // RPC itself is the real backstop (checked again server-side) - this
       // just avoids a wasted round-trip and shows the same inline message.
-      if (!allSlotsResolved() || !productsPayload.length || !rowsOk || !checksPayload.length || !updateCheckBalance()) {
-        msg.textContent = "Fix the form below — resolve every product slot, add checks that sum exactly to the combined total, then save.";
+      if (!allSlotsResolved() || !visitsPayload.some(v => v.products.length) || !rowsOk || !checksPayload.length || !updateCheckBalance()) {
+        msg.textContent = "Fix the form below — resolve every product slot in every branch, add checks that sum exactly to the combined trip total, then save.";
         msg.className = "msg err";
         return;
       }
 
-      const { data: savedVisitId, error } = await supabase.rpc("fn_save_delivery_visit", {
-        p_visit_id: currentVisitId, p_branch_id: currentBranch,
-        p_vendor_id: shared.vendor_id, p_driver_id: shared.driver_id, p_plate_number: shared.plate_number,
-        p_invoice_number: shared.invoice_number, p_shift_id: shared.shift_id, p_visit_date: shared.delivery_date,
-        p_paid: shared.paid, p_products: productsPayload, p_checks: checksPayload
+      const { data: savedTripId, error } = await supabase.rpc("fn_save_delivery_trip", {
+        p_trip_id: currentVisitId, p_vendor_id: shared.vendor_id, p_driver_id: shared.driver_id,
+        p_plate_number: shared.plate_number, p_trip_date: shared.trip_date,
+        p_paid: shared.paid, p_visits: visitsPayload, p_checks: checksPayload
       });
       if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
 
       const { data: createdDeliveries } = await supabase.from("fuel_deliveries")
-        .select("id, fuel_products(name)").eq("visit_id", savedVisitId);
+        .select("id, fuel_products(name), branches(code)").in("visit_id", tripVisitIds.slice(0, tripVisitCount));
+      const nProducts = (createdDeliveries || []).length;
       const links = (createdDeliveries || [])
-        .map(d => `<button class="small" style="margin:4px 6px 0 0; padding:8px 12px;" onclick="showDeliveryDetail('${d.id}')">${escapeHtml(d.fuel_products?.name || "")} Details →</button>`)
+        .map(d => `<button class="small" style="margin:4px 6px 0 0; padding:8px 12px;" onclick="showDeliveryDetail('${d.id}')">${escapeHtml(d.branches?.code || "")} ${escapeHtml(d.fuel_products?.name || "")} Details →</button>`)
         .join("");
-      msg.innerHTML = `Visit saved — ${productsPayload.length} product${productsPayload.length > 1 ? "s" : ""}, ${checksPayload.length} check${checksPayload.length > 1 ? "s" : ""} attached.<br>${links}`;
+      msg.innerHTML = `Trip saved — ${tripVisitCount} branch${tripVisitCount > 1 ? "es" : ""}, ${nProducts} product${nProducts > 1 ? "s" : ""}, ${checksPayload.length} check${checksPayload.length > 1 ? "s" : ""} attached.<br>${links}`;
       msg.className = "msg ok";
       startNewVisit();
     }
@@ -2035,11 +2284,17 @@ async function saveDeliveryVisit() {
 // DISPENSING
 // ============================================================
 async function loadShiftOptions(selectId, includeAll) {
-  const { data } = await supabase.from("shifts").select("*").eq("branch_id", currentBranch)
+  return loadShiftOptionsForBranch(selectId, currentBranch, includeAll);
+}
+// Same as loadShiftOptions but for an explicit branch -- needed because a
+// trip's visit blocks beyond the first target a branch other than whatever
+// the global branch selector currently shows.
+async function loadShiftOptionsForBranch(selectId, branchId, includeAll) {
+  const { data } = await supabase.from("shifts").select("*").eq("branch_id", branchId)
     .order("shift_date", { ascending: false }).limit(30);
   const opts = (data || []).map(s => `<option value="${s.id}">${s.shift_date} — ${s.shift_label}</option>`).join("");
   const el = document.getElementById(selectId);
-  el.innerHTML = (includeAll === false ? "" : "<option value=''>—</option>") + opts;
+  if (el) el.innerHTML = (includeAll === false ? "" : "<option value=''>—</option>") + opts;
   return data || [];
 }
 
@@ -2336,16 +2591,31 @@ async function loadSetupTab() {
   document.getElementById("driversTable").querySelector("tbody").innerHTML = drivers.map(d =>
     `<tr><td>${d.name}</td><td>${d.area || "—"}</td></tr>`).join("");
 
+  // NOTE: deliberately does NOT reassign the global `tanks` (that stays the
+  // all-branches list initApp() loaded, since the Deliveries tab's other-
+  // branch visit blocks in a multi-branch trip need tanks for branches other
+  // than currentBranch). This is its own branch-scoped list, for this tab only.
   const { data: tk } = await supabase.from("fuel_tanks").select("*, fuel_products(name)").eq("branch_id", currentBranch);
-  tanks = tk || [];
-  document.getElementById("tanksTable").querySelector("tbody").innerHTML = tanks.map(t => `
+  const branchTanks = tk || [];
+  document.getElementById("tanksTable").querySelector("tbody").innerHTML = branchTanks.map(t => `
     <tr><td>${t.fuel_products?.name || ""}</td><td>${t.tank_label}</td>
       <td><select onchange="toggleDipstickMode('${t.id}', this.value)">
         <option value="calibration_curve" ${t.dipstick_mode === "calibration_curve" ? "selected" : ""}>Calibration Curve</option>
         <option value="direct_liter" ${t.dipstick_mode === "direct_liter" ? "selected" : ""}>Direct Liters</option>
       </select></td>
+      <td><input type="number" step="0.01" value="${t.capacity_liters ?? ""}" placeholder="no limit" style="max-width:110px;" onchange="saveTankCapacity('${t.id}', this.value)"></td>
     </tr>`).join("");
-  document.getElementById("calTank").innerHTML = tanks.map(t => `<option value="${t.id}">${t.fuel_products?.name} — ${t.tank_label}</option>`).join("");
+  document.getElementById("calTank").innerHTML = branchTanks.map(t => `<option value="${t.id}">${t.fuel_products?.name} — ${t.tank_label}</option>`).join("");
+
+  const { data: held } = await supabase.from("fuel_tank_held_stock").select("*, fuel_products(name)")
+    .eq("branch_id", currentBranch).gt("held_liters", 0);
+  document.getElementById("heldStockTable").querySelector("tbody").innerHTML = (held || []).map(h => `
+    <tr><td>${h.fuel_products?.name || ""}</td><td>${liters(h.held_liters)}</td><td>${peso(h.held_wac)}</td>
+      <td style="white-space:nowrap;">
+        <input type="number" step="0.01" placeholder="Liters" id="xferAmt_${h.product_id}" style="max-width:100px; display:inline-block;">
+        <button class="small" style="margin:0; padding:6px 10px;" onclick="transferHeldToTank('${h.product_id}')">Transfer to Tank</button>
+      </td>
+    </tr>`).join("") || "<tr><td colspan='4' class='small'>Nothing held for this branch right now.</td></tr>";
 
   const { data: pm } = await supabase.from("fuel_pumps").select("*, fuel_products(name)").eq("branch_id", currentBranch).order("pump_label");
   pumps = pm || [];
@@ -2465,6 +2735,36 @@ async function saveTank() {
 async function toggleDipstickMode(tankId, newMode) {
   const { error } = await supabase.from("fuel_tanks").update({ dipstick_mode: newMode }).eq("id", tankId);
   if (error) { alert("Error: " + error.message); loadSetupTab(); return; }
+  loadSetupTab();
+}
+
+// Blank clears the limit (no overflow tracking for this tank -- the default).
+// Patches the global `tanks` cache in place so the Deliveries tab's overflow
+// preview reflects the change immediately, without a full page reload.
+async function saveTankCapacity(tankId, value) {
+  const capacity = value === "" ? null : parseFloat(value);
+  const { error } = await supabase.from("fuel_tanks").update({ capacity_liters: capacity }).eq("id", tankId);
+  if (error) { alert("Error: " + error.message); loadSetupTab(); return; }
+  const t = tanks.find(x => x.id === tankId);
+  if (t) t.capacity_liters = capacity;
+  inventoryStateCache = {}; // capacity changed -- discard cached "current tank liters" so the overflow preview re-fetches
+}
+
+// Moves liters from the held/external container into the tank once tank
+// space has freed up (e.g. sales have drawn the tank down). NOT a new
+// delivery -- fn_transfer_held_to_tank just relocates already-owned,
+// already-paid-for stock and re-blends WAC accordingly.
+async function transferHeldToTank(productId) {
+  const msg = document.getElementById("transferMsg");
+  const amtEl = document.getElementById(`xferAmt_${productId}`);
+  const amount = parseFloat(amtEl.value);
+  if (!amount || amount <= 0) { msg.textContent = "Enter how many liters to transfer."; msg.className = "msg err"; return; }
+  const { error } = await supabase.rpc("fn_transfer_held_to_tank", {
+    p_branch_id: currentBranch, p_product_id: productId, p_liters: amount, p_created_by: currentUserEmail || null
+  });
+  if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+  msg.textContent = `Transferred ${liters(amount)} into the tank.`; msg.className = "msg ok";
+  inventoryStateCache = {};
   loadSetupTab();
 }
 
