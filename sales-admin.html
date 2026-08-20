@@ -112,6 +112,9 @@
 
     <!-- ============ DASHBOARD ============ -->
     <div class="panel active" id="panel-dashboard">
+      <div class="card" id="dashVarianceBanner" style="display:none; border:1px solid var(--danger); background:#450a0a;">
+        <p style="margin:0;">⚠ <strong><span id="dashVarianceCount"></span> unresolved stock variance<span id="dashVariancePlural"></span></strong> for this branch — review and resolve in Setup → Tanks &amp; Calibration.</p>
+      </div>
       <div class="card">
         <h2>Stock Reconciliation — current batch per product</h2>
         <p class="small">Starting stock (tank before + delivered), everything dispensed since, expected remaining, and the latest actual dipstick check. Any gap between expected and actual shows here immediately.</p>
@@ -622,6 +625,13 @@
           <button id="tkSaveBtn" onclick="saveTank()">Save Tank</button>
           <div class="msg" id="tkMsg"></div>
           <table id="tanksTable" style="margin-top:14px;"><thead><tr><th>Product</th><th>Label</th><th>Dipstick Mode</th><th>Capacity (L)</th><th>Current Stock</th><th></th></tr></thead><tbody></tbody></table>
+        </div>
+        <div class="card" id="stockVariancesCard" style="display:none; border:1px solid var(--danger);">
+          <h2>Unresolved Stock Variances — This Branch</h2>
+          <p class="small">A stock correction changed liters for this branch — flagged here until you mark it investigated or resolved. This never clears itself.</p>
+          <div class="table-scroll">
+            <table id="stockVariancesTable"><thead><tr><th>When</th><th>Product</th><th>Variance</th><th>Value</th><th>Resolve</th></tr></thead><tbody></tbody></table>
+          </div>
         </div>
         <div class="card">
           <h2>Tank Calibration (Height → Liters)</h2>
@@ -1755,6 +1765,15 @@ function populateVendorDriverSelects() {
 // ============================================================
 async function loadDashboard() {
   if (!currentBranch) return;
+
+  // Persistent until Mario explicitly resolves it in Setup > Tanks & Calibration
+  // -- never auto-clears, that's the whole point of a shortage/surplus flag.
+  const { count: varianceCount } = await supabase.from("fuel_stock_variances")
+    .select("id", { count: "exact", head: true }).eq("branch_id", currentBranch).eq("status", "unresolved");
+  document.getElementById("dashVarianceBanner").style.display = varianceCount ? "block" : "none";
+  document.getElementById("dashVarianceCount").textContent = varianceCount || "";
+  document.getElementById("dashVariancePlural").textContent = varianceCount === 1 ? "" : "s";
+
   const { data: stock } = await supabase.from("fuel_delivery_stock_reconciliation").select("*, fuel_products(name)")
     .eq("branch_id", currentBranch).eq("is_current_batch", true);
   const stockDiv = document.getElementById("stockCards");
@@ -2446,11 +2465,22 @@ async function broadcastOrder(tripId) {
 // deciding delivery routing/transfers. Same underlying tables the per-branch
 // tabs already read (fuel_inventory_state, fuel_tanks, fuel_tank_held_stock),
 // just aggregated across every branch+product instead of filtered to one.
+let variancesByCapKey = {};
+
 async function loadCapacityTab() {
   const { data: inv } = await supabase.from("fuel_inventory_state").select("branch_id, product_id, current_liters, current_wac");
   const { data: held } = await supabase.from("fuel_tank_held_stock").select("branch_id, product_id, held_liters");
   const invByKey = {}; (inv || []).forEach(r => { invByKey[`${r.branch_id}_${r.product_id}`] = r; });
   const heldByKey = {}; (held || []).forEach(r => { heldByKey[`${r.branch_id}_${r.product_id}`] = r; });
+
+  // Cross-branch, same as the rest of this tab -- flags every branch+product
+  // with an unresolved stock variance, regardless of which branch it's for.
+  const { data: unresolvedVariances } = await supabase.from("fuel_stock_variances").select("*").eq("status", "unresolved");
+  variancesByCapKey = {};
+  (unresolvedVariances || []).forEach(v => {
+    const key = `${v.branch_id}_${v.product_id}`;
+    (variancesByCapKey[key] ||= []).push(v);
+  });
 
   // Sum capacity across every tank a branch+product has (usually one). If none
   // of that branch+product's tanks has capacity_liters set, treat it as
@@ -2483,9 +2513,10 @@ async function loadCapacityTab() {
   // upfront for all rows, and cached in capacityDetailCache thereafter.
   document.getElementById("capacityTable").querySelector("tbody").innerHTML = rows.map(r => {
     const key = `${r.branchId}_${r.productId}`;
+    const hasVariance = !!variancesByCapKey[key]?.length;
     return `
     <tr class="cap-row" style="cursor:pointer;" onclick="toggleCapacityDetail('${key}','${r.branchId}','${r.productId}')">
-      <td>${r.branchCode}</td><td>${r.productCode}</td><td>${liters(r.currentLiters)}</td>
+      <td>${r.branchCode}</td><td>${hasVariance ? `<span style="color:var(--danger);" title="Unresolved stock variance">⚠</span> ` : ""}${r.productCode}</td><td>${liters(r.currentLiters)}</td>
       <td>${r.capacity !== undefined ? liters(r.capacity) : "no limit set"}</td>
       <td>${r.remaining !== null ? liters(r.remaining) : "—"}</td>
       <td>${liters(r.heldLiters)}</td>
@@ -2513,13 +2544,21 @@ async function toggleCapacityDetail(key, branchId, productId) {
   if (capacityDetailCache[key]) { el.innerHTML = capacityDetailCache[key]; return; }
   el.textContent = "Loading…";
 
+  const variances = variancesByCapKey[key] || [];
+  const varianceHtml = variances.length ? `
+    <div style="margin-top:8px; padding-top:8px; border-top:1px solid var(--border); color:var(--danger);">
+      ⚠ ${variances.length} unresolved stock variance${variances.length > 1 ? "s" : ""} —
+      ${variances.map(v => `${v.variance_liters > 0 ? "+" : ""}${liters(v.variance_liters)} (${v.variance_liters < 0 ? "shortage" : "surplus"}) on ${new Date(v.created_at).toLocaleDateString()}`).join(", ")}.
+      Review and resolve in Setup → Tanks &amp; Calibration.
+    </div>` : "";
+
   const { data: lastDeliveryRows } = await supabase.from("fuel_deliveries")
     .select("delivery_date, invoiced_liters, cost_per_liter, dipstick_before_liters")
     .eq("branch_id", branchId).eq("product_id", productId)
     .order("delivery_date", { ascending: false }).order("created_at", { ascending: false }).limit(1);
   const last = (lastDeliveryRows || [])[0];
   if (!last) {
-    const html = "No delivery recorded yet for this branch/product.";
+    const html = `No delivery recorded yet for this branch/product.${varianceHtml}`;
     capacityDetailCache[key] = html; el.innerHTML = html; return;
   }
 
@@ -2533,7 +2572,7 @@ async function toggleCapacityDetail(key, branchId, productId) {
   const html = `
     <div>Last delivery: <strong>${last.delivery_date}</strong> — ${liters(last.invoiced_liters)} @ ${peso(last.cost_per_liter)}/L</div>
     <div>Stock before that delivery: ${liters(last.dipstick_before_liters)}</div>
-    <div>Sold since: ${liters(soldSince)}</div>`;
+    <div>Sold since: ${liters(soldSince)}</div>${varianceHtml}`;
   capacityDetailCache[key] = html;
   el.innerHTML = html;
 }
@@ -3607,11 +3646,24 @@ async function loadSetupTab() {
   currentBranchTanks = branchTanks; // module-level copy so saveTank()'s duplicate check has this branch's tanks without a re-query
   checkTankDuplicate();
 
-  const { data: inv } = await supabase.from("fuel_inventory_state").select("product_id, current_liters").eq("branch_id", currentBranch);
-  const invByProduct = {}; (inv || []).forEach(r => { invByProduct[r.product_id] = Number(r.current_liters); });
+  const { data: inv } = await supabase.from("fuel_inventory_state").select("product_id, current_liters, current_wac").eq("branch_id", currentBranch);
+  const invByProduct = {}; (inv || []).forEach(r => { invByProduct[r.product_id] = { liters: Number(r.current_liters), wac: Number(r.current_wac) }; });
+
+  // Last actual price paid, per product, for this branch -- same "most recent
+  // delivery cost_per_liter" convention as inter-branch transfers and the
+  // Capacity Overview's "since last delivery" detail, used here as the second
+  // valuation basis alongside current WAC.
+  const { data: recentDeliveries } = await supabase.from("fuel_deliveries").select("product_id, cost_per_liter")
+    .eq("branch_id", currentBranch).order("delivery_date", { ascending: false }).order("created_at", { ascending: false });
+  const lastDeliveryPriceByProduct = {};
+  (recentDeliveries || []).forEach(d => { if (!(d.product_id in lastDeliveryPriceByProduct)) lastDeliveryPriceByProduct[d.product_id] = Number(d.cost_per_liter); });
+
+  const { data: unresolvedVariances } = await supabase.from("fuel_stock_variances").select("*, fuel_products(name)")
+    .eq("branch_id", currentBranch).eq("status", "unresolved").order("created_at", { ascending: false });
 
   document.getElementById("tanksTable").querySelector("tbody").innerHTML = branchTanks.map(t => {
-    const currentLiters = invByProduct[t.product_id] ?? 0;
+    const state = invByProduct[t.product_id] || { liters: 0, wac: 0 };
+    const lastPrice = lastDeliveryPriceByProduct[t.product_id];
     return `
     <tr><td>${t.fuel_products?.name || ""}</td><td>${t.tank_label}</td>
       <td><select onchange="toggleDipstickMode('${t.id}', this.value)">
@@ -3619,14 +3671,15 @@ async function loadSetupTab() {
         <option value="direct_liter" ${t.dipstick_mode === "direct_liter" ? "selected" : ""}>Direct Liters</option>
       </select></td>
       <td><input type="number" step="0.01" value="${t.capacity_liters ?? ""}" placeholder="no limit" style="max-width:110px;" onchange="saveTankCapacity('${t.id}', this.value)"></td>
-      <td>${liters(currentLiters)}</td>
+      <td>${liters(state.liters)}</td>
       <td><button class="small secondary" style="margin:0; padding:6px 10px;" onclick="toggleStockCorrection('${t.id}')">Correct Stock</button></td>
     </tr>
     <tr id="stockCorrRow_${t.id}" style="display:none;">
       <td colspan="6">
+        <div class="stat-grid" style="margin-bottom:10px;">${valueRefStats(state.liters, state.wac, lastPrice, "Current Stock")}</div>
         <div class="row" style="align-items:flex-end;">
           ${t.dipstick_mode === "calibration_curve" ? `<div><label>Dipstick Reading (cm)</label><input type="number" step="0.01" id="stockCorrCm_${t.id}"></div>` : ""}
-          <div><label>${t.dipstick_mode === "calibration_curve" ? "Corrected Liters (from cm, or type directly)" : "Corrected Liters"}</label><input type="number" step="0.01" id="stockCorrLiters_${t.id}" value="${currentLiters}"></div>
+          <div><label>${t.dipstick_mode === "calibration_curve" ? "Corrected Liters (from cm, or type directly)" : "Corrected Liters"}</label><input type="number" step="0.01" id="stockCorrLiters_${t.id}" value="${state.liters}"></div>
           <div style="flex:2;"><label>Reason (optional)</label><input type="text" id="stockCorrReason_${t.id}" placeholder="e.g. physical dipstick check found a discrepancy"></div>
         </div>
         <button class="small" style="margin:8px 6px 0 0; padding:8px 12px;" onclick="saveStockCorrection('${t.id}','${t.branch_id}','${t.product_id}')">Save Correction</button>
@@ -3635,6 +3688,22 @@ async function loadSetupTab() {
       </td>
     </tr>`;
   }).join("");
+
+  document.getElementById("stockVariancesCard").style.display = unresolvedVariances?.length ? "block" : "none";
+  document.getElementById("stockVariancesTable").querySelector("tbody").innerHTML = (unresolvedVariances || []).map(v => `
+    <tr>
+      <td>${new Date(v.created_at).toLocaleString()}</td>
+      <td>${escapeHtml(v.fuel_products?.name || "")}</td>
+      <td class="${v.variance_liters < 0 ? "" : ""}" style="color:${v.variance_liters < 0 ? "var(--danger)" : "var(--orange)"}; font-weight:600;">
+        ${v.variance_liters > 0 ? "+" : ""}${liters(v.variance_liters)} ${v.variance_liters < 0 ? "(shortage)" : "(surplus)"}
+      </td>
+      <td>${valueRefInline(Math.abs(v.variance_liters), v.wac_at_time, v.last_delivery_price_at_time)}</td>
+      <td>
+        <input type="text" id="varianceNote_${v.id}" placeholder="Resolution note (optional)" style="margin-bottom:6px;">
+        <button class="small" style="margin:0 6px 0 0; padding:6px 10px;" onclick="resolveStockVariance('${v.id}','investigated')">Mark Investigated</button>
+        <button class="small" style="margin:0; padding:6px 10px;" onclick="resolveStockVariance('${v.id}','resolved')">Mark Resolved</button>
+      </td>
+    </tr>`).join("");
 
   branchTanks.filter(t => t.dipstick_mode === "calibration_curve").forEach(t => {
     document.getElementById(`stockCorrCm_${t.id}`).addEventListener("input", async () => {
@@ -3840,6 +3909,40 @@ async function saveStockCorrection(tankId, branchId, productId) {
   if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
   inventoryStateCache = {}; // stock changed -- discard cached "current tank liters" so the overflow preview / Orders tank-fill bars re-fetch
   msg.textContent = "Stock corrected."; msg.className = "msg ok";
+  loadSetupTab();
+}
+
+// Side-by-side valuation of a volume (current stock, or a variance amount) at
+// two price bases -- current blended WAC vs the most recent actual delivery
+// price -- so Mario can judge at a glance whether WAC is drifting from what
+// he's actually paying. Used both on the correction panel (current stock) and
+// the variance review list (the variance amount itself, at its frozen
+// wac_at_time/last_delivery_price_at_time snapshots).
+function valueRefStats(litersVal, wac, lastPrice, volumeLabel) {
+  const wacValue = litersVal * (wac || 0);
+  const hasLdp = lastPrice != null;
+  const ldpValue = hasLdp ? litersVal * lastPrice : null;
+  return `
+    <div class="stat"><div class="k">${escapeHtml(volumeLabel || "Volume")}</div><div class="v">${liters(litersVal)}</div></div>
+    <div class="stat"><div class="k">Value at Current WAC</div><div class="v">${peso(wacValue)}</div><div class="small">@ ${peso(wac || 0)}/L</div></div>
+    <div class="stat"><div class="k">Value at Last Delivery</div><div class="v">${hasLdp ? peso(ldpValue) : "—"}</div><div class="small">${hasLdp ? "@ " + peso(lastPrice) + "/L" : "no delivery history yet"}</div></div>`;
+}
+
+// Compact one-line version of the same side-by-side comparison, for use
+// inside a table cell (the variance review list) rather than a full stat-grid.
+function valueRefInline(litersVal, wac, lastPrice) {
+  const wacValue = litersVal * (wac || 0);
+  const hasLdp = lastPrice != null;
+  const ldpValue = hasLdp ? litersVal * lastPrice : null;
+  return `<div class="small">At WAC (${peso(wac || 0)}/L): ${peso(wacValue)}</div><div class="small">At last delivery${hasLdp ? " (" + peso(lastPrice) + "/L)" : ""}: ${hasLdp ? peso(ldpValue) : "—"}</div>`;
+}
+
+async function resolveStockVariance(varianceId, status) {
+  const note = document.getElementById(`varianceNote_${varianceId}`)?.value.trim() || null;
+  const { error } = await supabase.rpc("fn_resolve_stock_variance", {
+    p_variance_id: varianceId, p_status: status, p_resolution_note: note, p_resolved_by: currentUserEmail || null
+  });
+  if (error) { alert("Error: " + error.message); return; }
   loadSetupTab();
 }
 
