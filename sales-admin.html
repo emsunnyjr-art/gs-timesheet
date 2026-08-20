@@ -142,7 +142,12 @@
         <h3 style="font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:0.03em; margin:18px 0 8px;">Branch Distribution</h3>
         <div id="ordDistRows"></div>
         <button type="button" class="secondary" onclick="addOrderDistRow()">+ Add Distribution Row</button>
-        <div class="stat-grid" style="margin-top:14px;">
+
+        <div class="table-scroll" style="margin-top:14px;">
+          <table id="ordSummaryTable"><thead><tr><th>Product</th><th>Liters</th><th>Value</th></tr></thead><tbody></tbody></table>
+        </div>
+        <div class="stat-grid" style="margin-top:10px;">
+          <div class="stat"><div class="k">Total Liters</div><div class="v" id="ordTotalLiters">0 L</div></div>
           <div class="stat good"><div class="k">Order Total</div><div class="v" id="ordDistTotal">₱0.00</div></div>
         </div>
 
@@ -1967,6 +1972,7 @@ function addOrderDistRow() {
   ["ordDistLiters", "ordDistCost"].forEach(prefix => {
     document.getElementById(`${prefix}_${id}`).addEventListener("input", updateOrderDistTotal);
   });
+  document.getElementById(`ordDistProduct_${id}`).addEventListener("change", updateOrderDistTotal);
   updateOrderDistTotal();
   return id;
 }
@@ -1977,16 +1983,42 @@ function removeOrderDistRow(id) {
   updateOrderDistTotal();
 }
 
-function orderDistTotal() {
-  return activeOrdDistRowIds.reduce((sum, id) => {
+// Single source of truth for every liters/value figure on this screen --
+// the per-product summary table, the grand totals, and the check-balance
+// target (updateOrderCheckBalance -> orderDistTotal) all read from this one
+// breakdown, so they can never drift apart from each other.
+function orderDistBreakdown() {
+  const byProduct = {};
+  activeOrdDistRowIds.forEach(id => {
+    const productId = document.getElementById(`ordDistProduct_${id}`)?.value;
     const litersVal = parseFloat(document.getElementById(`ordDistLiters_${id}`)?.value) || 0;
     const cost = parseFloat(document.getElementById(`ordDistCost_${id}`)?.value) || 0;
-    return sum + litersVal * cost;
-  }, 0);
+    if (!productId || (!litersVal && !cost)) return;
+    const entry = (byProduct[productId] ||= { liters: 0, value: 0 });
+    entry.liters += litersVal;
+    entry.value += litersVal * cost;
+  });
+  return byProduct;
+}
+
+function orderDistTotal() {
+  return Object.values(orderDistBreakdown()).reduce((sum, e) => sum + e.value, 0);
 }
 
 function updateOrderDistTotal() {
-  document.getElementById("ordDistTotal").textContent = peso(orderDistTotal());
+  const breakdown = orderDistBreakdown();
+  let totalLiters = 0, totalValue = 0;
+  const rowsHtml = DELIVERY_PRODUCT_ORDER.map(code => {
+    const productId = productIdFor(code);
+    const entry = productId && breakdown[productId];
+    if (!entry) return "";
+    totalLiters += entry.liters;
+    totalValue += entry.value;
+    return `<tr><td>${escapeHtml(productNameFor(code))}</td><td>${liters(entry.liters)}</td><td>${peso(entry.value)}</td></tr>`;
+  }).join("");
+  document.getElementById("ordSummaryTable").querySelector("tbody").innerHTML = rowsHtml || "<tr><td colspan='3' class='small'>Add distribution rows to see a summary.</td></tr>";
+  document.getElementById("ordTotalLiters").textContent = liters(totalLiters);
+  document.getElementById("ordDistTotal").textContent = peso(totalValue);
   updateOrderCheckBalance();
 }
 
