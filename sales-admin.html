@@ -1956,12 +1956,21 @@ function renderOrdDistRowHtml(id) {
   const branchOpts = branches.map(b => `<option value="${b.id}">${b.code} — ${b.name}</option>`).join("");
   const productOpts = products.map(p => `<option value="${p.id}">${p.code}</option>`).join("");
   return `
-    <div class="row" id="ordDistRow_${id}" style="align-items:flex-end;">
-      <div><label>Branch</label><select id="ordDistBranch_${id}">${branchOpts}</select></div>
-      <div><label>Product</label><select id="ordDistProduct_${id}">${productOpts}</select></div>
-      <div><label>Liters</label><input type="number" step="0.01" id="ordDistLiters_${id}"></div>
-      <div><label>Cost / Liter</label><input type="number" step="0.0001" id="ordDistCost_${id}"></div>
-      <button type="button" class="secondary" style="flex:0 0 auto; padding:8px 12px; margin:0;" onclick="removeOrderDistRow(${id})">Remove</button>
+    <div id="ordDistRowWrap_${id}" style="margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid var(--border);">
+      <div class="row" id="ordDistRow_${id}" style="align-items:flex-end;">
+        <div><label>Branch</label><select id="ordDistBranch_${id}">${branchOpts}</select></div>
+        <div><label>Product</label><select id="ordDistProduct_${id}">${productOpts}</select></div>
+        <div><label>Liters</label><input type="number" step="0.01" id="ordDistLiters_${id}"></div>
+        <div><label>Cost / Liter</label><input type="number" step="0.0001" id="ordDistCost_${id}"></div>
+        <button type="button" class="secondary" style="flex:0 0 auto; padding:8px 12px; margin:0;" onclick="removeOrderDistRow(${id})">Remove</button>
+      </div>
+      <div id="ordDistBarWrap_${id}" style="margin-top:8px; display:none;">
+        <div id="ordDistBar_${id}" style="display:flex; height:14px; border-radius:7px; overflow:hidden; background:#0f172a; border:1px solid var(--border);">
+          <div id="ordDistBarCurrent_${id}" style="width:0%; background:#475569;"></div>
+          <div id="ordDistBarAdded_${id}" style="width:0%; background:var(--accent);"></div>
+        </div>
+        <div class="small" id="ordDistBarLabel_${id}" style="margin-top:3px;"></div>
+      </div>
     </div>`;
 }
 
@@ -1969,18 +1978,80 @@ function addOrderDistRow() {
   const id = ordDistRowSeq++;
   document.getElementById("ordDistRows").insertAdjacentHTML("beforeend", renderOrdDistRowHtml(id));
   activeOrdDistRowIds.push(id);
-  ["ordDistLiters", "ordDistCost"].forEach(prefix => {
-    document.getElementById(`${prefix}_${id}`).addEventListener("input", updateOrderDistTotal);
-  });
-  document.getElementById(`ordDistProduct_${id}`).addEventListener("change", updateOrderDistTotal);
+  document.getElementById(`ordDistBranch_${id}`).addEventListener("change", () => updateOrderDistBar(id));
+  document.getElementById(`ordDistProduct_${id}`).addEventListener("change", () => { updateOrderDistTotal(); updateOrderDistBar(id); });
+  document.getElementById(`ordDistLiters_${id}`).addEventListener("input", () => { updateOrderDistTotal(); updateOrderDistBar(id); });
+  document.getElementById(`ordDistCost_${id}`).addEventListener("input", updateOrderDistTotal);
   updateOrderDistTotal();
+  updateOrderDistBar(id);
   return id;
 }
 
 function removeOrderDistRow(id) {
-  document.getElementById(`ordDistRow_${id}`).remove();
+  document.getElementById(`ordDistRowWrap_${id}`).remove();
   activeOrdDistRowIds = activeOrdDistRowIds.filter(x => x !== id);
   updateOrderDistTotal();
+}
+
+// Sums capacity_liters across every tank a branch+product has, same
+// null-means-unlimited convention as the Capacity Planning Overview
+// (loadCapacityTab) -- null only if NONE of that branch+product's tanks
+// has a capacity configured.
+function capacityForBranchProduct(branchId, productId) {
+  const relevant = tanks.filter(t => t.branch_id === branchId && t.product_id === productId);
+  if (!relevant.some(t => t.capacity_liters != null)) return null;
+  return relevant.reduce((s, t) => s + Number(t.capacity_liters || 0), 0);
+}
+
+// Predictive-only: projects this row's tank fill (current stock, from the
+// exact same fuel_inventory_state source as the Capacity Planning Overview,
+// plus this row's allocated liters) against capacity, so Mario can catch a
+// coming overflow while still planning the split -- purely informational,
+// doesn't block placing the order. The real overflow handling still happens
+// at delivery-confirmation time via fn_fuel_delivery_apply_wac.
+async function updateOrderDistBar(id) {
+  const wrap = document.getElementById(`ordDistBarWrap_${id}`);
+  if (!wrap) return; // row may have been removed while this was in flight
+  const branchId = document.getElementById(`ordDistBranch_${id}`)?.value;
+  const productId = document.getElementById(`ordDistProduct_${id}`)?.value;
+  if (!branchId || !productId) { wrap.style.display = "none"; return; }
+  wrap.style.display = "block";
+
+  const addedLiters = parseFloat(document.getElementById(`ordDistLiters_${id}`)?.value) || 0;
+  const currentLiters = await getCurrentTankLiters(branchId, productId);
+  if (!document.getElementById(`ordDistBarWrap_${id}`)) return; // row removed while the query was in flight
+
+  const capacity = capacityForBranchProduct(branchId, productId);
+  const currentEl = document.getElementById(`ordDistBarCurrent_${id}`);
+  const addedEl = document.getElementById(`ordDistBarAdded_${id}`);
+  const barEl = document.getElementById(`ordDistBar_${id}`);
+  const labelEl = document.getElementById(`ordDistBarLabel_${id}`);
+
+  if (capacity === null) {
+    const denom = Math.max(currentLiters + addedLiters, 1);
+    currentEl.style.width = (Math.min(currentLiters, denom) / denom * 100) + "%";
+    addedEl.style.width = (Math.min(addedLiters, denom) / denom * 100) + "%";
+    barEl.style.borderColor = "var(--border)";
+    labelEl.textContent = `${liters(currentLiters)} on hand + ${liters(addedLiters)} from this order — no capacity limit set for this tank.`;
+    labelEl.style.color = "var(--muted)";
+    return;
+  }
+
+  const currentPct = Math.min(currentLiters / capacity, 1) * 100;
+  const remaining = Math.max(capacity - currentLiters, 0);
+  const fitsPct = Math.min(addedLiters, remaining) / capacity * 100;
+  const overflow = Math.max((currentLiters + addedLiters) - capacity, 0);
+
+  currentEl.style.width = currentPct + "%";
+  addedEl.style.width = fitsPct + "%";
+  barEl.style.borderColor = overflow > 0 ? "var(--danger)" : "var(--border)";
+  if (overflow > 0) {
+    labelEl.innerHTML = `⚠ ${liters(overflow)} would overflow into the held container (tank capacity ${liters(capacity)}, currently ${liters(currentLiters)}).`;
+    labelEl.style.color = "var(--danger)";
+  } else {
+    labelEl.textContent = `${liters(currentLiters)} on hand + ${liters(addedLiters)} from this order, of ${liters(capacity)} capacity.`;
+    labelEl.style.color = "var(--muted)";
+  }
 }
 
 // Single source of truth for every liters/value figure on this screen --
