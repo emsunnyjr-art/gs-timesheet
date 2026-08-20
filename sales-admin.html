@@ -98,6 +98,7 @@
 
     <div class="tabs">
       <div class="tab active" data-tab="dashboard">Dashboard</div>
+      <div class="tab" data-tab="orders">Orders</div>
       <div class="tab" data-tab="deliveries">Deliveries</div>
       <div class="tab" data-tab="checks">Checks</div>
       <div class="tab" data-tab="dispensing">Dispensing</div>
@@ -126,8 +127,70 @@
       </div>
     </div>
 
+    <!-- ============ ORDERS ============ -->
+    <div class="panel" id="panel-orders">
+      <div class="card" id="ordCreateCard">
+        <h2>New Purchase Order</h2>
+        <p class="small">Plan an order before the truck goes out: split it across branches, attach the checks that pay for it now (checks are written at order time, not after delivery), then Broadcast when ready — the branches involved can't see anything about this order until you do.</p>
+        <div class="row">
+          <div><label>Vendor</label><select id="ordVendor"></select></div>
+          <div><label>Driver</label><select id="ordDriver"></select></div>
+          <div><label>Plate Number</label><input id="ordPlate"></div>
+        </div>
+        <div><label>Order Date</label><input type="date" id="ordDate" style="max-width:220px;"></div>
+
+        <h3 style="font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:0.03em; margin:18px 0 8px;">Branch Distribution</h3>
+        <div id="ordDistRows"></div>
+        <button type="button" class="secondary" onclick="addOrderDistRow()">+ Add Distribution Row</button>
+        <div class="stat-grid" style="margin-top:14px;">
+          <div class="stat good"><div class="k">Order Total</div><div class="v" id="ordDistTotal">₱0.00</div></div>
+        </div>
+
+        <h3 style="font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:0.03em; margin:18px 0 8px;">Checks for This Order (required)</h3>
+        <p class="small" style="margin:0 0 8px;">Checks must sum exactly to the order total above.</p>
+        <div class="stat-grid">
+          <div class="stat"><div class="k">Order Total</div><div class="v" id="ordCheckTotalCost">—</div></div>
+          <div class="stat" id="ordCheckBalanceStat"><div class="k">Balance Remaining</div><div class="v" id="ordCheckBalance">—</div></div>
+        </div>
+        <div id="ordCheckRows" style="margin-top:10px;"></div>
+        <button type="button" class="secondary" onclick="addOrderCheckRow()">+ Add Another Check</button>
+
+        <button onclick="createPurchaseOrder()" id="ordSaveBtn">Create Order (Draft)</button>
+        <div class="msg" id="ordMsg"></div>
+      </div>
+
+      <div class="card" id="ordNonOwnerNote" style="display:none;">
+        <p class="small">Only an owner can create or broadcast a purchase order. You can still see the orders below, and confirm a delivery once one is broadcast to your branch.</p>
+      </div>
+
+      <div class="card">
+        <h2>Purchase Orders</h2>
+        <div class="table-scroll">
+          <table id="ordersTable"><thead><tr><th>Date</th><th>Vendor</th><th>Branches</th><th>Total</th><th>Status</th><th>Variance</th><th></th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+    </div>
+
     <!-- ============ DELIVERIES ============ -->
     <div class="panel" id="panel-deliveries">
+      <div class="card" id="pendingOrdersCard" style="display:none; border:1px solid var(--accent);">
+        <h2>Pending Order Confirmations for This Branch</h2>
+        <p class="small">Mario has broadcast a purchase order that includes this branch. Confirm the actual delivered liters below (pre-filled from the plan, editable) once the truck arrives.</p>
+        <div id="pendingOrdersList"></div>
+      </div>
+
+      <div class="card" id="orderConfirmCard" style="display:none; border:1px solid var(--accent);">
+        <h2>Confirm Delivery — <span id="ocOrderLabel"></span></h2>
+        <div class="row">
+          <div><label>Invoice Number</label><input id="ocInvoice"></div>
+          <div><label>Shift (required)</label><select id="ocShift"></select></div>
+        </div>
+        <div id="ocProductSlots"></div>
+        <button onclick="confirmOrderDelivery()" id="ocSaveBtn">Confirm Delivery</button>
+        <button type="button" class="secondary" onclick="cancelOrderConfirm()">Cancel</button>
+        <div class="msg" id="ocMsg"></div>
+      </div>
+
       <div class="card" id="visitDraftBanner" style="display:none; border:1px solid var(--orange);">
         <p class="small" style="margin:0 0 10px;">You have an unsaved delivery trip draft, last edited <span id="draftTimestamp"></span>.</p>
         <div class="row">
@@ -758,7 +821,8 @@ document.querySelectorAll(".subtab").forEach(t => t.addEventListener("click", ()
 
 function onTabShown(tab) {
   if (tab === "dashboard") loadDashboard();
-  if (tab === "deliveries") loadDeliveries();
+  if (tab === "orders") loadOrdersTab();
+  if (tab === "deliveries") { loadDeliveries(); loadPendingOrderConfirmations(); }
   if (tab === "checks") loadChecksTab();
   if (tab === "debt") loadDebtTab();
   if (tab === "transfers") loadTransfersTab();
@@ -869,7 +933,7 @@ function renderTripVisit(vidx) {
       </div>`}
       <div class="row">
         <div><label>Invoice #</label><input id="visitInvoice_${vidx}"></div>
-        <div><label>Shift (optional)</label><select id="visitShift_${vidx}"></select></div>
+        <div><label>Shift (required)</label><select id="visitShift_${vidx}"></select></div>
       </div>
       ${isFirst ? "" : `<button type="button" class="secondary small" style="margin-top:10px;" onclick="removeTripVisit(${vidx})">Remove This Branch</button>`}
       <div id="visitProductSlots_${vidx}" style="margin-top:6px;"></div>
@@ -961,6 +1025,226 @@ function renderProductSlots(vidx) {
     wireSlotCmToLiters(vidx, code, "Before");
     wireSlotCmToLiters(vidx, code, "After");
   });
+}
+
+// ============================================================
+// ORDER CONFIRMATION (branch side: confirm a broadcast order's predetermined
+// distribution against actual delivered liters). Independent of the trip/
+// visit slot state machine above -- an order-confirm only ever covers one
+// branch's own distributed products for one order, not a multi-branch trip.
+// ============================================================
+let pendingOrderConfirmations = [];
+let ocCurrentTripId = null;
+let ocCurrentVisitId = null;
+let ocCurrentDistRows = [];
+
+async function loadPendingOrderConfirmations() {
+  const card = document.getElementById("pendingOrdersCard");
+  if (!currentBranch) { card.style.display = "none"; return; }
+
+  const { data: dists } = await supabase.from("fuel_order_distributions")
+    .select("trip_id, branch_id, product_id, predetermined_liters, predetermined_cost_per_liter, fuel_products(name,code), supplier_trips(id, trip_date, plate_number, fuel_vendors(name), status)")
+    .eq("branch_id", currentBranch);
+
+  const relevant = (dists || []).filter(d => d.supplier_trips?.status === "broadcast");
+  const tripIds = [...new Set(relevant.map(d => d.trip_id))];
+  const { data: existingVisits } = tripIds.length
+    ? await supabase.from("delivery_visits").select("trip_id").eq("branch_id", currentBranch).in("trip_id", tripIds)
+    : { data: [] };
+  const confirmedTripIds = new Set((existingVisits || []).map(v => v.trip_id));
+  const pendingTripIds = tripIds.filter(id => !confirmedTripIds.has(id));
+
+  pendingOrderConfirmations = pendingTripIds.map(tripId => ({
+    trip: relevant.find(d => d.trip_id === tripId).supplier_trips,
+    distRows: relevant.filter(d => d.trip_id === tripId)
+  }));
+
+  if (!pendingOrderConfirmations.length) { card.style.display = "none"; cancelOrderConfirm(); return; }
+  card.style.display = "block";
+  document.getElementById("pendingOrdersList").innerHTML = pendingOrderConfirmations.map((p, i) => `
+    <div class="row" style="align-items:center; margin-top:${i ? "10px" : "0"};">
+      <div class="small" style="flex:1;">Order from <strong>${escapeHtml(p.trip.fuel_vendors?.name || "—")}</strong> — ${p.trip.trip_date} — ${p.distRows.length} product${p.distRows.length > 1 ? "s" : ""} predetermined.</div>
+      <button type="button" style="margin:0; flex:0 0 auto;" onclick="openOrderConfirm('${p.trip.id}')">Confirm Delivery →</button>
+    </div>`).join("");
+}
+
+function openOrderConfirm(tripId) {
+  const pending = pendingOrderConfirmations.find(p => p.trip.id === tripId);
+  if (!pending) return;
+  ocCurrentTripId = tripId;
+  ocCurrentVisitId = crypto.randomUUID();
+  ocCurrentDistRows = pending.distRows;
+
+  document.getElementById("ocOrderLabel").textContent = `${pending.trip.fuel_vendors?.name || "—"} — ${pending.trip.trip_date}`;
+  document.getElementById("ocInvoice").value = "";
+  document.getElementById("ocMsg").textContent = "";
+  loadShiftOptionsForBranch("ocShift", currentBranch);
+
+  document.getElementById("ocProductSlots").innerHTML = ocCurrentDistRows.map(d => `
+    <div class="check-row" id="ocSlotBlock_${d.product_id}" style="margin-top:14px; padding-top:14px; border-top:1px solid var(--border);">
+      <label style="font-weight:600;">${escapeHtml(d.fuel_products?.name || "")}</label>
+      <p class="small" style="margin:2px 0 8px;">Predetermined: ${liters(d.predetermined_liters)} @ ${peso(d.predetermined_cost_per_liter)}/L — adjust below to match what actually arrived.</p>
+      <div class="row">
+        <div><label>Tank</label><select id="ocSlotTank_${d.product_id}"></select></div>
+        <div><label>Actual Liters</label><input type="number" step="0.01" id="ocSlotLiters_${d.product_id}" value="${d.predetermined_liters}"></div>
+        <div><label>Cost / Liter</label><input type="number" step="0.0001" id="ocSlotCost_${d.product_id}" value="${d.predetermined_cost_per_liter}"></div>
+      </div>
+      <div class="small" id="ocSlotVarianceHint_${d.product_id}" style="margin-top:2px; min-height:14px;"></div>
+      <div class="small" id="ocSlotOverflowHint_${d.product_id}" style="margin-top:2px; min-height:14px;"></div>
+      <div class="row">
+        <div><label>Market Reference Price / Liter</label><input type="number" step="0.0001" id="ocSlotMarket_${d.product_id}" placeholder="for monitoring only"></div>
+      </div>
+      <div class="row">
+        <div id="ocSlotBeforeCmWrap_${d.product_id}"><label>Dipstick BEFORE unloading — cm</label><input type="number" step="0.01" id="ocSlotBeforeCm_${d.product_id}"></div>
+        <div><label id="ocSlotBeforeLLabel_${d.product_id}">Dipstick BEFORE — Liters</label><input type="number" step="0.01" id="ocSlotBeforeL_${d.product_id}"></div>
+      </div>
+      <div class="row">
+        <div id="ocSlotAfterCmWrap_${d.product_id}"><label>Dipstick AFTER unloading — cm</label><input type="number" step="0.01" id="ocSlotAfterCm_${d.product_id}"></div>
+        <div><label id="ocSlotAfterLLabel_${d.product_id}">Dipstick AFTER — Liters</label><input type="number" step="0.01" id="ocSlotAfterL_${d.product_id}"></div>
+      </div>
+    </div>`).join("");
+
+  ocCurrentDistRows.forEach(d => {
+    populateOcSlotTank(d.product_id);
+    document.getElementById(`ocSlotLiters_${d.product_id}`).addEventListener("input", () => { updateOcOverflowPreview(d.product_id); updateOcVariancePreview(d); });
+    document.getElementById(`ocSlotCost_${d.product_id}`).addEventListener("input", () => updateOcVariancePreview(d));
+    wireOcSlotCmToLiters(d.product_id, "Before");
+    wireOcSlotCmToLiters(d.product_id, "After");
+    updateOcVariancePreview(d);
+  });
+
+  document.getElementById("orderConfirmCard").style.display = "block";
+  document.getElementById("orderConfirmCard").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// Flag-only, per Mario: actual-vs-predetermined variance is surfaced here for
+// visibility at the moment of confirming, never blocks Save. Checks were
+// already written against the predetermined total at order-creation time
+// (fn_allocate_check_to_order) and are never recomputed against this --
+// this is purely informational, not a resolution.
+function updateOcVariancePreview(distRow) {
+  const hintEl = document.getElementById(`ocSlotVarianceHint_${distRow.product_id}`);
+  const litersVal = parseFloat(document.getElementById(`ocSlotLiters_${distRow.product_id}`).value);
+  const cost = parseFloat(document.getElementById(`ocSlotCost_${distRow.product_id}`).value);
+  if (isNaN(litersVal) || isNaN(cost)) { hintEl.textContent = ""; return; }
+  const predeterminedTotal = Number(distRow.predetermined_liters) * Number(distRow.predetermined_cost_per_liter);
+  const actualTotal = litersVal * cost;
+  const litersDiff = litersVal - Number(distRow.predetermined_liters);
+  const costDiff = actualTotal - predeterminedTotal;
+  if (toCents(costDiff) === 0) { hintEl.textContent = "✓ Matches the predetermined plan."; hintEl.style.color = "var(--accent)"; return; }
+  hintEl.textContent = `⚠ ${litersDiff > 0 ? "+" : ""}${liters(litersDiff)} vs plan (${costDiff > 0 ? "+" : ""}${peso(costDiff)}) — checks for this order were already written against the predetermined total; this variance is flagged for the record, not blocked.`;
+  hintEl.style.color = "var(--orange)";
+}
+
+function populateOcSlotTank(productId) {
+  const opts = tanks.filter(t => t.product_id === productId && t.branch_id === currentBranch)
+    .map(t => `<option value="${t.id}">${t.tank_label}</option>`).join("");
+  const sel = document.getElementById(`ocSlotTank_${productId}`);
+  sel.innerHTML = opts || "<option value=''>No tank set up for this product/branch</option>";
+  sel.addEventListener("change", () => { applyOcSlotDipstickModeUI(productId); updateOcOverflowPreview(productId); });
+  applyOcSlotDipstickModeUI(productId);
+  updateOcOverflowPreview(productId);
+}
+
+// Mirrors applySlotDipstickModeUI() above -- same reasoning, duplicated
+// because this form is keyed by product_id (only the products actually on
+// this branch's distribution), not the fixed DELIVERY_PRODUCT_ORDER/vidx
+// slot scheme the ad-hoc trip form uses.
+function applyOcSlotDipstickModeUI(productId) {
+  const tankId = document.getElementById(`ocSlotTank_${productId}`).value;
+  const tank = tanks.find(t => t.id === tankId);
+  const directLiter = tank?.dipstick_mode === "direct_liter";
+  ["Before", "After"].forEach(which => {
+    const wrap = document.getElementById(`ocSlot${which}CmWrap_${productId}`);
+    const label = document.getElementById(`ocSlot${which}LLabel_${productId}`);
+    wrap.style.display = directLiter ? "none" : "";
+    if (directLiter) document.getElementById(`ocSlot${which}Cm_${productId}`).value = "";
+    label.textContent = `Dipstick ${which === "Before" ? "BEFORE" : "AFTER"} — Liters${directLiter ? " (direct dipstick reading)" : ""}`;
+  });
+}
+
+function wireOcSlotCmToLiters(productId, which) {
+  const cmField = document.getElementById(`ocSlot${which}Cm_${productId}`);
+  const litersField = document.getElementById(`ocSlot${which}L_${productId}`);
+  cmField.addEventListener("input", async () => {
+    const cmVal = parseFloat(cmField.value);
+    const tankId = document.getElementById(`ocSlotTank_${productId}`).value;
+    if (isNaN(cmVal) || !tankId) return;
+    const litersVal = await lookupLitersFromCm(tankId, cmVal);
+    if (litersVal !== null) litersField.value = litersVal.toFixed(2);
+  });
+}
+
+async function updateOcOverflowPreview(productId) {
+  const hintEl = document.getElementById(`ocSlotOverflowHint_${productId}`);
+  const tankId = document.getElementById(`ocSlotTank_${productId}`).value;
+  const tank = tanks.find(t => t.id === tankId);
+  const litersVal = parseFloat(document.getElementById(`ocSlotLiters_${productId}`).value);
+  if (!tank || !tank.capacity_liters || isNaN(litersVal) || litersVal <= 0) { hintEl.textContent = ""; return; }
+  const currentLiters = await getCurrentTankLiters(tank.branch_id, tank.product_id);
+  const remaining = Math.max(tank.capacity_liters - currentLiters, 0);
+  if (litersVal > remaining) {
+    const toHeld = litersVal - remaining;
+    hintEl.innerHTML = `⚠ Tank has ${liters(remaining)} of space left (capacity ${liters(tank.capacity_liters)}, currently ${liters(currentLiters)}). ${liters(remaining)} will go into the tank, <strong>${liters(toHeld)} will overflow into the external container</strong> (held, not sellable until transferred in).`;
+    hintEl.style.color = "var(--orange)";
+  } else {
+    hintEl.textContent = "";
+  }
+}
+
+function cancelOrderConfirm() {
+  ocCurrentTripId = null;
+  ocCurrentVisitId = null;
+  ocCurrentDistRows = [];
+  document.getElementById("orderConfirmCard").style.display = "none";
+}
+
+async function confirmOrderDelivery() {
+  const msg = document.getElementById("ocMsg");
+  msg.textContent = ""; msg.className = "msg";
+  if (!ocCurrentTripId) return;
+
+  const shiftId = document.getElementById("ocShift").value;
+  if (!shiftId) { msg.textContent = "Shift is required."; msg.className = "msg err"; return; }
+
+  const productsPayload = [];
+  for (const d of ocCurrentDistRows) {
+    const pid = d.product_id;
+    const tankId = document.getElementById(`ocSlotTank_${pid}`).value;
+    const litersVal = parseFloat(document.getElementById(`ocSlotLiters_${pid}`).value);
+    const cost = parseFloat(document.getElementById(`ocSlotCost_${pid}`).value);
+    const beforeL = document.getElementById(`ocSlotBeforeL_${pid}`).value;
+    const afterL = document.getElementById(`ocSlotAfterL_${pid}`).value;
+    if (!tankId) { msg.textContent = "No tank set up for one of these products — add one in Setup first."; msg.className = "msg err"; return; }
+    if (!litersVal || litersVal <= 0 || !cost || cost <= 0 || beforeL === "" || afterL === "") {
+      msg.textContent = "Fill in liters, cost, and both dipstick readings for every product."; msg.className = "msg err"; return;
+    }
+    productsPayload.push({
+      product_id: pid, tank_id: tankId, invoiced_liters: litersVal, cost_per_liter: cost,
+      market_reference_price_per_liter: document.getElementById(`ocSlotMarket_${pid}`).value ? parseFloat(document.getElementById(`ocSlotMarket_${pid}`).value) : null,
+      dipstick_before_cm: document.getElementById(`ocSlotBeforeCm_${pid}`).value ? parseFloat(document.getElementById(`ocSlotBeforeCm_${pid}`).value) : null,
+      dipstick_before_liters: parseFloat(beforeL),
+      dipstick_after_cm: document.getElementById(`ocSlotAfterCm_${pid}`).value ? parseFloat(document.getElementById(`ocSlotAfterCm_${pid}`).value) : null,
+      dipstick_after_liters: parseFloat(afterL)
+    });
+  }
+
+  const saveBtn = document.getElementById("ocSaveBtn");
+  saveBtn.disabled = true;
+  try {
+    const { error } = await supabase.rpc("fn_confirm_order_delivery", {
+      p_trip_id: ocCurrentTripId, p_visit_id: ocCurrentVisitId, p_branch_id: currentBranch,
+      p_invoice_number: document.getElementById("ocInvoice").value || null,
+      p_shift_id: shiftId, p_products: productsPayload
+    });
+    if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+    msg.textContent = "Delivery confirmed."; msg.className = "msg ok";
+    cancelOrderConfirm();
+    await loadPendingOrderConfirmations();
+    await loadDeliveries();
+  } finally {
+    saveBtn.disabled = false;
+  }
 }
 
 function onSlotNotDeliveredChange(vidx, code) {
@@ -1083,6 +1367,8 @@ function getSlotState(vidx, code) {
   return { resolved: filled, notDelivered: false, filled, cost: filled ? litersVal * cost : 0 };
 }
 function visitResolved(vidx) { return DELIVERY_PRODUCT_ORDER.every(code => getSlotState(vidx, code).resolved); }
+function visitHasShift(vidx) { return !!document.getElementById(`visitShift_${vidx}`).value; }
+function allVisitsHaveShift() { for (let i = 0; i < tripVisitCount; i++) if (!visitHasShift(i)) return false; return true; }
 function visitFilled(vidx) { return DELIVERY_PRODUCT_ORDER.some(code => getSlotState(vidx, code).filled); }
 function visitTotal(vidx) { return DELIVERY_PRODUCT_ORDER.reduce((sum, code) => sum + getSlotState(vidx, code).cost, 0); }
 function allSlotsResolved() { for (let i = 0; i < tripVisitCount; i++) if (!visitResolved(i)) return false; return true; }
@@ -1645,6 +1931,318 @@ async function saveBranchTransfer() {
   msg.textContent = "Transfer saved."; msg.className = "msg ok";
   document.getElementById("xfLiters").value = "";
   loadTransfersTab();
+}
+
+// ============================================================
+// ORDERS (Purchase Order: admin plans -> broadcast -> branch confirms)
+// ============================================================
+// Independent, duplicated check-row UI (not a reuse of the Deliveries tab's
+// dlvCheck* functions) -- those are tightly coupled to the trip/visit slot
+// state machine (visitCombinedTotal, allSlotsResolved, draft autosave) which
+// doesn't apply here. Same balance-math conventions (toCents, "must sum
+// exactly"), just against the order's predetermined distribution total
+// instead of a trip's actual delivered total.
+let ordDistRowSeq = 0;
+let activeOrdDistRowIds = [];
+let ordCheckRowSeq = 0;
+let activeOrdCheckRowIds = [];
+
+function renderOrdDistRowHtml(id) {
+  const branchOpts = branches.map(b => `<option value="${b.id}">${b.code} — ${b.name}</option>`).join("");
+  const productOpts = products.map(p => `<option value="${p.id}">${p.code}</option>`).join("");
+  return `
+    <div class="row" id="ordDistRow_${id}" style="align-items:flex-end;">
+      <div><label>Branch</label><select id="ordDistBranch_${id}">${branchOpts}</select></div>
+      <div><label>Product</label><select id="ordDistProduct_${id}">${productOpts}</select></div>
+      <div><label>Liters</label><input type="number" step="0.01" id="ordDistLiters_${id}"></div>
+      <div><label>Cost / Liter</label><input type="number" step="0.0001" id="ordDistCost_${id}"></div>
+      <button type="button" class="secondary" style="flex:0 0 auto; padding:8px 12px; margin:0;" onclick="removeOrderDistRow(${id})">Remove</button>
+    </div>`;
+}
+
+function addOrderDistRow() {
+  const id = ordDistRowSeq++;
+  document.getElementById("ordDistRows").insertAdjacentHTML("beforeend", renderOrdDistRowHtml(id));
+  activeOrdDistRowIds.push(id);
+  ["ordDistLiters", "ordDistCost"].forEach(prefix => {
+    document.getElementById(`${prefix}_${id}`).addEventListener("input", updateOrderDistTotal);
+  });
+  updateOrderDistTotal();
+  return id;
+}
+
+function removeOrderDistRow(id) {
+  document.getElementById(`ordDistRow_${id}`).remove();
+  activeOrdDistRowIds = activeOrdDistRowIds.filter(x => x !== id);
+  updateOrderDistTotal();
+}
+
+function orderDistTotal() {
+  return activeOrdDistRowIds.reduce((sum, id) => {
+    const litersVal = parseFloat(document.getElementById(`ordDistLiters_${id}`)?.value) || 0;
+    const cost = parseFloat(document.getElementById(`ordDistCost_${id}`)?.value) || 0;
+    return sum + litersVal * cost;
+  }, 0);
+}
+
+function updateOrderDistTotal() {
+  document.getElementById("ordDistTotal").textContent = peso(orderDistTotal());
+  updateOrderCheckBalance();
+}
+
+function renderOrdCheckRowHtml(id) {
+  return `
+    <div class="check-row" id="ordCheckRow_${id}" style="${activeOrdCheckRowIds.length ? 'margin-top:14px; padding-top:14px; border-top:1px solid var(--border);' : ''}">
+      <div class="row" style="align-items:flex-end;">
+        <label style="display:flex; align-items:center; gap:6px;"><input type="radio" name="ordCheckMode_${id}" value="new" checked onchange="onOrdCheckRowModeChange(${id})"> New Check</label>
+        <label style="display:flex; align-items:center; gap:6px;"><input type="radio" name="ordCheckMode_${id}" value="existing" onchange="onOrdCheckRowModeChange(${id})"> Reuse Existing Check</label>
+        <button type="button" class="secondary" id="ordCheckRemove_${id}" style="flex:0 0 auto; padding:8px 12px; margin:0; display:none;" onclick="removeOrderCheckRow(${id})">Remove</button>
+      </div>
+      <div id="ordCheckNewFields_${id}">
+        <div class="row">
+          <div><label>Check # / Bank</label><input type="text" id="ordCheckNumber_${id}"></div>
+          <div><label>Date</label><input type="date" id="ordCheckDate_${id}"></div>
+        </div>
+      </div>
+      <div id="ordCheckExistingFields_${id}" style="display:none;">
+        <label>Existing Check</label><select id="ordCheckExistingId_${id}"></select>
+      </div>
+      <label>Amount</label>
+      <input type="number" step="0.01" id="ordCheckAmount_${id}">
+    </div>`;
+}
+
+function addOrderCheckRow() {
+  const id = ordCheckRowSeq++;
+  document.getElementById("ordCheckRows").insertAdjacentHTML("beforeend", renderOrdCheckRowHtml(id));
+  activeOrdCheckRowIds.push(id);
+  document.getElementById(`ordCheckAmount_${id}`).addEventListener("input", updateOrderCheckBalance);
+  document.getElementById(`ordCheckDate_${id}`).addEventListener("input", updateOrderCheckBalance);
+  updateOrdCheckRemoveVisibility();
+  updateOrderCheckBalance();
+  return id;
+}
+
+function removeOrderCheckRow(id) {
+  if (activeOrdCheckRowIds.length <= 1) return; // always keep at least one row
+  document.getElementById(`ordCheckRow_${id}`).remove();
+  activeOrdCheckRowIds = activeOrdCheckRowIds.filter(x => x !== id);
+  updateOrdCheckRemoveVisibility();
+  updateOrderCheckBalance();
+}
+
+function updateOrdCheckRemoveVisibility() {
+  activeOrdCheckRowIds.forEach(id => {
+    const btn = document.getElementById(`ordCheckRemove_${id}`);
+    if (btn) btn.style.display = activeOrdCheckRowIds.length > 1 ? "inline-block" : "none";
+  });
+}
+
+function onOrdCheckRowModeChange(id) {
+  const mode = document.querySelector(`input[name="ordCheckMode_${id}"]:checked`).value;
+  document.getElementById(`ordCheckNewFields_${id}`).style.display = mode === "new" ? "block" : "none";
+  document.getElementById(`ordCheckExistingFields_${id}`).style.display = mode === "existing" ? "block" : "none";
+  if (mode === "existing") loadExistingChecksForOrderRow(id);
+  updateOrderCheckBalance();
+}
+
+async function loadExistingChecksForOrderRow(id) {
+  const vendorId = document.getElementById("ordVendor").value;
+  const sel = document.getElementById(`ordCheckExistingId_${id}`);
+  if (!sel) return;
+  let q = supabase.from("fuel_supplier_check_payments").select("*, fuel_vendors(name)").order("created_at", { ascending: false }).limit(20);
+  if (vendorId) q = q.eq("vendor_id", vendorId);
+  const { data } = await q;
+  sel.innerHTML = (data || []).map(c => `<option value="${c.id}">${c.check_number} — ${c.fuel_vendors?.name || ""} — ${c.check_date} — ${peso(c.amount)}</option>`).join("")
+    || "<option value=''>No checks found for this vendor yet</option>";
+  sel.addEventListener("change", updateOrderCheckBalance);
+}
+
+function resetOrderCheckRows() {
+  document.getElementById("ordCheckRows").innerHTML = "";
+  activeOrdCheckRowIds = [];
+  addOrderCheckRow();
+}
+
+// Same centavo-safe balance discipline as the Deliveries tab's check rows --
+// Save stays disabled until checks sum exactly to the order's predetermined total.
+function updateOrderCheckBalance() {
+  const totalCents = toCents(orderDistTotal());
+  let sumCents = 0;
+  let anyRowFilled = false;
+  activeOrdCheckRowIds.forEach(id => {
+    const amountEl = document.getElementById(`ordCheckAmount_${id}`);
+    if (!amountEl) return;
+    const cents = toCents(amountEl.value);
+    sumCents += cents;
+    const mode = document.querySelector(`input[name="ordCheckMode_${id}"]:checked`)?.value;
+    const hasDateOrExisting = mode === "existing"
+      ? !!document.getElementById(`ordCheckExistingId_${id}`)?.value
+      : !!document.getElementById(`ordCheckDate_${id}`)?.value;
+    if (cents > 0 && hasDateOrExisting) anyRowFilled = true;
+  });
+
+  document.getElementById("ordCheckTotalCost").textContent = peso(totalCents / 100);
+  const balanceCents = totalCents - sumCents;
+  const balanceEl = document.getElementById("ordCheckBalance");
+  const balanceStat = document.getElementById("ordCheckBalanceStat");
+  const balanced = balanceCents === 0 && totalCents > 0;
+  balanceEl.textContent = (balanced ? "✓ " : "") + peso(Math.abs(balanceCents) / 100) + (balanced ? "" : (balanceCents > 0 ? " short" : " over"));
+  balanceStat.className = "stat " + (balanced ? "good" : "warn");
+
+  const valid = activeOrdDistRowIds.length > 0 && balanced && anyRowFilled;
+  const saveBtn = document.getElementById("ordSaveBtn");
+  if (saveBtn) saveBtn.disabled = !valid;
+  return valid;
+}
+
+function resetOrderForm() {
+  document.getElementById("ordVendor").value = "";
+  document.getElementById("ordDriver").value = "";
+  document.getElementById("ordPlate").value = "";
+  document.getElementById("ordDate").value = todayIso();
+  document.getElementById("ordDistRows").innerHTML = "";
+  activeOrdDistRowIds = [];
+  addOrderDistRow();
+  resetOrderCheckRows();
+}
+
+async function loadOrdersTab() {
+  document.getElementById("ordVendor").innerHTML = vendors.map(v => `<option value="${v.id}">${v.name}</option>`).join("");
+  document.getElementById("ordDriver").innerHTML = `<option value="">—</option>` + drivers.map(d => `<option value="${d.id}">${d.name}</option>`).join("");
+  if (!document.getElementById("ordDate").value) document.getElementById("ordDate").value = todayIso();
+  if (!activeOrdDistRowIds.length) addOrderDistRow();
+  if (!activeOrdCheckRowIds.length) resetOrderCheckRows();
+
+  // Only an owner can create/broadcast (RLS + RPC also enforce this server-side
+  // -- this is UI convenience only, same pattern as every owner-only action elsewhere).
+  document.getElementById("ordCreateCard").style.display = isOwner ? "block" : "none";
+  document.getElementById("ordNonOwnerNote").style.display = isOwner ? "none" : "block";
+
+  const { data: orders } = await supabase.from("supplier_trips").select("*, fuel_vendors(name)").order("trip_date", { ascending: false }).limit(50);
+  const orderIds = (orders || []).map(o => o.id);
+  const { data: dists } = orderIds.length
+    ? await supabase.from("fuel_order_distributions").select("trip_id, branch_id, predetermined_liters, predetermined_cost_per_liter, branches(code)").in("trip_id", orderIds)
+    : { data: [] };
+  const distByTrip = {};
+  (dists || []).forEach(d => { (distByTrip[d.trip_id] ||= []).push(d); });
+
+  // Flag-only variance (per Mario): actual confirmed total vs the predetermined
+  // total the checks were written against, surfaced here for the record --
+  // never blocks anything. Confirmed liters live on fuel_deliveries, reached
+  // via delivery_visits.trip_id (fuel_deliveries itself has no trip_id).
+  const { data: visits } = orderIds.length
+    ? await supabase.from("delivery_visits").select("id, trip_id, branch_id").in("trip_id", orderIds)
+    : { data: [] };
+  const visitById = {}; (visits || []).forEach(v => { visitById[v.id] = v; });
+  const visitIds = (visits || []).map(v => v.id);
+  const { data: actualDeliveries } = visitIds.length
+    ? await supabase.from("fuel_deliveries").select("visit_id, invoiced_liters, cost_per_liter").in("visit_id", visitIds)
+    : { data: [] };
+  const actualByTrip = {};
+  (actualDeliveries || []).forEach(d => {
+    const v = visitById[d.visit_id];
+    if (!v) return;
+    const entry = (actualByTrip[v.trip_id] ||= { total: 0, branches: new Set() });
+    entry.total += Number(d.invoiced_liters) * Number(d.cost_per_liter);
+    entry.branches.add(v.branch_id);
+  });
+
+  document.getElementById("ordersTable").querySelector("tbody").innerHTML = (orders || []).map(o => {
+    const rows = distByTrip[o.id] || [];
+    const branchCodes = [...new Set(rows.map(r => r.branches?.code))].join(", ") || "—";
+    const predeterminedTotal = rows.reduce((s, r) => s + Number(r.predetermined_liters) * Number(r.predetermined_cost_per_liter), 0);
+    const predeterminedBranchCount = new Set(rows.map(r => r.branch_id)).size;
+    const canBroadcast = isOwner && o.status === "draft";
+
+    const actual = actualByTrip[o.id];
+    let varianceCell = "—";
+    if (actual && actual.branches.size > 0) {
+      const confirmedLabel = `${actual.branches.size}/${predeterminedBranchCount} confirmed`;
+      const diff = actual.total - predeterminedTotal;
+      varianceCell = toCents(diff) === 0
+        ? `<span class="badge balanced">✓ matches (${confirmedLabel})</span>`
+        : `<span class="badge orange">${diff > 0 ? "+" : ""}${peso(diff)} (${confirmedLabel})</span>`;
+    } else if (o.status === "broadcast") {
+      varianceCell = `<span class="small">0/${predeterminedBranchCount} confirmed</span>`;
+    }
+
+    return `<tr>
+      <td>${o.trip_date}</td><td>${escapeHtml(o.fuel_vendors?.name || "—")}</td><td>${escapeHtml(branchCodes)}</td>
+      <td>${peso(predeterminedTotal)}</td>
+      <td><span class="badge ${o.status === "broadcast" ? "balanced" : "orange"}">${o.status}</span></td>
+      <td>${varianceCell}</td>
+      <td>${canBroadcast ? `<button class="small" onclick="broadcastOrder('${o.id}')">Broadcast</button>` : ""}</td>
+    </tr>`;
+  }).join("") || "<tr><td colspan='7' class='small'>No purchase orders yet.</td></tr>";
+}
+
+async function createPurchaseOrder() {
+  const msg = document.getElementById("ordMsg");
+  msg.textContent = ""; msg.className = "msg";
+
+  const vendorId = document.getElementById("ordVendor").value;
+  if (!vendorId) { msg.textContent = "Vendor is required."; msg.className = "msg err"; return; }
+  if (!activeOrdDistRowIds.length) { msg.textContent = "Add at least one branch distribution row."; msg.className = "msg err"; return; }
+
+  const distributions = [];
+  for (const id of activeOrdDistRowIds) {
+    const branchId = document.getElementById(`ordDistBranch_${id}`).value;
+    const productId = document.getElementById(`ordDistProduct_${id}`).value;
+    const litersVal = parseFloat(document.getElementById(`ordDistLiters_${id}`).value);
+    const cost = parseFloat(document.getElementById(`ordDistCost_${id}`).value);
+    if (!branchId || !productId || !litersVal || litersVal <= 0 || !cost || cost <= 0) {
+      msg.textContent = "Every distribution row needs a branch, product, liters, and cost per liter."; msg.className = "msg err"; return;
+    }
+    distributions.push({ branch_id: branchId, product_id: productId, predetermined_liters: litersVal, predetermined_cost_per_liter: cost });
+  }
+
+  const checks = [];
+  for (const id of activeOrdCheckRowIds) {
+    const mode = document.querySelector(`input[name="ordCheckMode_${id}"]:checked`).value;
+    const amount = parseFloat(document.getElementById(`ordCheckAmount_${id}`).value);
+    if (!amount || amount <= 0) { msg.textContent = "Fix the check rows below."; msg.className = "msg err"; return; }
+    if (mode === "new") {
+      const num = document.getElementById(`ordCheckNumber_${id}`).value.trim();
+      const date = document.getElementById(`ordCheckDate_${id}`).value;
+      if (!num || !date) { msg.textContent = "Every new check needs a number and date."; msg.className = "msg err"; return; }
+      checks.push({ mode: "new", check_number: num, check_date: date, amount });
+    } else {
+      const checkId = document.getElementById(`ordCheckExistingId_${id}`).value;
+      if (!checkId) { msg.textContent = "Select an existing check for every reuse row."; msg.className = "msg err"; return; }
+      checks.push({ mode: "existing", check_id: checkId, amount });
+    }
+  }
+
+  if (!updateOrderCheckBalance()) {
+    msg.textContent = "Checks must sum exactly to the order total."; msg.className = "msg err"; return;
+  }
+
+  const saveBtn = document.getElementById("ordSaveBtn");
+  saveBtn.disabled = true;
+  try {
+    const { error } = await supabase.rpc("fn_create_purchase_order", {
+      p_trip_id: crypto.randomUUID(), p_vendor_id: vendorId,
+      p_driver_id: document.getElementById("ordDriver").value || null,
+      p_plate_number: document.getElementById("ordPlate").value || null,
+      p_trip_date: document.getElementById("ordDate").value,
+      p_distributions: distributions, p_checks: checks
+    });
+    if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+    msg.textContent = "Order created as a draft — broadcast it below when ready."; msg.className = "msg ok";
+    resetOrderForm();
+    await loadOrdersTab();
+  } finally {
+    saveBtn.disabled = false;
+    updateOrderCheckBalance();
+  }
+}
+
+async function broadcastOrder(tripId) {
+  if (!confirm("Broadcast this order? The branches involved will be able to see their predetermined liters and confirm delivery.")) return;
+  const { error } = await supabase.rpc("fn_broadcast_order", { p_trip_id: tripId });
+  if (error) { alert("Error: " + error.message); return; }
+  loadOrdersTab();
 }
 
 // Read-only, cross-branch -- deliberately ignores the global branch selector
@@ -2358,6 +2956,7 @@ async function saveDeliveryVisit() {
         ...slotPayload(0, code)
       };
       if (!payload.tank_id) { msg.textContent = "No tank set up for this product/branch — add one in Setup first."; msg.className = "msg err"; return; }
+      if (!payload.shift_id) { msg.textContent = "Shift is required."; msg.className = "msg err"; return; }
       const { error } = await supabase.from("fuel_deliveries").update(payload).eq("id", editingDeliveryId);
       if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
       const { error: rpcErr } = await supabase.rpc("fn_fuel_recompute_wac_chain", { p_branch_id: currentBranch, p_product_id: payload.product_id });
@@ -2402,6 +3001,11 @@ async function saveDeliveryVisit() {
       // just avoids a wasted round-trip and shows the same inline message.
       if (!allSlotsResolved() || !visitsPayload.some(v => v.products.length) || !rowsOk || !checksPayload.length || !updateCheckBalance()) {
         msg.textContent = "Fix the form below — resolve every product slot in every branch, add checks that sum exactly to the combined trip total, then save.";
+        msg.className = "msg err";
+        return;
+      }
+      if (!allVisitsHaveShift()) {
+        msg.textContent = "Select a shift for every branch on this trip — required.";
         msg.className = "msg err";
         return;
       }
