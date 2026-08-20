@@ -141,7 +141,7 @@
 
         <h3 style="font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:0.03em; margin:18px 0 8px;">Branch Distribution</h3>
         <div id="ordDistRows"></div>
-        <button type="button" class="secondary" onclick="addOrderDistRow()">+ Add Distribution Row</button>
+        <button type="button" class="secondary" onclick="addOrdDistBlock()">+ Add Another Branch to This Order</button>
 
         <div class="table-scroll" style="margin-top:14px;">
           <table id="ordSummaryTable"><thead><tr><th>Product</th><th>Liters</th><th>Value</th></tr></thead><tbody></tbody></table>
@@ -621,7 +621,7 @@
           </div>
           <button id="tkSaveBtn" onclick="saveTank()">Save Tank</button>
           <div class="msg" id="tkMsg"></div>
-          <table id="tanksTable" style="margin-top:14px;"><thead><tr><th>Product</th><th>Label</th><th>Dipstick Mode</th><th>Capacity (L)</th></tr></thead><tbody></tbody></table>
+          <table id="tanksTable" style="margin-top:14px;"><thead><tr><th>Product</th><th>Label</th><th>Dipstick Mode</th><th>Capacity (L)</th><th>Current Stock</th><th></th></tr></thead><tbody></tbody></table>
         </div>
         <div class="card">
           <h2>Tank Calibration (Height → Liters)</h2>
@@ -854,9 +854,9 @@ async function initApp() {
   const { data: dr } = await supabase.from("fuel_delivery_drivers").select("*").order("name");
   drivers = dr || [];
   const { data: tk } = await supabase.from("fuel_tanks").select("*, fuel_products(code,name)");
-  tanks = tk || [];
+  tanks = (tk || []).sort((a, b) => productOrderIndex(a.fuel_products?.code) - productOrderIndex(b.fuel_products?.code));
   const { data: pm } = await supabase.from("fuel_pumps").select("*, fuel_products(code,name)");
-  pumps = pm || [];
+  pumps = (pm || []).sort((a, b) => productOrderIndex(a.fuel_products?.code) - productOrderIndex(b.fuel_products?.code) || a.pump_label.localeCompare(b.pump_label));
   const { data: cc } = await supabase.from("fuel_credit_customers").select("*").order("name");
   creditCustomers = cc || [];
 
@@ -887,6 +887,15 @@ function populateProductSelects() {
 // explicitly marked "not delivered this visit" -- never left ambiguous.
 // ============================================================
 const DELIVERY_PRODUCT_ORDER = ["DIESEL", "PREMIUM", "UNLEADED"];
+// For sorting any array of rows that carry a product code (directly or via a
+// joined fuel_products(code)) into the fixed Diesel/Premium/Unleaded order,
+// wherever a Supabase query has no reliable server-side ordering to rely on
+// (e.g. a join with no matching foreign-table .order() support, or a query
+// missing .order() entirely).
+function productOrderIndex(code) {
+  const idx = DELIVERY_PRODUCT_ORDER.indexOf(code);
+  return idx === -1 ? DELIVERY_PRODUCT_ORDER.length : idx;
+}
 let markupSettingsCache = [];
 let inventoryStateCache = {}; // `${branchId}_${productId}` -> current_liters, for the overflow preview
 let tripVisitCount = 0; // number of rendered visit blocks (branches added to this trip), always >= 1
@@ -1947,51 +1956,127 @@ async function saveBranchTransfer() {
 // doesn't apply here. Same balance-math conventions (toCents, "must sum
 // exactly"), just against the order's predetermined distribution total
 // instead of a trip's actual delivered total.
-let ordDistRowSeq = 0;
-let activeOrdDistRowIds = [];
+let ordBlockSeq = 0;
+let activeOrdBlockIds = [];
 let ordCheckRowSeq = 0;
 let activeOrdCheckRowIds = [];
 
-function renderOrdDistRowHtml(id) {
-  const branchOpts = branches.map(b => `<option value="${b.id}">${b.code} — ${b.name}</option>`).join("");
-  const productOpts = products.map(p => `<option value="${p.id}">${p.code}</option>`).join("");
+// Branch-grouped, fixed-3-product-slot model -- mirrors the delivery form's
+// vidx/DELIVERY_PRODUCT_ORDER pattern (an unresolved product stays visibly
+// present with a "Not included" toggle rather than disappearing) rather than
+// the old free-form one-branch-one-product-per-row list. Block ids are a
+// monotonic sequence (never reused/renumbered), so unlike the delivery
+// form's trip-visit blocks, ANY block can be removed freely, not just the
+// most-recently-added one.
+function usedOrdBlockBranchIds(excludeBid) {
+  return activeOrdBlockIds.filter(b => b !== excludeBid)
+    .map(b => document.getElementById(`ordBlockBranch_${b}`)?.value).filter(Boolean);
+}
+
+function refreshOrdBlockBranchOptions() {
+  activeOrdBlockIds.forEach(bid => {
+    const sel = document.getElementById(`ordBlockBranch_${bid}`);
+    if (!sel) return;
+    const current = sel.value;
+    const used = usedOrdBlockBranchIds(bid);
+    sel.innerHTML = branches.filter(b => !used.includes(b.id) || b.id === current)
+      .map(b => `<option value="${b.id}" ${b.id === current ? "selected" : ""}>${b.code} — ${b.name}</option>`).join("");
+  });
+}
+
+function renderOrdDistBlockHtml(bid) {
   return `
-    <div id="ordDistRowWrap_${id}" style="margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid var(--border);">
-      <div class="row" id="ordDistRow_${id}" style="align-items:flex-end;">
-        <div><label>Branch</label><select id="ordDistBranch_${id}">${branchOpts}</select></div>
-        <div><label>Product</label><select id="ordDistProduct_${id}">${productOpts}</select></div>
-        <div><label>Liters</label><input type="number" step="0.01" id="ordDistLiters_${id}"></div>
-        <div><label>Cost / Liter</label><input type="number" step="0.0001" id="ordDistCost_${id}"></div>
-        <button type="button" class="secondary" style="flex:0 0 auto; padding:8px 12px; margin:0;" onclick="removeOrderDistRow(${id})">Remove</button>
+    <div id="ordBlockWrap_${bid}" style="margin-bottom:16px; padding:12px; border:1px solid var(--border); border-radius:10px;">
+      <div class="row" style="align-items:center;">
+        <div style="flex:1;"><label>Branch</label><select id="ordBlockBranch_${bid}"></select></div>
+        <button type="button" class="secondary" style="flex:0 0 auto; padding:8px 12px; margin:0;" onclick="removeOrdDistBlock(${bid})">Remove Branch</button>
       </div>
-      <div id="ordDistBarWrap_${id}" style="margin-top:8px; display:none;">
-        <div id="ordDistBar_${id}" style="display:flex; height:14px; border-radius:7px; overflow:hidden; background:#0f172a; border:1px solid var(--border);">
-          <div id="ordDistBarCurrent_${id}" style="width:0%; background:#475569;"></div>
-          <div id="ordDistBarAdded_${id}" style="width:0%; background:var(--accent);"></div>
-        </div>
-        <div class="small" id="ordDistBarLabel_${id}" style="margin-top:3px;"></div>
-      </div>
+      <div id="ordBlockSlots_${bid}" style="margin-top:10px;"></div>
     </div>`;
 }
 
-function addOrderDistRow() {
-  const id = ordDistRowSeq++;
-  document.getElementById("ordDistRows").insertAdjacentHTML("beforeend", renderOrdDistRowHtml(id));
-  activeOrdDistRowIds.push(id);
-  document.getElementById(`ordDistBranch_${id}`).addEventListener("change", () => updateOrderDistBar(id));
-  document.getElementById(`ordDistProduct_${id}`).addEventListener("change", () => { updateOrderDistTotal(); updateOrderDistBar(id); });
-  document.getElementById(`ordDistLiters_${id}`).addEventListener("input", () => { updateOrderDistTotal(); updateOrderDistBar(id); });
-  document.getElementById(`ordDistCost_${id}`).addEventListener("input", updateOrderDistTotal);
-  updateOrderDistTotal();
-  updateOrderDistBar(id);
-  return id;
+function renderOrdBlockSlots(bid) {
+  document.getElementById(`ordBlockSlots_${bid}`).innerHTML = DELIVERY_PRODUCT_ORDER.map(code => `
+    <div class="check-row" id="ordSlotBlock_${bid}_${code}" style="margin-top:10px; padding-top:10px; border-top:1px solid var(--border);">
+      <div class="row" style="align-items:center;">
+        <label style="font-weight:600; flex:1; margin:0;">${escapeHtml(productNameFor(code))}</label>
+        <label style="display:flex; align-items:center; gap:6px; flex:0 0 auto; margin:0;">
+          <input type="checkbox" id="ordSlotSkip_${bid}_${code}" style="width:auto;" onchange="onOrdSlotSkipChange(${bid},'${code}')"> Not included in this order
+        </label>
+      </div>
+      <div id="ordSlotFields_${bid}_${code}">
+        <div class="row">
+          <div><label>Liters</label><input type="number" step="0.01" id="ordSlotLiters_${bid}_${code}"></div>
+          <div><label>Cost / Liter</label><input type="number" step="0.0001" id="ordSlotCost_${bid}_${code}"></div>
+        </div>
+        <div id="ordSlotBarWrap_${bid}_${code}" style="margin-top:8px; display:none;">
+          <div id="ordSlotBar_${bid}_${code}" style="display:flex; height:14px; border-radius:7px; overflow:hidden; background:#0f172a; border:1px solid var(--border);">
+            <div id="ordSlotBarCurrent_${bid}_${code}" style="width:0%; background:#475569;"></div>
+            <div id="ordSlotBarAdded_${bid}_${code}" style="width:0%; background:var(--accent);"></div>
+          </div>
+          <div class="small" id="ordSlotBarLabel_${bid}_${code}" style="margin-top:3px;"></div>
+        </div>
+      </div>
+    </div>`).join("");
+
+  DELIVERY_PRODUCT_ORDER.forEach(code => {
+    document.getElementById(`ordSlotLiters_${bid}_${code}`).addEventListener("input", () => { updateOrderDistTotal(); updateOrdSlotBar(bid, code); });
+    document.getElementById(`ordSlotCost_${bid}_${code}`).addEventListener("input", updateOrderDistTotal);
+    updateOrdSlotBar(bid, code);
+  });
 }
 
-function removeOrderDistRow(id) {
-  document.getElementById(`ordDistRowWrap_${id}`).remove();
-  activeOrdDistRowIds = activeOrdDistRowIds.filter(x => x !== id);
+function onOrdBlockBranchChange(bid) {
+  refreshOrdBlockBranchOptions();
+  DELIVERY_PRODUCT_ORDER.forEach(code => updateOrdSlotBar(bid, code));
   updateOrderDistTotal();
 }
+
+function onOrdSlotSkipChange(bid, code) {
+  const skipped = document.getElementById(`ordSlotSkip_${bid}_${code}`).checked;
+  document.getElementById(`ordSlotFields_${bid}_${code}`).style.display = skipped ? "none" : "block";
+  if (skipped) {
+    document.getElementById(`ordSlotLiters_${bid}_${code}`).value = "";
+    document.getElementById(`ordSlotCost_${bid}_${code}`).value = "";
+  }
+  updateOrderDistTotal();
+}
+
+function addOrdDistBlock() {
+  if (usedOrdBlockBranchIds(null).length >= branches.length) { alert("Every branch you have access to is already on this order."); return; }
+  const bid = ordBlockSeq++;
+  document.getElementById("ordDistRows").insertAdjacentHTML("beforeend", renderOrdDistBlockHtml(bid));
+  activeOrdBlockIds.push(bid);
+  document.getElementById(`ordBlockBranch_${bid}`).addEventListener("change", () => onOrdBlockBranchChange(bid));
+  renderOrdBlockSlots(bid);
+  refreshOrdBlockBranchOptions();
+  updateOrderDistTotal();
+  return bid;
+}
+
+function removeOrdDistBlock(bid) {
+  document.getElementById(`ordBlockWrap_${bid}`).remove();
+  activeOrdBlockIds = activeOrdBlockIds.filter(x => x !== bid);
+  refreshOrdBlockBranchOptions();
+  updateOrderDistTotal();
+}
+
+// A slot is "resolved" once it's either explicitly marked not-included, or
+// has enough filled in to compute a value -- same "each product, each
+// branch, an explicit choice, never an implicit default" gate as the
+// delivery form's getSlotState/visitResolved.
+function getOrdSlotState(bid, code) {
+  const skipped = document.getElementById(`ordSlotSkip_${bid}_${code}`)?.checked;
+  if (skipped) return { resolved: true, skipped: true, filled: false, liters: 0, value: 0 };
+  const litersVal = parseFloat(document.getElementById(`ordSlotLiters_${bid}_${code}`)?.value);
+  const cost = parseFloat(document.getElementById(`ordSlotCost_${bid}_${code}`)?.value);
+  const filled = !!(litersVal > 0 && cost > 0);
+  return { resolved: filled, skipped: false, filled, liters: filled ? litersVal : 0, value: filled ? litersVal * cost : 0 };
+}
+function blockResolved(bid) { return DELIVERY_PRODUCT_ORDER.every(code => getOrdSlotState(bid, code).resolved); }
+function blockFilled(bid) { return DELIVERY_PRODUCT_ORDER.some(code => getOrdSlotState(bid, code).filled); }
+function allOrdBlocksResolved() { return activeOrdBlockIds.every(bid => blockResolved(bid)); }
+function anyOrdBlockFilled() { return activeOrdBlockIds.some(bid => blockFilled(bid)); }
 
 // Sums capacity_liters across every tank a branch+product has, same
 // null-means-unlimited convention as the Capacity Planning Overview
@@ -2003,29 +2088,29 @@ function capacityForBranchProduct(branchId, productId) {
   return relevant.reduce((s, t) => s + Number(t.capacity_liters || 0), 0);
 }
 
-// Predictive-only: projects this row's tank fill (current stock, from the
+// Predictive-only: projects this slot's tank fill (current stock, from the
 // exact same fuel_inventory_state source as the Capacity Planning Overview,
-// plus this row's allocated liters) against capacity, so Mario can catch a
+// plus this slot's allocated liters) against capacity, so Mario can catch a
 // coming overflow while still planning the split -- purely informational,
 // doesn't block placing the order. The real overflow handling still happens
 // at delivery-confirmation time via fn_fuel_delivery_apply_wac.
-async function updateOrderDistBar(id) {
-  const wrap = document.getElementById(`ordDistBarWrap_${id}`);
-  if (!wrap) return; // row may have been removed while this was in flight
-  const branchId = document.getElementById(`ordDistBranch_${id}`)?.value;
-  const productId = document.getElementById(`ordDistProduct_${id}`)?.value;
+async function updateOrdSlotBar(bid, code) {
+  const wrap = document.getElementById(`ordSlotBarWrap_${bid}_${code}`);
+  if (!wrap) return; // slot may have been removed (block deleted) while this was in flight
+  const branchId = document.getElementById(`ordBlockBranch_${bid}`)?.value;
+  const productId = productIdFor(code);
   if (!branchId || !productId) { wrap.style.display = "none"; return; }
   wrap.style.display = "block";
 
-  const addedLiters = parseFloat(document.getElementById(`ordDistLiters_${id}`)?.value) || 0;
+  const addedLiters = parseFloat(document.getElementById(`ordSlotLiters_${bid}_${code}`)?.value) || 0;
   const currentLiters = await getCurrentTankLiters(branchId, productId);
-  if (!document.getElementById(`ordDistBarWrap_${id}`)) return; // row removed while the query was in flight
+  if (!document.getElementById(`ordSlotBarWrap_${bid}_${code}`)) return; // block removed while the query was in flight
 
   const capacity = capacityForBranchProduct(branchId, productId);
-  const currentEl = document.getElementById(`ordDistBarCurrent_${id}`);
-  const addedEl = document.getElementById(`ordDistBarAdded_${id}`);
-  const barEl = document.getElementById(`ordDistBar_${id}`);
-  const labelEl = document.getElementById(`ordDistBarLabel_${id}`);
+  const currentEl = document.getElementById(`ordSlotBarCurrent_${bid}_${code}`);
+  const addedEl = document.getElementById(`ordSlotBarAdded_${bid}_${code}`);
+  const barEl = document.getElementById(`ordSlotBar_${bid}_${code}`);
+  const labelEl = document.getElementById(`ordSlotBarLabel_${bid}_${code}`);
 
   if (capacity === null) {
     const denom = Math.max(currentLiters + addedLiters, 1);
@@ -2060,14 +2145,15 @@ async function updateOrderDistBar(id) {
 // breakdown, so they can never drift apart from each other.
 function orderDistBreakdown() {
   const byProduct = {};
-  activeOrdDistRowIds.forEach(id => {
-    const productId = document.getElementById(`ordDistProduct_${id}`)?.value;
-    const litersVal = parseFloat(document.getElementById(`ordDistLiters_${id}`)?.value) || 0;
-    const cost = parseFloat(document.getElementById(`ordDistCost_${id}`)?.value) || 0;
-    if (!productId || (!litersVal && !cost)) return;
-    const entry = (byProduct[productId] ||= { liters: 0, value: 0 });
-    entry.liters += litersVal;
-    entry.value += litersVal * cost;
+  activeOrdBlockIds.forEach(bid => {
+    DELIVERY_PRODUCT_ORDER.forEach(code => {
+      const s = getOrdSlotState(bid, code);
+      if (!s.filled) return;
+      const productId = productIdFor(code);
+      const entry = (byProduct[productId] ||= { liters: 0, value: 0 });
+      entry.liters += s.liters;
+      entry.value += s.value;
+    });
   });
   return byProduct;
 }
@@ -2087,7 +2173,7 @@ function updateOrderDistTotal() {
     totalValue += entry.value;
     return `<tr><td>${escapeHtml(productNameFor(code))}</td><td>${liters(entry.liters)}</td><td>${peso(entry.value)}</td></tr>`;
   }).join("");
-  document.getElementById("ordSummaryTable").querySelector("tbody").innerHTML = rowsHtml || "<tr><td colspan='3' class='small'>Add distribution rows to see a summary.</td></tr>";
+  document.getElementById("ordSummaryTable").querySelector("tbody").innerHTML = rowsHtml || "<tr><td colspan='3' class='small'>Add a branch to see a summary.</td></tr>";
   document.getElementById("ordTotalLiters").textContent = liters(totalLiters);
   document.getElementById("ordDistTotal").textContent = peso(totalValue);
   updateOrderCheckBalance();
@@ -2193,7 +2279,7 @@ function updateOrderCheckBalance() {
   balanceEl.textContent = (balanced ? "✓ " : "") + peso(Math.abs(balanceCents) / 100) + (balanced ? "" : (balanceCents > 0 ? " short" : " over"));
   balanceStat.className = "stat " + (balanced ? "good" : "warn");
 
-  const valid = activeOrdDistRowIds.length > 0 && balanced && anyRowFilled;
+  const valid = activeOrdBlockIds.length > 0 && allOrdBlocksResolved() && anyOrdBlockFilled() && balanced && anyRowFilled;
   const saveBtn = document.getElementById("ordSaveBtn");
   if (saveBtn) saveBtn.disabled = !valid;
   return valid;
@@ -2205,8 +2291,8 @@ function resetOrderForm() {
   document.getElementById("ordPlate").value = "";
   document.getElementById("ordDate").value = todayIso();
   document.getElementById("ordDistRows").innerHTML = "";
-  activeOrdDistRowIds = [];
-  addOrderDistRow();
+  activeOrdBlockIds = [];
+  addOrdDistBlock();
   resetOrderCheckRows();
 }
 
@@ -2214,7 +2300,7 @@ async function loadOrdersTab() {
   document.getElementById("ordVendor").innerHTML = vendors.map(v => `<option value="${v.id}">${v.name}</option>`).join("");
   document.getElementById("ordDriver").innerHTML = `<option value="">—</option>` + drivers.map(d => `<option value="${d.id}">${d.name}</option>`).join("");
   if (!document.getElementById("ordDate").value) document.getElementById("ordDate").value = todayIso();
-  if (!activeOrdDistRowIds.length) addOrderDistRow();
+  if (!activeOrdBlockIds.length) addOrdDistBlock();
   if (!activeOrdCheckRowIds.length) resetOrderCheckRows();
 
   // Only an owner can create/broadcast (RLS + RPC also enforce this server-side
@@ -2286,19 +2372,26 @@ async function createPurchaseOrder() {
 
   const vendorId = document.getElementById("ordVendor").value;
   if (!vendorId) { msg.textContent = "Vendor is required."; msg.className = "msg err"; return; }
-  if (!activeOrdDistRowIds.length) { msg.textContent = "Add at least one branch distribution row."; msg.className = "msg err"; return; }
+  if (!activeOrdBlockIds.length) { msg.textContent = "Add at least one branch to this order."; msg.className = "msg err"; return; }
+  if (!allOrdBlocksResolved()) {
+    msg.textContent = "Resolve every product for every branch — fill it in, or mark it \"Not included in this order\".";
+    msg.className = "msg err"; return;
+  }
+  if (!anyOrdBlockFilled()) { msg.textContent = "At least one product needs to actually be included in this order."; msg.className = "msg err"; return; }
 
   const distributions = [];
-  for (const id of activeOrdDistRowIds) {
-    const branchId = document.getElementById(`ordDistBranch_${id}`).value;
-    const productId = document.getElementById(`ordDistProduct_${id}`).value;
-    const litersVal = parseFloat(document.getElementById(`ordDistLiters_${id}`).value);
-    const cost = parseFloat(document.getElementById(`ordDistCost_${id}`).value);
-    if (!branchId || !productId || !litersVal || litersVal <= 0 || !cost || cost <= 0) {
-      msg.textContent = "Every distribution row needs a branch, product, liters, and cost per liter."; msg.className = "msg err"; return;
-    }
-    distributions.push({ branch_id: branchId, product_id: productId, predetermined_liters: litersVal, predetermined_cost_per_liter: cost });
-  }
+  activeOrdBlockIds.forEach(bid => {
+    const branchId = document.getElementById(`ordBlockBranch_${bid}`).value;
+    DELIVERY_PRODUCT_ORDER.forEach(code => {
+      const s = getOrdSlotState(bid, code);
+      if (!s.filled) return;
+      distributions.push({
+        branch_id: branchId, product_id: productIdFor(code),
+        predetermined_liters: parseFloat(document.getElementById(`ordSlotLiters_${bid}_${code}`).value),
+        predetermined_cost_per_liter: parseFloat(document.getElementById(`ordSlotCost_${bid}_${code}`).value)
+      });
+    });
+  });
 
   const checks = [];
   for (const id of activeOrdCheckRowIds) {
@@ -3502,27 +3595,62 @@ async function loadSetupTab() {
   document.getElementById("driversTable").querySelector("tbody").innerHTML = drivers.map(d =>
     `<tr><td>${d.name}</td><td>${d.area || "—"}</td></tr>`).join("");
 
-  // NOTE: deliberately does NOT reassign the global `tanks` (that stays the
-  // all-branches list initApp() loaded, since the Deliveries tab's other-
-  // branch visit blocks in a multi-branch trip need tanks for branches other
-  // than currentBranch). This is its own branch-scoped list, for this tab only.
-  const { data: tk } = await supabase.from("fuel_tanks").select("*, fuel_products(name)").eq("branch_id", currentBranch);
-  const branchTanks = tk || [];
+  // NOTE: deliberately does NOT reassign the global `tanks`/`pumps` (those
+  // stay the all-branches lists initApp() loaded -- the Deliveries tab's
+  // other-branch visit blocks in a multi-branch trip, and the Dispensing
+  // tab's pump picker, both need every branch's rows, not just currentBranch.
+  // These are their own branch-scoped copies, for this tab's tables only.
+  // Both sorted Diesel/Premium/Unleaded (productOrderIndex), matching every
+  // other product-listing screen -- previously unordered here.
+  const { data: tk } = await supabase.from("fuel_tanks").select("*, fuel_products(name,code)").eq("branch_id", currentBranch);
+  const branchTanks = (tk || []).sort((a, b) => productOrderIndex(a.fuel_products?.code) - productOrderIndex(b.fuel_products?.code));
   currentBranchTanks = branchTanks; // module-level copy so saveTank()'s duplicate check has this branch's tanks without a re-query
   checkTankDuplicate();
-  document.getElementById("tanksTable").querySelector("tbody").innerHTML = branchTanks.map(t => `
+
+  const { data: inv } = await supabase.from("fuel_inventory_state").select("product_id, current_liters").eq("branch_id", currentBranch);
+  const invByProduct = {}; (inv || []).forEach(r => { invByProduct[r.product_id] = Number(r.current_liters); });
+
+  document.getElementById("tanksTable").querySelector("tbody").innerHTML = branchTanks.map(t => {
+    const currentLiters = invByProduct[t.product_id] ?? 0;
+    return `
     <tr><td>${t.fuel_products?.name || ""}</td><td>${t.tank_label}</td>
       <td><select onchange="toggleDipstickMode('${t.id}', this.value)">
         <option value="calibration_curve" ${t.dipstick_mode === "calibration_curve" ? "selected" : ""}>Calibration Curve</option>
         <option value="direct_liter" ${t.dipstick_mode === "direct_liter" ? "selected" : ""}>Direct Liters</option>
       </select></td>
       <td><input type="number" step="0.01" value="${t.capacity_liters ?? ""}" placeholder="no limit" style="max-width:110px;" onchange="saveTankCapacity('${t.id}', this.value)"></td>
-    </tr>`).join("");
+      <td>${liters(currentLiters)}</td>
+      <td><button class="small secondary" style="margin:0; padding:6px 10px;" onclick="toggleStockCorrection('${t.id}')">Correct Stock</button></td>
+    </tr>
+    <tr id="stockCorrRow_${t.id}" style="display:none;">
+      <td colspan="6">
+        <div class="row" style="align-items:flex-end;">
+          ${t.dipstick_mode === "calibration_curve" ? `<div><label>Dipstick Reading (cm)</label><input type="number" step="0.01" id="stockCorrCm_${t.id}"></div>` : ""}
+          <div><label>${t.dipstick_mode === "calibration_curve" ? "Corrected Liters (from cm, or type directly)" : "Corrected Liters"}</label><input type="number" step="0.01" id="stockCorrLiters_${t.id}" value="${currentLiters}"></div>
+          <div style="flex:2;"><label>Reason (optional)</label><input type="text" id="stockCorrReason_${t.id}" placeholder="e.g. physical dipstick check found a discrepancy"></div>
+        </div>
+        <button class="small" style="margin:8px 6px 0 0; padding:8px 12px;" onclick="saveStockCorrection('${t.id}','${t.branch_id}','${t.product_id}')">Save Correction</button>
+        <button type="button" class="small secondary" style="margin:8px 0 0; padding:8px 12px;" onclick="toggleStockCorrection('${t.id}')">Cancel</button>
+        <div class="msg" id="stockCorrMsg_${t.id}"></div>
+      </td>
+    </tr>`;
+  }).join("");
+
+  branchTanks.filter(t => t.dipstick_mode === "calibration_curve").forEach(t => {
+    document.getElementById(`stockCorrCm_${t.id}`).addEventListener("input", async () => {
+      const cmVal = parseFloat(document.getElementById(`stockCorrCm_${t.id}`).value);
+      if (isNaN(cmVal)) return;
+      const litersVal = await lookupLitersFromCm(t.id, cmVal);
+      if (litersVal !== null) document.getElementById(`stockCorrLiters_${t.id}`).value = litersVal.toFixed(2);
+    });
+  });
+
   document.getElementById("calTank").innerHTML = branchTanks.map(t => `<option value="${t.id}">${t.fuel_products?.name} — ${t.tank_label}</option>`).join("");
 
-  const { data: held } = await supabase.from("fuel_tank_held_stock").select("*, fuel_products(name)")
+  const { data: held } = await supabase.from("fuel_tank_held_stock").select("*, fuel_products(name,code)")
     .eq("branch_id", currentBranch).gt("held_liters", 0);
-  document.getElementById("heldStockTable").querySelector("tbody").innerHTML = (held || []).map(h => `
+  const heldSorted = (held || []).sort((a, b) => productOrderIndex(a.fuel_products?.code) - productOrderIndex(b.fuel_products?.code));
+  document.getElementById("heldStockTable").querySelector("tbody").innerHTML = heldSorted.map(h => `
     <tr><td>${h.fuel_products?.name || ""}</td><td>${liters(h.held_liters)}</td><td>${peso(h.held_wac)}</td>
       <td style="white-space:nowrap;">
         <input type="number" step="0.01" placeholder="Liters" id="xferAmt_${h.product_id}" style="max-width:100px; display:inline-block;">
@@ -3530,9 +3658,9 @@ async function loadSetupTab() {
       </td>
     </tr>`).join("") || "<tr><td colspan='4' class='small'>Nothing held for this branch right now.</td></tr>";
 
-  const { data: pm } = await supabase.from("fuel_pumps").select("*, fuel_products(name)").eq("branch_id", currentBranch).order("pump_label");
-  pumps = pm || [];
-  document.getElementById("pumpsTable").querySelector("tbody").innerHTML = pumps.map(p => `
+  const { data: pm } = await supabase.from("fuel_pumps").select("*, fuel_products(name,code)").eq("branch_id", currentBranch);
+  const branchPumps = (pm || []).sort((a, b) => productOrderIndex(a.fuel_products?.code) - productOrderIndex(b.fuel_products?.code) || a.pump_label.localeCompare(b.pump_label));
+  document.getElementById("pumpsTable").querySelector("tbody").innerHTML = branchPumps.map(p => `
     <tr>
       <td><select id="pumpEditProduct_${p.id}" style="min-width:110px;">${products.map(prod => `<option value="${prod.id}" ${prod.id===p.product_id?"selected":""}>${prod.name}</option>`).join("")}</select></td>
       <td><input type="text" id="pumpEditLabel_${p.id}" value="${p.pump_label}" style="min-width:140px;"></td>
@@ -3683,6 +3811,36 @@ async function saveTankCapacity(tankId, value) {
   const t = tanks.find(x => x.id === tankId);
   if (t) t.capacity_liters = capacity;
   inventoryStateCache = {}; // capacity changed -- discard cached "current tank liters" so the overflow preview re-fetches
+}
+
+function toggleStockCorrection(tankId) {
+  const row = document.getElementById(`stockCorrRow_${tankId}`);
+  row.style.display = row.style.display === "none" ? "table-row" : "none";
+}
+
+// Owner-only, audited correction of fuel_inventory_state.current_liters --
+// e.g. a physical dipstick check doesn't match what the system shows, or a
+// tank's starting stock needs to be set when it first comes under this
+// system. Quantity only -- current_wac is deliberately never touched here
+// (confirmed with Mario), same principle as inter-branch transfers: fixing
+// how much is in the tank isn't a cost-basis event. fn_correct_tank_stock
+// logs every correction to fuel_stock_corrections (before/after, who, when,
+// optional reason) -- this is the same shared fuel_inventory_state row every
+// other module reads, so the correction is visible everywhere immediately,
+// no separate wiring needed.
+async function saveStockCorrection(tankId, branchId, productId) {
+  const msg = document.getElementById(`stockCorrMsg_${tankId}`);
+  const litersVal = parseFloat(document.getElementById(`stockCorrLiters_${tankId}`).value);
+  if (isNaN(litersVal) || litersVal < 0) { msg.textContent = "Enter a valid liters value."; msg.className = "msg err"; return; }
+  const reason = document.getElementById(`stockCorrReason_${tankId}`).value.trim() || null;
+  const { error } = await supabase.rpc("fn_correct_tank_stock", {
+    p_branch_id: branchId, p_product_id: productId, p_tank_id: tankId,
+    p_new_liters: litersVal, p_reason: reason, p_corrected_by: currentUserEmail || null
+  });
+  if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+  inventoryStateCache = {}; // stock changed -- discard cached "current tank liters" so the overflow preview / Orders tank-fill bars re-fetch
+  msg.textContent = "Stock corrected."; msg.className = "msg ok";
+  loadSetupTab();
 }
 
 // Moves liters from the held/external container into the tank once tank
