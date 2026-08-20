@@ -2276,16 +2276,70 @@ async function loadCapacityTab() {
       const capacity = capByKey[key]; // undefined = no limit configured for this branch+product
       const remaining = capacity !== undefined ? Math.max(capacity - currentLiters, 0) : null;
       const heldLiters = heldByKey[key] ? Number(heldByKey[key].held_liters) : 0;
-      rows.push({ branchCode: b.code, productCode: p.code, currentLiters, capacity, remaining, heldLiters, wac: invRow ? Number(invRow.current_wac) : 0 });
+      rows.push({ branchId: b.id, productId: p.id, branchCode: b.code, productCode: p.code, currentLiters, capacity, remaining, heldLiters, wac: invRow ? Number(invRow.current_wac) : 0 });
     });
   });
 
-  document.getElementById("capacityTable").querySelector("tbody").innerHTML = rows.map(r => `
-    <tr><td>${r.branchCode}</td><td>${r.productCode}</td><td>${liters(r.currentLiters)}</td>
-    <td>${r.capacity !== undefined ? liters(r.capacity) : "no limit set"}</td>
-    <td>${r.remaining !== null ? liters(r.remaining) : "—"}</td>
-    <td>${liters(r.heldLiters)}</td>
-    <td>${peso(r.wac)}</td></tr>`).join("") || "<tr><td colspan='7' class='small'>No data yet.</td></tr>";
+  // Each row is tappable to reveal a "since last delivery" detail row below it
+  // (last delivery date/liters/cost, stock before that delivery, liters sold
+  // since) -- kept out of the always-visible columns since this table is
+  // already dense on mobile. Detail is fetched lazily on first tap, not
+  // upfront for all rows, and cached in capacityDetailCache thereafter.
+  document.getElementById("capacityTable").querySelector("tbody").innerHTML = rows.map(r => {
+    const key = `${r.branchId}_${r.productId}`;
+    return `
+    <tr class="cap-row" style="cursor:pointer;" onclick="toggleCapacityDetail('${key}','${r.branchId}','${r.productId}')">
+      <td>${r.branchCode}</td><td>${r.productCode}</td><td>${liters(r.currentLiters)}</td>
+      <td>${r.capacity !== undefined ? liters(r.capacity) : "no limit set"}</td>
+      <td>${r.remaining !== null ? liters(r.remaining) : "—"}</td>
+      <td>${liters(r.heldLiters)}</td>
+      <td>${peso(r.wac)}</td>
+    </tr>
+    <tr class="cap-detail-row" id="capDetailRow_${key}" style="display:none;">
+      <td colspan="7"><div class="small" id="capDetail_${key}"></div></td>
+    </tr>`;
+  }).join("") || "<tr><td colspan='7' class='small'>No data yet.</td></tr>";
+}
+
+const capacityDetailCache = {};
+
+// "Sold since" counts every non-calibration dispense_allocations row (cash_sale,
+// credit_sale, company_use, etc.) -- i.e. everything that actually reduced tank
+// inventory, per fn_fuel_dispense_decrement_inventory's own invariant (calibration
+// liters are poured back into the tank, not sold/removed). This answers "how fast
+// is stock moving" for reorder timing, not a strict cash+credit revenue figure.
+async function toggleCapacityDetail(key, branchId, productId) {
+  const row = document.getElementById(`capDetailRow_${key}`);
+  const isOpen = row.style.display !== "none";
+  if (isOpen) { row.style.display = "none"; return; }
+  row.style.display = "table-row";
+  const el = document.getElementById(`capDetail_${key}`);
+  if (capacityDetailCache[key]) { el.innerHTML = capacityDetailCache[key]; return; }
+  el.textContent = "Loading…";
+
+  const { data: lastDeliveryRows } = await supabase.from("fuel_deliveries")
+    .select("delivery_date, invoiced_liters, cost_per_liter, dipstick_before_liters")
+    .eq("branch_id", branchId).eq("product_id", productId)
+    .order("delivery_date", { ascending: false }).order("created_at", { ascending: false }).limit(1);
+  const last = (lastDeliveryRows || [])[0];
+  if (!last) {
+    const html = "No delivery recorded yet for this branch/product.";
+    capacityDetailCache[key] = html; el.innerHTML = html; return;
+  }
+
+  const { data: allocs } = await supabase.from("fuel_dispense_allocations")
+    .select("liters, category, fuel_meter_periods!inner(branch_id, product_id)")
+    .eq("fuel_meter_periods.branch_id", branchId).eq("fuel_meter_periods.product_id", productId)
+    .neq("category", "calibration")
+    .gte("created_at", last.delivery_date);
+  const soldSince = (allocs || []).reduce((s, a) => s + Number(a.liters), 0);
+
+  const html = `
+    <div>Last delivery: <strong>${last.delivery_date}</strong> — ${liters(last.invoiced_liters)} @ ${peso(last.cost_per_liter)}/L</div>
+    <div>Stock before that delivery: ${liters(last.dipstick_before_liters)}</div>
+    <div>Sold since: ${liters(soldSince)}</div>`;
+  capacityDetailCache[key] = html;
+  el.innerHTML = html;
 }
 
 async function loadChecksTab() {
