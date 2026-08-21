@@ -913,6 +913,18 @@ let tripVisitCount = 0; // number of rendered visit blocks (branches added to th
 function productIdFor(code) { return products.find(p => p.code === code)?.id || null; }
 function productNameFor(code) { return products.find(p => p.code === code)?.name || code; }
 
+// A branch's real product list is whatever it actually has a configured tank
+// for -- not every branch has all 3. Derived from the global `tanks` array
+// (all branches, loaded once in initApp), so no extra query. Keeps the fixed
+// Diesel/Premium/Unleaded order for whichever products the branch does have.
+// Used everywhere a product list needs to be built per-branch (Deliveries,
+// Orders, Capacity Overview) -- Dispensing already worked this way for free,
+// since it lists actual configured pumps rather than a fixed product set.
+function productsForBranch(branchId) {
+  const configuredProductIds = new Set(tanks.filter(t => t.branch_id === branchId).map(t => t.product_id));
+  return DELIVERY_PRODUCT_ORDER.filter(code => configuredProductIds.has(productIdFor(code)));
+}
+
 // Visit 0 always follows the global branch selector, so the common
 // single-branch case shows zero extra branch-picking UI. Any visit added
 // afterward (a genuine multi-branch trip) gets its own explicit picker.
@@ -937,16 +949,25 @@ function populateVisitBranchSelect(vidx) {
   sel.innerHTML = available.map(b => `<option value="${b.id}">${b.code} — ${b.name}</option>`).join("");
 }
 async function onVisitBranchChange(vidx) {
-  DELIVERY_PRODUCT_ORDER.forEach(code => populateSlotTank(vidx, code));
+  // Full re-render, not just a tank-dropdown refresh -- the branch change can
+  // change which products even apply (a different branch may have a
+  // different set of configured tanks), not just which tanks are available
+  // within an already-fixed set of slots.
+  renderProductSlots(vidx);
+  renderVisitSummaryGrid(vidx);
   await loadShiftOptionsForBranch(`visitShift_${vidx}`, branchForVisit(vidx));
   onVisitFieldChange();
 }
 
-// Renders one branch's visit block: its own Invoice#/Shift, its own 3 product
-// slots, its own mini-summary. Only visits beyond the first show a branch
-// picker + Remove button -- keeps the default single-branch trip visually
-// identical to before "Add Another Branch" is ever clicked.
-function renderTripVisit(vidx) {
+// Renders one branch's visit block: its own Invoice#/Shift, its own product
+// slots (whatever that branch actually has tanks for), its own mini-summary.
+// Only visits beyond the first show a branch picker + Remove button -- keeps
+// the default single-branch trip visually identical to before "Add Another
+// Branch" is ever clicked. `forceCode`, if given, guarantees that product's
+// slot renders even if the branch has no configured tank for it right now --
+// used by editDelivery() so a historical delivery for a since-removed tank
+// can still be viewed/edited.
+function renderTripVisit(vidx, forceCode) {
   const isFirst = vidx === 0;
   const html = `
     <div class="card" id="visitBlock_${vidx}" style="background:#0f172a; border:1px solid var(--border);">
@@ -961,20 +982,30 @@ function renderTripVisit(vidx) {
       </div>
       ${isFirst ? "" : `<button type="button" class="secondary small" style="margin-top:10px;" onclick="removeTripVisit(${vidx})">Remove This Branch</button>`}
       <div id="visitProductSlots_${vidx}" style="margin-top:6px;"></div>
-      <div class="stat-grid" style="margin-top:10px;">
-        <div class="stat"><div class="k">Diesel</div><div class="v" id="visitSummary_${vidx}_DIESEL">— not yet entered</div></div>
-        <div class="stat"><div class="k">Premium</div><div class="v" id="visitSummary_${vidx}_PREMIUM">— not yet entered</div></div>
-        <div class="stat"><div class="k">Unleaded</div><div class="v" id="visitSummary_${vidx}_UNLEADED">— not yet entered</div></div>
-      </div>
+      <div class="stat-grid" id="visitSummaryGrid_${vidx}" style="margin-top:10px;"></div>
     </div>`;
   document.getElementById("tripVisitsContainer").insertAdjacentHTML("beforeend", html);
 
   if (!isFirst) populateVisitBranchSelect(vidx);
-  renderProductSlots(vidx);
+  renderProductSlots(vidx, forceCode);
+  renderVisitSummaryGrid(vidx, forceCode);
   loadShiftOptionsForBranch(`visitShift_${vidx}`, branchForVisit(vidx));
 
   document.getElementById(`visitInvoice_${vidx}`).addEventListener("input", onVisitFieldChange);
   document.getElementById(`visitShift_${vidx}`).addEventListener("change", onVisitFieldChange);
+}
+
+function visitProductCodes(vidx, forceCode) {
+  const codes = productsForBranch(branchForVisit(vidx));
+  if (forceCode && !codes.includes(forceCode)) return [...codes, forceCode].sort((a, b) => productOrderIndex(a) - productOrderIndex(b));
+  return codes;
+}
+
+function renderVisitSummaryGrid(vidx, forceCode) {
+  const codes = visitProductCodes(vidx, forceCode);
+  document.getElementById(`visitSummaryGrid_${vidx}`).innerHTML = codes.map(code => `
+    <div class="stat"><div class="k">${escapeHtml(productNameFor(code))}</div><div class="v" id="visitSummary_${vidx}_${code}">— not yet entered</div></div>`).join("")
+    || "<p class='small' style='margin:0;'>No tanks configured for this branch yet.</p>";
 }
 
 function addTripVisit() {
@@ -996,8 +1027,13 @@ function removeTripVisit(vidx) {
   onVisitFieldChange();
 }
 
-function renderProductSlots(vidx) {
-  document.getElementById(`visitProductSlots_${vidx}`).innerHTML = DELIVERY_PRODUCT_ORDER.map(code => `
+function renderProductSlots(vidx, forceCode) {
+  const codes = visitProductCodes(vidx, forceCode);
+  if (!codes.length) {
+    document.getElementById(`visitProductSlots_${vidx}`).innerHTML = "<p class='small'>No tanks configured for this branch yet — add one in Setup → Tanks &amp; Calibration first.</p>";
+    return;
+  }
+  document.getElementById(`visitProductSlots_${vidx}`).innerHTML = codes.map(code => `
     <div class="check-row" id="slotBlock_${vidx}_${code}" style="margin-top:14px; padding-top:14px; border-top:1px solid var(--border);">
       <div class="row" style="align-items:center;">
         <label style="font-weight:600; flex:1; margin:0;">${escapeHtml(productNameFor(code))}</label>
@@ -1037,7 +1073,7 @@ function renderProductSlots(vidx) {
       </div>
     </div>`).join("");
 
-  DELIVERY_PRODUCT_ORDER.forEach(code => {
+  codes.forEach(code => {
     populateSlotTank(vidx, code);
     ["slotCost","slotMarket","slotMarkupType","slotMarkupValue"].forEach(prefix => {
       document.getElementById(`${prefix}_${vidx}_${code}`).addEventListener("input", () => { updateSlotBilledPreview(vidx, code); onVisitFieldChange(); });
@@ -1380,7 +1416,9 @@ async function updateOverflowPreview(vidx, code) {
 // trip must be resolved before checks unlock -- this is what "each product,
 // each branch, an explicit choice, never an implicit default" gates on.
 function getSlotState(vidx, code) {
-  const notDelivered = document.getElementById(`slotNotDelivered_${vidx}_${code}`).checked;
+  const notDeliveredEl = document.getElementById(`slotNotDelivered_${vidx}_${code}`);
+  if (!notDeliveredEl) return { resolved: true, notDelivered: false, filled: false, cost: 0 }; // this branch has no tank for this product -- not a real slot
+  const notDelivered = notDeliveredEl.checked;
   if (notDelivered) return { resolved: true, notDelivered: true, filled: false, cost: 0 };
   const litersVal = parseFloat(document.getElementById(`slotLiters_${vidx}_${code}`).value);
   const cost = parseFloat(document.getElementById(`slotCost_${vidx}_${code}`).value);
@@ -1390,11 +1428,11 @@ function getSlotState(vidx, code) {
   const filled = !!(litersVal > 0 && cost > 0 && tank && beforeL !== "" && afterL !== "");
   return { resolved: filled, notDelivered: false, filled, cost: filled ? litersVal * cost : 0 };
 }
-function visitResolved(vidx) { return DELIVERY_PRODUCT_ORDER.every(code => getSlotState(vidx, code).resolved); }
+function visitResolved(vidx) { return visitProductCodes(vidx).every(code => getSlotState(vidx, code).resolved); }
 function visitHasShift(vidx) { return !!document.getElementById(`visitShift_${vidx}`).value; }
 function allVisitsHaveShift() { for (let i = 0; i < tripVisitCount; i++) if (!visitHasShift(i)) return false; return true; }
-function visitFilled(vidx) { return DELIVERY_PRODUCT_ORDER.some(code => getSlotState(vidx, code).filled); }
-function visitTotal(vidx) { return DELIVERY_PRODUCT_ORDER.reduce((sum, code) => sum + getSlotState(vidx, code).cost, 0); }
+function visitFilled(vidx) { return visitProductCodes(vidx).some(code => getSlotState(vidx, code).filled); }
+function visitTotal(vidx) { return visitProductCodes(vidx).reduce((sum, code) => sum + getSlotState(vidx, code).cost, 0); }
 function allSlotsResolved() { for (let i = 0; i < tripVisitCount; i++) if (!visitResolved(i)) return false; return true; }
 function anySlotFilled() { for (let i = 0; i < tripVisitCount; i++) if (visitFilled(i)) return true; return false; }
 function visitCombinedTotal() { let t = 0; for (let i = 0; i < tripVisitCount; i++) t += visitTotal(i); return t; }
@@ -1491,7 +1529,7 @@ function collectVisitDraft() {
       branchId: branchForVisit(vidx),
       invoice: document.getElementById(`visitInvoice_${vidx}`)?.value || "",
       shift: document.getElementById(`visitShift_${vidx}`)?.value || "",
-      slots: Object.fromEntries(DELIVERY_PRODUCT_ORDER.map(code => [code, collectSlotDraft(vidx, code)]))
+      slots: Object.fromEntries(visitProductCodes(vidx).map(code => [code, collectSlotDraft(vidx, code)]))
     });
   }
   return {
@@ -1567,8 +1605,9 @@ async function restoreVisitDraft() {
     if (dv.shift) document.getElementById(`visitShift_${vidx}`).value = dv.shift;
     DELIVERY_PRODUCT_ORDER.forEach(code => {
       const s = (dv.slots || {})[code];
-      if (!s) return;
-      document.getElementById(`slotNotDelivered_${vidx}_${code}`).checked = !!s.notDelivered;
+      const notDeliveredEl = document.getElementById(`slotNotDelivered_${vidx}_${code}`);
+      if (!s || !notDeliveredEl) return; // no draft data for this product, or this branch no longer has a tank for it
+      notDeliveredEl.checked = !!s.notDelivered;
       document.getElementById(`slotFields_${vidx}_${code}`).style.display = s.notDelivered ? "none" : "block";
       if (s.tank) document.getElementById(`slotTank_${vidx}_${code}`).value = s.tank;
       document.getElementById(`slotLiters_${vidx}_${code}`).value = s.liters || "";
@@ -2014,8 +2053,18 @@ function renderOrdDistBlockHtml(bid) {
     </div>`;
 }
 
+function ordBlockProductCodes(bid) {
+  const branchId = document.getElementById(`ordBlockBranch_${bid}`)?.value;
+  return branchId ? productsForBranch(branchId) : [];
+}
+
 function renderOrdBlockSlots(bid) {
-  document.getElementById(`ordBlockSlots_${bid}`).innerHTML = DELIVERY_PRODUCT_ORDER.map(code => `
+  const codes = ordBlockProductCodes(bid);
+  if (!codes.length) {
+    document.getElementById(`ordBlockSlots_${bid}`).innerHTML = "<p class='small'>No tanks configured for this branch yet — add one in Setup → Tanks &amp; Calibration first.</p>";
+    return;
+  }
+  document.getElementById(`ordBlockSlots_${bid}`).innerHTML = codes.map(code => `
     <div class="check-row" id="ordSlotBlock_${bid}_${code}" style="margin-top:10px; padding-top:10px; border-top:1px solid var(--border);">
       <div class="row" style="align-items:center;">
         <label style="font-weight:600; flex:1; margin:0;">${escapeHtml(productNameFor(code))}</label>
@@ -2038,7 +2087,7 @@ function renderOrdBlockSlots(bid) {
       </div>
     </div>`).join("");
 
-  DELIVERY_PRODUCT_ORDER.forEach(code => {
+  codes.forEach(code => {
     document.getElementById(`ordSlotLiters_${bid}_${code}`).addEventListener("input", () => { updateOrderDistTotal(); updateOrdSlotBar(bid, code); });
     document.getElementById(`ordSlotCost_${bid}_${code}`).addEventListener("input", updateOrderDistTotal);
     updateOrdSlotBar(bid, code);
@@ -2046,8 +2095,10 @@ function renderOrdBlockSlots(bid) {
 }
 
 function onOrdBlockBranchChange(bid) {
+  // Full re-render, not just a bar refresh -- a different branch can have a
+  // different set of configured tanks entirely, not just different tank options.
   refreshOrdBlockBranchOptions();
-  DELIVERY_PRODUCT_ORDER.forEach(code => updateOrdSlotBar(bid, code));
+  renderOrdBlockSlots(bid);
   updateOrderDistTotal();
 }
 
@@ -2092,8 +2143,8 @@ function getOrdSlotState(bid, code) {
   const filled = !!(litersVal > 0 && cost > 0);
   return { resolved: filled, skipped: false, filled, liters: filled ? litersVal : 0, value: filled ? litersVal * cost : 0 };
 }
-function blockResolved(bid) { return DELIVERY_PRODUCT_ORDER.every(code => getOrdSlotState(bid, code).resolved); }
-function blockFilled(bid) { return DELIVERY_PRODUCT_ORDER.some(code => getOrdSlotState(bid, code).filled); }
+function blockResolved(bid) { return ordBlockProductCodes(bid).every(code => getOrdSlotState(bid, code).resolved); }
+function blockFilled(bid) { return ordBlockProductCodes(bid).some(code => getOrdSlotState(bid, code).filled); }
 function allOrdBlocksResolved() { return activeOrdBlockIds.every(bid => blockResolved(bid)); }
 function anyOrdBlockFilled() { return activeOrdBlockIds.some(bid => blockFilled(bid)); }
 
@@ -2165,7 +2216,7 @@ async function updateOrdSlotBar(bid, code) {
 function orderDistBreakdown() {
   const byProduct = {};
   activeOrdBlockIds.forEach(bid => {
-    DELIVERY_PRODUCT_ORDER.forEach(code => {
+    ordBlockProductCodes(bid).forEach(code => {
       const s = getOrdSlotState(bid, code);
       if (!s.filled) return;
       const productId = productIdFor(code);
@@ -2401,7 +2452,7 @@ async function createPurchaseOrder() {
   const distributions = [];
   activeOrdBlockIds.forEach(bid => {
     const branchId = document.getElementById(`ordBlockBranch_${bid}`).value;
-    DELIVERY_PRODUCT_ORDER.forEach(code => {
+    ordBlockProductCodes(bid).forEach(code => {
       const s = getOrdSlotState(bid, code);
       if (!s.filled) return;
       distributions.push({
@@ -2495,7 +2546,10 @@ async function loadCapacityTab() {
 
   const rows = [];
   branches.forEach(b => {
-    products.forEach(p => {
+    // Only products this branch actually has a configured tank for -- not
+    // every branch has all 3, same source of truth as the delivery/order forms.
+    const branchProductIds = new Set(tanks.filter(t => t.branch_id === b.id).map(t => t.product_id));
+    products.filter(p => branchProductIds.has(p.id)).forEach(p => {
       const key = `${b.id}_${p.id}`;
       const invRow = invByKey[key];
       const currentLiters = invRow ? Number(invRow.current_liters) : 0;
@@ -3080,7 +3134,7 @@ function editDelivery(i) {
   tripVisitIds = [];
   const vidx = tripVisitCount++;
   tripVisitIds[vidx] = d.visit_id;
-  renderTripVisit(vidx);
+  renderTripVisit(vidx, code); // forceCode: guarantees this slot renders even if the branch no longer has a configured tank for it
   document.getElementById("dlvAddBranchBtn").style.display = "none";
 
   document.getElementById("dlvVendor").value = d.vendor_id || "";
@@ -3091,7 +3145,7 @@ function editDelivery(i) {
   document.getElementById("dlvDate").value = d.delivery_date;
   document.getElementById("dlvPaid").checked = d.paid;
 
-  DELIVERY_PRODUCT_ORDER.forEach(c => {
+  visitProductCodes(vidx, code).forEach(c => {
     const block = document.getElementById(`slotBlock_0_${c}`);
     const notDelivered = document.getElementById(`slotNotDelivered_0_${c}`);
     if (c === code) {
@@ -3236,7 +3290,10 @@ async function saveDeliveryVisit() {
       // Edit mode only ever touches visit 0's single resolved slot (see
       // editDelivery()) -- a plain UPDATE on that one fuel_deliveries row,
       // same as before the trip restructure.
-      const code = DELIVERY_PRODUCT_ORDER.find(c => !document.getElementById(`slotNotDelivered_0_${c}`).checked);
+      const code = DELIVERY_PRODUCT_ORDER.find(c => {
+        const el = document.getElementById(`slotNotDelivered_0_${c}`);
+        return el && !el.checked; // skip codes with no rendered slot (branch has no tank for them)
+      });
       const payload = {
         branch_id: currentBranch, vendor_id: shared.vendor_id, driver_id: shared.driver_id,
         plate_number: shared.plate_number, delivery_date: shared.trip_date, paid: shared.paid,
@@ -3255,7 +3312,7 @@ async function saveDeliveryVisit() {
     } else {
       const visitsPayload = [];
       for (let vidx = 0; vidx < tripVisitCount; vidx++) {
-        const productsForVisit = DELIVERY_PRODUCT_ORDER.filter(c => getSlotState(vidx, c).filled).map(c => slotPayload(vidx, c));
+        const productsForVisit = visitProductCodes(vidx).filter(c => getSlotState(vidx, c).filled).map(c => slotPayload(vidx, c));
         visitsPayload.push({
           visit_id: tripVisitIds[vidx],
           branch_id: branchForVisit(vidx),
