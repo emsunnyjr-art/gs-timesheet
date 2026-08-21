@@ -3723,13 +3723,17 @@ async function loadSetupTab() {
     const lastPrice = lastDeliveryPriceByProduct[t.product_id];
     return `
     <tr><td>${t.fuel_products?.name || ""}</td><td>${t.tank_label}</td>
-      <td><select onchange="toggleDipstickMode('${t.id}', this.value)">
+      <td><select id="tankDipstickMode_${t.id}" onchange="markTankRowDirty('${t.id}')">
         <option value="calibration_curve" ${t.dipstick_mode === "calibration_curve" ? "selected" : ""}>Calibration Curve</option>
         <option value="direct_liter" ${t.dipstick_mode === "direct_liter" ? "selected" : ""}>Direct Liters</option>
       </select></td>
-      <td><input type="number" step="0.01" value="${t.capacity_liters ?? ""}" placeholder="no limit" style="max-width:110px;" onchange="saveTankCapacity('${t.id}', this.value)"></td>
+      <td><input type="number" step="0.01" id="tankCapacity_${t.id}" value="${t.capacity_liters ?? ""}" placeholder="no limit" style="max-width:110px;" oninput="markTankRowDirty('${t.id}')"></td>
       <td>${liters(state.liters)}</td>
-      <td><button class="small secondary" style="margin:0; padding:6px 10px;" onclick="toggleStockCorrection('${t.id}')">Correct Stock</button></td>
+      <td style="white-space:nowrap;">
+        <button class="small" id="tankSaveBtn_${t.id}" style="margin:0 6px 6px 0; padding:6px 10px;" onclick="saveTankRow('${t.id}')" disabled>Save</button>
+        <button class="small secondary" style="margin:0 0 6px; padding:6px 10px;" onclick="toggleStockCorrection('${t.id}')">Correct Stock</button>
+        <div class="small" id="tankRowMsg_${t.id}" style="min-height:14px;"></div>
+      </td>
     </tr>
     <tr id="stockCorrRow_${t.id}" style="display:none;">
       <td colspan="6">
@@ -3916,27 +3920,45 @@ async function saveTank() {
   loadSetupTab();
 }
 
-// Lets Mario flip a tank between the two dipstick interpretations without a
-// code change (e.g. a calibration curve becomes unreliable, or the physical
-// dipstick hardware changes). Only affects new fuel_dipstick_checks entries
-// going forward -- historical rows keep whatever height_cm/liters they were
-// saved with, since nothing here re-derives them from the tank's current mode.
-async function toggleDipstickMode(tankId, newMode) {
-  const { error } = await supabase.from("fuel_tanks").update({ dipstick_mode: newMode }).eq("id", tankId);
-  if (error) { alert("Error: " + error.message); loadSetupTab(); return; }
-  loadSetupTab();
+// Dipstick mode and capacity used to autosave individually on change --
+// Mario tested this and confirmed it did persist, but with no visible
+// confirmation it was genuinely unclear whether a change had taken effect.
+// Both fields now just mark the row dirty; nothing writes to the database
+// until Save is explicitly clicked (saveTankRow below).
+function markTankRowDirty(tankId) {
+  const btn = document.getElementById(`tankSaveBtn_${tankId}`);
+  if (btn) btn.disabled = false;
+  const msg = document.getElementById(`tankRowMsg_${tankId}`);
+  if (msg) { msg.textContent = "● Unsaved changes"; msg.style.color = "var(--orange)"; }
 }
 
-// Blank clears the limit (no overflow tracking for this tank -- the default).
-// Patches the global `tanks` cache in place so the Deliveries tab's overflow
-// preview reflects the change immediately, without a full page reload.
-async function saveTankCapacity(tankId, value) {
-  const capacity = value === "" ? null : parseFloat(value);
-  const { error } = await supabase.from("fuel_tanks").update({ capacity_liters: capacity }).eq("id", tankId);
-  if (error) { alert("Error: " + error.message); loadSetupTab(); return; }
-  const t = tanks.find(x => x.id === tankId);
-  if (t) t.capacity_liters = capacity;
-  inventoryStateCache = {}; // capacity changed -- discard cached "current tank liters" so the overflow preview re-fetches
+// Saves dipstick mode + capacity together as one explicit action per tank row
+// (not a giant save-everything button, and not the old per-field autosave).
+// Flipping dipstick mode only affects new fuel_dipstick_checks entries going
+// forward -- historical rows keep whatever height_cm/liters they were saved
+// with, since nothing here re-derives them from the tank's current mode.
+// Blank capacity clears the limit (no overflow tracking for this tank).
+async function saveTankRow(tankId) {
+  const saveBtn = document.getElementById(`tankSaveBtn_${tankId}`);
+  const msg = document.getElementById(`tankRowMsg_${tankId}`);
+  const dipstickMode = document.getElementById(`tankDipstickMode_${tankId}`).value;
+  const capacityRaw = document.getElementById(`tankCapacity_${tankId}`).value;
+  const capacity = capacityRaw === "" ? null : parseFloat(capacityRaw);
+
+  saveBtn.disabled = true;
+  const { error } = await supabase.from("fuel_tanks").update({ dipstick_mode: dipstickMode, capacity_liters: capacity }).eq("id", tankId);
+  if (error) {
+    msg.textContent = "Error: " + error.message; msg.style.color = "var(--danger)";
+    saveBtn.disabled = false; // let them retry without re-entering anything
+    return;
+  }
+  inventoryStateCache = {}; // capacity/mode changed -- discard cached "current tank liters" so the overflow preview / Order tank-fill bars re-fetch
+  msg.textContent = "✓ Saved"; msg.style.color = "var(--accent)";
+  // Brief visible confirmation before the table (and this tank's Correct Stock
+  // panel, whose cm-vs-liters field depends on dipstick_mode) refreshes to
+  // reflect the change everywhere -- same full-reload-on-save this row already
+  // did for dipstick mode before, just now also covering capacity.
+  setTimeout(loadSetupTab, 700);
 }
 
 function toggleStockCorrection(tankId) {
