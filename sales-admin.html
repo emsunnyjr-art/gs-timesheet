@@ -2118,8 +2118,13 @@ function addOrdDistBlock() {
   document.getElementById("ordDistRows").insertAdjacentHTML("beforeend", renderOrdDistBlockHtml(bid));
   activeOrdBlockIds.push(bid);
   document.getElementById(`ordBlockBranch_${bid}`).addEventListener("change", () => onOrdBlockBranchChange(bid));
-  renderOrdBlockSlots(bid);
+  // Options must exist (and a branch be selected) before rendering slots --
+  // otherwise the branch select reads as "" and every branch looks tankless,
+  // regardless of which one ends up selected. refreshOrdBlockBranchOptions()
+  // doesn't fire a change event, so nothing re-renders slots afterward if
+  // this order is wrong.
   refreshOrdBlockBranchOptions();
+  renderOrdBlockSlots(bid);
   updateOrderDistTotal();
   return bid;
 }
