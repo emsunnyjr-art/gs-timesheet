@@ -3736,19 +3736,20 @@ async function loadSetupTab() {
       <td>${liters(state.liters)}</td>
       <td style="white-space:nowrap;">
         <button class="small" id="tankSaveBtn_${t.id}" style="margin:0 6px 6px 0; padding:6px 10px;" onclick="saveTankRow('${t.id}')" disabled>Save</button>
-        <button class="small secondary" style="margin:0 0 6px; padding:6px 10px;" onclick="toggleStockCorrection('${t.id}')">Correct Stock</button>
+        <button class="small secondary" id="tankStockToggleBtn_${t.id}" style="margin:0 0 6px; padding:6px 10px;" onclick="toggleStockCorrection('${t.id}')">✎ Update Current Stock</button>
         <div class="small" id="tankRowMsg_${t.id}" style="min-height:14px;"></div>
       </td>
     </tr>
     <tr id="stockCorrRow_${t.id}" style="display:none;">
       <td colspan="6">
-        <div class="stat-grid" style="margin-bottom:10px;">${valueRefStats(state.liters, state.wac, lastPrice, "Current Stock")}</div>
+        <p class="small" style="margin:0 0 10px;">Enter what you physically measured in the tank right now — this becomes the new Current Stock once you tap Save Correction below.</p>
         <div class="row" style="align-items:flex-end;">
           ${t.dipstick_mode === "calibration_curve" ? `<div><label>Dipstick Reading (cm)</label><input type="number" step="0.01" id="stockCorrCm_${t.id}"></div>` : ""}
-          <div><label>${t.dipstick_mode === "calibration_curve" ? "Corrected Liters (from cm, or type directly)" : "Corrected Liters"}</label><input type="number" step="0.01" id="stockCorrLiters_${t.id}" value="${state.liters}"></div>
+          <div><label style="color:var(--accent); font-weight:600;">${t.dipstick_mode === "calibration_curve" ? "→ Physical Stock Count (Liters, from cm above, or type directly)" : "→ Physical Stock Count (Liters) — type here"}</label><input type="number" step="0.01" id="stockCorrLiters_${t.id}" value="${state.liters}" style="border-color:var(--accent);"></div>
           <div style="flex:2;"><label>Reason (optional)</label><input type="text" id="stockCorrReason_${t.id}" placeholder="e.g. physical dipstick check found a discrepancy"></div>
         </div>
-        <button class="small" style="margin:8px 6px 0 0; padding:8px 12px;" onclick="saveStockCorrection('${t.id}','${t.branch_id}','${t.product_id}')">Save Correction</button>
+        <div class="stat-grid" style="margin-top:10px;">${valueRefStats(state.liters, state.wac, lastPrice, "Before This Correction")}</div>
+        <button class="small" style="margin:8px 6px 0 0; padding:8px 12px;" onclick="saveStockCorrection('${t.id}','${t.branch_id}','${t.product_id}')">✓ Save Correction</button>
         <button type="button" class="small secondary" style="margin:8px 0 0; padding:8px 12px;" onclick="toggleStockCorrection('${t.id}')">Cancel</button>
         <div class="msg" id="stockCorrMsg_${t.id}"></div>
       </td>
@@ -3966,9 +3967,23 @@ async function saveTankRow(tankId) {
   setTimeout(loadSetupTab, 700);
 }
 
+// Opens/closes the correction panel below this tank row. Nothing here is
+// ever disabled -- the "Correct Stock" complaint turned out to be that the
+// panel's read-only reference stat was also labeled "Current Stock", right
+// next to the actual editable "Physical Stock Count" input, so it looked
+// like typing did nothing. Renamed the reference stat and made the real
+// input visually distinct (accent border, arrow-prefixed label) instead.
 function toggleStockCorrection(tankId) {
   const row = document.getElementById(`stockCorrRow_${tankId}`);
-  row.style.display = row.style.display === "none" ? "table-row" : "none";
+  const toggleBtn = document.getElementById(`tankStockToggleBtn_${tankId}`);
+  const opening = row.style.display === "none";
+  row.style.display = opening ? "table-row" : "none";
+  toggleBtn.textContent = opening ? "Cancel Stock Update" : "✎ Update Current Stock";
+  if (opening) {
+    const input = document.getElementById(`stockCorrLiters_${tankId}`);
+    input.focus();
+    input.select();
+  }
 }
 
 // Owner-only, audited correction of fuel_inventory_state.current_liters --
@@ -3992,8 +4007,8 @@ async function saveStockCorrection(tankId, branchId, productId) {
   });
   if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
   inventoryStateCache = {}; // stock changed -- discard cached "current tank liters" so the overflow preview / Orders tank-fill bars re-fetch
-  msg.textContent = "Stock corrected."; msg.className = "msg ok";
-  loadSetupTab();
+  msg.textContent = "✓ Stock corrected."; msg.className = "msg ok";
+  setTimeout(loadSetupTab, 700); // brief visible confirmation before the table refreshes with the new value
 }
 
 // Side-by-side valuation of a volume (current stock, or a variance amount) at
