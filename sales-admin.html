@@ -112,6 +112,30 @@
 
     <!-- ============ DASHBOARD ============ -->
     <div class="panel active" id="panel-dashboard">
+      <div class="card">
+        <h2>Day Close — All Branches</h2>
+        <p class="small">A branch's current open date is the earliest date not yet closed — nothing dated after it can be entered anywhere for that branch until it's closed. Sequential, no skipping.</p>
+        <div class="table-scroll">
+          <table id="dayCloseAllTable"><thead><tr><th>Branch</th><th>Current Open Date</th><th>Status</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+      <div class="card" id="dayCloseBranchCard" style="border:1px solid var(--accent);">
+        <h2>Day Close — This Branch</h2>
+        <div class="stat-grid">
+          <div class="stat good"><div class="k">Current Open Date</div><div class="v" id="dayCloseOpenDate">—</div></div>
+          <div class="stat"><div class="k">Last Closed</div><div class="v" id="dayCloseLastClosed">—</div></div>
+        </div>
+        <div id="dayCloseSummary" class="small" style="margin-top:10px;"></div>
+        <div class="row" style="align-items:center; margin-top:10px;">
+          <label style="display:flex; align-items:center; gap:6px; flex:0 0 auto; margin:0;">
+            <input type="checkbox" id="dayCloseNoOps" style="width:auto;" onchange="onDayCloseNoOpsChange()"> No operations this day
+          </label>
+        </div>
+        <div><label>Note (optional)</label><input type="text" id="dayCloseNote" placeholder="e.g. branch closed for holiday"></div>
+        <button id="dayCloseBtn" onclick="closeBranchDay()">Close <span id="dayCloseBtnDate"></span></button>
+        <button type="button" class="secondary" id="dayReopenBtn" style="display:none;" onclick="reopenLastBranchDay()">Reopen <span id="dayReopenBtnDate"></span></button>
+        <div class="msg" id="dayCloseMsg"></div>
+      </div>
       <div class="card" id="dashVarianceBanner" style="display:none; border:1px solid var(--danger); background:#450a0a;">
         <p style="margin:0;">⚠ <strong><span id="dashVarianceCount"></span> unresolved stock variance<span id="dashVariancePlural"></span></strong> for this branch — review and resolve in Setup → Tanks &amp; Calibration.</p>
       </div>
@@ -777,6 +801,18 @@ function isoDate(d) {
   return `${y}-${m}-${day}`;
 }
 function todayIso() { return isoDate(new Date()); }
+// Same UTC-shift caution as isoDate above -- construct via explicit Y/M/D
+// components (local time), never parse an ISO string with `new Date(str)`
+// (that parses as UTC midnight, which can land on the wrong local day).
+function addDaysIso(dateStr, n) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return isoDate(new Date(y, m - 1, d + n));
+}
+function daysBetweenIso(aStr, bStr) {
+  const [ay, am, ad] = aStr.split("-").map(Number);
+  const [by, bm, bd] = bStr.split("-").map(Number);
+  return Math.round((new Date(by, bm - 1, bd) - new Date(ay, am - 1, ad)) / 86400000);
+}
 function peso(n) { return "₱" + Number(n||0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}); }
 function liters(n) { return Number(n||0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) + " L"; }
 
@@ -1802,8 +1838,109 @@ function populateVendorDriverSelects() {
 // ============================================================
 // DASHBOARD
 // ============================================================
+// ============================================================
+// SEQUENTIAL DAY CLOSE -- per-branch hard gate against skipping ahead.
+// A branch's "current open date" is never stored, only derived (same formula
+// client-side as fn_branch_current_open_date server-side): MAX(close_date)+1
+// for that branch, or today if it has never closed a day. The real
+// enforcement is server-side (triggers on fuel_deliveries/fuel_meter_periods
+// + checks inside fn_save_delivery_trip/fn_confirm_order_delivery/
+// fn_correct_tank_stock) -- everything here is UI convenience so the block
+// is understood before it's hit, not a substitute for it.
+// ============================================================
+function branchOpenDateFrom(lastClose) {
+  return lastClose ? addDaysIso(lastClose, 1) : todayIso();
+}
+
+async function loadDayCloseAllBranches() {
+  const { data: closes } = await supabase.from("branch_day_closes").select("branch_id, close_date");
+  const lastCloseByBranch = {};
+  (closes || []).forEach(c => {
+    if (!lastCloseByBranch[c.branch_id] || c.close_date > lastCloseByBranch[c.branch_id]) lastCloseByBranch[c.branch_id] = c.close_date;
+  });
+  const today = todayIso();
+  document.getElementById("dayCloseAllTable").querySelector("tbody").innerHTML = branches.map(b => {
+    const openDate = branchOpenDateFrom(lastCloseByBranch[b.id]);
+    const behind = daysBetweenIso(openDate, today);
+    const status = behind <= 0
+      ? `<span class="badge balanced">Caught up</span>`
+      : `<span class="badge orange">${behind} day${behind > 1 ? "s" : ""} behind</span>`;
+    return `<tr><td>${b.code}</td><td>${openDate}</td><td>${status}</td></tr>`;
+  }).join("") || "<tr><td colspan='3' class='small'>No branches.</td></tr>";
+}
+
+async function loadDayCloseForBranch() {
+  const { data: closes } = await supabase.from("branch_day_closes").select("close_date")
+    .eq("branch_id", currentBranch).order("close_date", { ascending: false }).limit(1);
+  const lastClose = closes?.[0]?.close_date || null;
+  const openDate = branchOpenDateFrom(lastClose);
+
+  document.getElementById("dayCloseOpenDate").textContent = openDate;
+  document.getElementById("dayCloseLastClosed").textContent = lastClose || "— never closed —";
+  document.getElementById("dayCloseBtnDate").textContent = openDate;
+  document.getElementById("dayReopenBtn").style.display = lastClose ? "inline-block" : "none";
+  document.getElementById("dayReopenBtnDate").textContent = lastClose || "";
+  document.getElementById("dayCloseNoOps").checked = false;
+  document.getElementById("dayCloseNote").value = "";
+  document.getElementById("dayCloseMsg").textContent = "";
+
+  // Quick sanity-check summary of what's actually recorded for the date about
+  // to be closed, so closing isn't a total leap of faith.
+  const [{ count: deliveryCount }, periodsRes, { count: dipstickCount }] = await Promise.all([
+    supabase.from("fuel_deliveries").select("id", { count: "exact", head: true }).eq("branch_id", currentBranch).eq("delivery_date", openDate),
+    supabase.from("fuel_meter_periods").select("id, shifts!inner(shift_date)").eq("branch_id", currentBranch).eq("shifts.shift_date", openDate),
+    supabase.from("fuel_dipstick_checks").select("id", { count: "exact", head: true }).eq("branch_id", currentBranch).gte("checked_at", openDate).lt("checked_at", addDaysIso(openDate, 1))
+  ]);
+  const periodCount = periodsRes.data?.length || 0;
+  document.getElementById("dayCloseSummary").textContent =
+    `Recorded for ${openDate} so far: ${deliveryCount || 0} delivery row(s), ${periodCount} dispensing period(s), ${dipstickCount || 0} dipstick check(s).`;
+}
+
+function onDayCloseNoOpsChange() {
+  // No side effect needed beyond the checkbox's own state -- closeBranchDay()
+  // reads it directly at submit time. Kept as a named handler for symmetry
+  // with the rest of this app's onchange-wired controls, and as an obvious
+  // place to add a confirmation nudge later if needed.
+}
+
+async function closeBranchDay() {
+  const msg = document.getElementById("dayCloseMsg");
+  const openDate = document.getElementById("dayCloseOpenDate").textContent;
+  const noOps = document.getElementById("dayCloseNoOps").checked;
+  const note = document.getElementById("dayCloseNote").value.trim() || null;
+  const summary = document.getElementById("dayCloseSummary").textContent;
+  if (!confirm(`Close ${openDate} for this branch?\n\n${noOps ? "Marked as no operations this day.\n\n" : summary + "\n\n"}Once closed, this date's records are locked -- only the most recent close can be reopened later if you catch a mistake.`)) return;
+
+  const btn = document.getElementById("dayCloseBtn");
+  btn.disabled = true;
+  const { error } = await supabase.rpc("fn_close_branch_day", {
+    p_branch_id: currentBranch, p_close_date: openDate, p_no_operations: noOps, p_note: note, p_closed_by: currentUserEmail || null
+  });
+  btn.disabled = false;
+  if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+  msg.textContent = "✓ Closed."; msg.className = "msg ok";
+  setTimeout(() => { loadDayCloseForBranch(); loadDayCloseAllBranches(); }, 700);
+}
+
+async function reopenLastBranchDay() {
+  const msg = document.getElementById("dayCloseMsg");
+  const lastClose = document.getElementById("dayCloseLastClosed").textContent;
+  if (!confirm(`Reopen ${lastClose}? This undoes only that close -- it's the sole close this branch can reopen right now. Records dated ${lastClose} become editable again.`)) return;
+
+  const btn = document.getElementById("dayReopenBtn");
+  btn.disabled = true;
+  const { error } = await supabase.rpc("fn_reopen_last_branch_close", { p_branch_id: currentBranch, p_reopened_by: currentUserEmail || null });
+  btn.disabled = false;
+  if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+  msg.textContent = "✓ Reopened."; msg.className = "msg ok";
+  setTimeout(() => { loadDayCloseForBranch(); loadDayCloseAllBranches(); }, 700);
+}
+
 async function loadDashboard() {
   if (!currentBranch) return;
+
+  await loadDayCloseAllBranches();
+  await loadDayCloseForBranch();
 
   // Persistent until Mario explicitly resolves it in Setup > Tanks & Calibration
   // -- never auto-clears, that's the whole point of a shortage/surplus flag.
