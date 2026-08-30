@@ -47,6 +47,10 @@
   </div>
   <div id="netStatus" class="status offline">Checking connection…</div>
 
+  <div style="font-size:11px; color:var(--muted); background:#0f172a; border:1px solid #334155; border-radius:8px; padding:8px 10px; margin-bottom:14px;">
+    📷 A verification photo is taken each time you clock in or out. It's used only for attendance record-keeping and dispute resolution, viewable by admins only — it is not compared against any face-recognition system.
+  </div>
+
   <label for="branchSelect">Branch</label>
   <select id="branchSelect"></select>
 
@@ -131,7 +135,10 @@ const SUPABASE_ANON_KEY = "sb_publishable_eBOzdnFAdfFavl2QAYY6bA_lfAIJUhh";
 // ------------------------------------------------------------
 // INVARIANT: this page NEVER writes to employees.photo_url.
 // The photo captured during clock in/out is attendance evidence
-// only and is stored on timesheet_entries.photo_url (per entry).
+// only, required (not optional) at every clock in/out, and is
+// stored on timesheet_entries.time_in_photo_url / time_out_photo_url
+// (a private storage PATH in the "attendance-photos" bucket, viewable
+// only from Timesheet Admin via a signed URL -- never a public URL).
 // The employee's reference/ID photo (employees.photo_url, shown
 // below and used on printed ID cards) can only be replaced from
 // timesheet-admin.html, which requires the admin PIN. Do not add
@@ -518,6 +525,24 @@ function resetSelection() {
 // ---------- Camera (shared by scan + manual capture) ----------
 let currentFacing = null; // "environment" | "user" | null
 
+// A selfie is required (not optional) to clock in/out, so a camera failure
+// here has to say WHY and WHAT TO DO, not just surface the raw browser
+// error -- this is the difference between "clocking in is broken" and
+// "clocking in needs one thing fixed first."
+function describeCameraError(err) {
+  const name = err && err.name;
+  if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+    return "Camera access was denied. A photo is required to clock in/out — enable camera access for this page in your browser/device settings, then try again.";
+  }
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+    return "No camera found on this device. A photo is required to clock in/out, so this can't proceed until a camera is available here.";
+  }
+  if (name === "NotReadableError" || name === "TrackStartError") {
+    return "The camera couldn't be started (it may be in use by another app). Close other camera apps and try again.";
+  }
+  return "Camera error: " + (err && err.message ? err.message : String(err));
+}
+
 async function openCamera() {
   if (sharedStream && currentFacing === "environment") return; // already on the right camera
   if (sharedStream) { sharedStream.getTracks().forEach(t => t.stop()); sharedStream = null; }
@@ -563,7 +588,7 @@ async function startQrScan() {
   try {
     await openCamera();
   } catch (err) {
-    scanStatus.textContent = "Camera error: " + err.message;
+    scanStatus.textContent = describeCameraError(err);
     return;
   }
   scanStatus.textContent = "Point camera at employee ID QR code";
@@ -733,7 +758,7 @@ document.getElementById("selfieCaptureBtn").addEventListener("click", async () =
   try {
     await switchToSelfieCamera(); // retry inside this real user tap - the one that actually works on iOS
   } catch (err) {
-    logMsg("Camera error: " + err.message, "queued");
+    logMsg(describeCameraError(err), "queued");
     return;
   }
   const blob = await captureFrame();
@@ -767,7 +792,7 @@ async function startVerifyScanFor(emp) {
   try {
     await startQrScan(); // this sets its own status text as it goes
   } catch (err) {
-    logMsg("Camera error: " + err.message, "queued");
+    logMsg(describeCameraError(err), "queued");
     return;
   }
   scanStatus.textContent = `Scan ${emp.full_name}'s ID to verify…`;
@@ -956,6 +981,20 @@ async function submitEntry(type) {
     return;
   }
 
+  // Required, not optional (Mario confirmed): every clock in/out gets a
+  // selfie, no automatic matching, just a stored photo for manual reference.
+  // This shouldn't be reachable in normal use -- the confirm panel only ever
+  // opens via a successful capture -- but it's a hard stop, not a soft
+  // warning, so a future code path can't accidentally bypass it. Queuing a
+  // photo-less entry "for retry" would just fail forever, so this aborts
+  // outright rather than falling through to queueEntry().
+  if (!capturedPhotoBlob) {
+    logMsg("A photo is required to clock in/out — please retake it before confirming.", "queued");
+    resetSelection();
+    setMode(mode);
+    return;
+  }
+
   // Hard rule: never record a Time Out for someone with no open entry --
   // even if the manual override link was used to force this action, or the
   // badge shown earlier has since gone stale. Checked live, right here,
@@ -1015,16 +1054,26 @@ async function submitEntry(type) {
 
 async function pushEntry(entry, photoBlob) {
   try {
-    let photo_url = null;
-    if (photoBlob) {
-      const path = `timesheet/${entry.employee_id}/${entry.id}.jpg`;
-      const { error: upErr } = await supabase.storage.from("photos").upload(path, photoBlob);
-      if (!upErr) {
-        photo_url = supabase.storage.from("photos").getPublicUrl(path).data.publicUrl;
-      }
+    // Required, not optional: neither a missing capture nor a failed upload
+    // is allowed to fall through to an unphotographed timesheet_entries row
+    // -- both abort the whole entry rather than silently proceeding without
+    // one. Uploaded to the private attendance-photos bucket (NOT the shared
+    // public "photos" bucket employees.photo_url uses) -- the stored value
+    // is a storage PATH, not a public URL, and is only ever resolved to a
+    // viewable link via a signed URL from Timesheet Admin. Time In and Time
+    // Out are photographed separately (time_in_photo_url / time_out_photo_url)
+    // because a Time Out commonly UPDATEs the same row a Time In INSERTed,
+    // so a single shared column can't hold both events' photos.
+    if (!photoBlob) {
+      lastPushError = "No photo was captured — a selfie is required to clock in/out.";
+      return false;
     }
-    // NOTE: this assumes an open shift/timesheet_entries row exists to update on "out".
-    // Real implementation should look up today's open entry for this employee before inserting.
+    const photoPath = `${entry.employee_id}/${entry.id}-${entry.type}.jpg`;
+    const { error: upErr } = await supabase.storage.from("attendance-photos").upload(photoPath, photoBlob, { contentType: "image/jpeg" });
+    if (upErr) {
+      lastPushError = "Photo upload failed: " + upErr.message;
+      return false;
+    }
     if (entry.type === "in") {
       // Pull the roster assignment for this employee+branch today, if any,
       // so the punch is linked back to what Roster scheduled (shift_id,
@@ -1043,7 +1092,7 @@ async function pushEntry(entry, photoBlob) {
         is_double_pump: rosterMatch ? !!rosterMatch.double_pump : false,
         is_emergency_roster: rosterMatch ? !!rosterMatch.emergency_roster : false,
         time_in: entry.timestamp,
-        photo_url
+        time_in_photo_url: photoPath
       });
       if (error) throw error;
     } else {
@@ -1057,7 +1106,7 @@ async function pushEntry(entry, photoBlob) {
       if (findErr) throw findErr;
       if (openRows && openRows.length) {
         const { error } = await supabase.from("timesheet_entries")
-          .update({ time_out: entry.timestamp }).eq("id", openRows[0].id);
+          .update({ time_out: entry.timestamp, time_out_photo_url: photoPath }).eq("id", openRows[0].id);
         if (error) throw error;
       } else {
         const rosterMatch = activeAssignments.find(a => a.employee_id === entry.employee_id && a.branch_id === entry.branch_id);
@@ -1070,7 +1119,7 @@ async function pushEntry(entry, photoBlob) {
           is_double_pump: rosterMatch ? !!rosterMatch.double_pump : false,
           is_emergency_roster: rosterMatch ? !!rosterMatch.emergency_roster : false,
           time_out: entry.timestamp,
-          photo_url
+          time_out_photo_url: photoPath
         });
         if (error) throw error;
       }

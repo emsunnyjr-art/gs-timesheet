@@ -134,7 +134,7 @@
     <div class="card">
       <h2>Entries — tap a row's flags to toggle Late/OT/Holiday, then save</h2>
       <table id="entriesTable">
-        <thead><tr><th>Employee</th><th>In/Out</th><th>Hrs</th><th>Late (min)</th><th>Flags</th><th>Total ₱</th><th></th></tr></thead>
+        <thead><tr><th>Employee</th><th>In/Out</th><th>Photo</th><th>Hrs</th><th>Late (min)</th><th>Flags</th><th>Total ₱</th><th></th></tr></thead>
         <tbody></tbody>
       </table>
       <div class="msg" id="entriesMsg"></div>
@@ -439,7 +439,7 @@ async function loadEntries() {
   const branch = document.getElementById("filterBranch").value;
   const from = document.getElementById("filterFrom").value;
   const to = document.getElementById("filterTo").value;
-  let q = supabase.from("timesheet_entries").select("id, time_in, time_out, total_hours, late_minutes, is_late, is_overtime, is_holiday, is_double_pump, is_emergency_roster, total_wages, shift_id, employees(full_name)").order("time_in", { ascending: false }).limit(50);
+  let q = supabase.from("timesheet_entries").select("id, time_in, time_out, total_hours, late_minutes, is_late, is_overtime, is_holiday, is_double_pump, is_emergency_roster, total_wages, shift_id, time_in_photo_url, time_out_photo_url, employees(full_name)").order("time_in", { ascending: false }).limit(50);
   if (branch) q = q.eq("branch_id", branch);
   if (from) q = q.gte("time_in", from);
   if (to) q = q.lte("time_in", to + "T23:59:59");
@@ -454,6 +454,10 @@ async function loadEntries() {
     <tr data-id="${e.id}" data-has-out="${complete ? "1" : "0"}">
       <td>${e.employees?.full_name || "—"}${!e.shift_id ? `<br><span style="color:var(--warn); font-size:11px;">⚠ Unscheduled — late # is a guess, not vs. an actual roster shift</span>` : ""}</td>
       <td>${fmtTime(e.time_in)} → ${fmtTime(e.time_out)}</td>
+      <td>
+        <button class="secondary" style="padding:4px 8px; font-size:11px;" ${e.time_in_photo_url ? "" : "disabled"} onclick="viewAttendancePhoto('${e.time_in_photo_url || ""}')">In</button>
+        <button class="secondary" style="padding:4px 8px; font-size:11px;" ${e.time_out_photo_url ? "" : "disabled"} onclick="viewAttendancePhoto('${e.time_out_photo_url || ""}')">Out</button>
+      </td>
       <td>${e.total_hours ?? "—"}</td>
       <td><input type="number" class="flag-late-min" style="width:70px;" value="${e.late_minutes ?? 0}" ${complete ? "" : "disabled"}></td>
       <td>
@@ -521,6 +525,19 @@ async function saveEntryFlags(id, btn) {
 function fmtTime(ts) {
   if (!ts) return "—";
   return new Date(ts).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+// Attendance selfies live in the private "attendance-photos" bucket (distinct
+// from employees.photo_url, the public reference/ID photo) -- generated
+// on-demand per click, not eagerly for every row on load.
+async function viewAttendancePhoto(path) {
+  if (!path) return;
+  const { data, error } = await supabase.storage.from("attendance-photos").createSignedUrl(path, 300);
+  if (error || !data?.signedUrl) {
+    alert("Couldn't load photo: " + (error?.message || "unknown error"));
+    return;
+  }
+  window.open(data.signedUrl, "_blank");
 }
 
 // ---------- Review queue: auto-clockout confirmation + OT approval ----------
