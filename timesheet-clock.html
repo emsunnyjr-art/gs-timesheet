@@ -855,9 +855,33 @@ document.getElementById("manualShiftSelect").addEventListener("change", function
   manualShiftId = this.value || null;
 });
 
+// A roster assignment only counts as "this employee's shift" for
+// auto-attribution purposes if they haven't already clocked into it today.
+// Without this, a TM who already worked their own rostered shift and later
+// clocks in again to cover a different, no-show coworker's shift would have
+// the SECOND punch mislabeled with their own (already-fulfilled) shift_id --
+// activeAssignments.find() just returns the first match regardless of
+// whether it's already been worked. Returns null (falls back to the manual
+// shift picker) both when the employee has no roster assignment at this
+// branch today AND when every assignment they have is already fulfilled --
+// callers don't need to distinguish the two cases.
+async function findUnfulfilledRosterMatch(employeeId, branchId) {
+  const matches = activeAssignments.filter(a => a.employee_id === employeeId && a.branch_id === branchId);
+  if (!matches.length) return null;
+  const shiftIds = matches.map(a => a.shift_id);
+  const { data: fulfilled } = await supabase.from("timesheet_entries")
+    .select("shift_id")
+    .eq("employee_id", employeeId)
+    .in("shift_id", shiftIds)
+    .not("time_in", "is", null);
+  const fulfilledSet = new Set((fulfilled || []).map(e => e.shift_id));
+  return matches.find(a => !fulfilledSet.has(a.shift_id)) || null;
+}
+
 // ---------- Confirm panel ----------
 async function showConfirm(blob) {
   capturedPhotoBlob = blob;
+  const branchId = document.getElementById("branchSelect").value;
   document.getElementById("confirmName").textContent = selectedEmployeeName;
   document.getElementById("confirmPhoto").src = URL.createObjectURL(blob);
   const warnEl = document.getElementById("rosterWarning");
@@ -919,8 +943,8 @@ async function showConfirm(blob) {
   // against -- same idea as the old AppSheet "Shift" picker defaulting to
   // whichever shift comes next.
   const shiftPickerRow = document.getElementById("shiftPickerRow");
-  const branchId = document.getElementById("branchSelect").value;
-  const rosterMatch = activeAssignments.find(a => a.employee_id === selectedEmployeeId && a.branch_id === branchId);
+  const rosterMatch = await findUnfulfilledRosterMatch(selectedEmployeeId, branchId);
+  if (selectedEmployeeId === null) return; // guard again after the async lookup above
   if (detectedAction === "in" && !rosterMatch) {
     const { current, todaysShifts } = await detectCurrentShiftForBranch(branchId);
     manualShiftId = current ? current.id : null;
@@ -1077,12 +1101,16 @@ async function pushEntry(entry, photoBlob) {
     if (entry.type === "in") {
       // Pull the roster assignment for this employee+branch today, if any,
       // so the punch is linked back to what Roster scheduled (shift_id,
-      // post_id) instead of floating unattached. activeAssignments is the
-      // same today-scoped roster_assignments snapshot used for the roster
-      // warning above; for entries synced later from the offline queue this
-      // may reflect the day the entry was captured, not the sync day, which
-      // is what we want.
-      const rosterMatch = activeAssignments.find(a => a.employee_id === entry.employee_id && a.branch_id === entry.branch_id);
+      // post_id) instead of floating unattached. Uses the same "not already
+      // fulfilled today" match as showConfirm's picker logic, so a TM's
+      // SECOND clock-in that day (e.g. covering a different, no-show
+      // coworker's shift) correctly attributes to that other shift_id
+      // instead of being mislabeled with their own already-worked shift.
+      // activeAssignments is the same today-scoped roster_assignments
+      // snapshot used for the roster warning above; for entries synced later
+      // from the offline queue this may reflect the day the entry was
+      // captured, not the sync day, which is what we want.
+      const rosterMatch = await findUnfulfilledRosterMatch(entry.employee_id, entry.branch_id);
       const { error } = await supabase.from("timesheet_entries").insert({
         employee_id: entry.employee_id,
         branch_id: entry.branch_id,
@@ -1109,7 +1137,7 @@ async function pushEntry(entry, photoBlob) {
           .update({ time_out: entry.timestamp, time_out_photo_url: photoPath }).eq("id", openRows[0].id);
         if (error) throw error;
       } else {
-        const rosterMatch = activeAssignments.find(a => a.employee_id === entry.employee_id && a.branch_id === entry.branch_id);
+        const rosterMatch = await findUnfulfilledRosterMatch(entry.employee_id, entry.branch_id);
         const { error } = await supabase.from("timesheet_entries").insert({
           employee_id: entry.employee_id,
           branch_id: entry.branch_id,

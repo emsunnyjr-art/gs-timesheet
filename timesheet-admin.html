@@ -153,6 +153,12 @@
       <p style="color:var(--muted); font-size:13px;">Calculated automatically from time in/out. Approve if legitimate, or reject if it shouldn't count (e.g. it came from a forgotten clock-out).</p>
       <table id="otTable"><thead><tr><th>Employee</th><th>Date</th><th>OT Hours</th><th>OT Wage</th><th>Your Name</th><th></th></tr></thead><tbody></tbody></table>
     </div>
+    <div class="card">
+      <h2>Shift Coverage Incentives</h2>
+      <p style="color:var(--muted); font-size:13px;">Detected automatically when a rostered TM no-shows a shift and a different TM covers it IN ADDITION to their own separately-rostered shift that same day (double duty). Nothing reaches payroll until you approve a row — the percentage applied is whatever's set in Wage Rules at the moment you approve, and stays frozen on that row even if the setting changes later.</p>
+      <table id="coverageTable"><thead><tr><th>Date</th><th>Branch</th><th>Shift</th><th>Absent</th><th>Covered By</th><th>Basic Pay</th><th>Incentive (at current %)</th><th>Your Name</th><th></th></tr></thead><tbody></tbody></table>
+      <div class="msg" id="coverageMsg"></div>
+    </div>
   </div>
 
   <!-- PAYROLL -->
@@ -198,6 +204,8 @@
         <div><label>Double Pump Pay (₱ flat)</label><input type="number" step="0.01" id="ruleDoublePump" value="100"></div>
         <div><label>Emergency Roster Pay (₱ flat)</label><input type="number" step="0.01" id="ruleEmergency" value="150"></div>
       </div>
+      <label>Shift Coverage Incentive (% of covering TM's basic pay for the covered shift)</label>
+      <input type="number" step="0.01" id="ruleCoveragePct" value="30">
       <label>Notes (why the change)</label>
       <textarea id="ruleNotes"></textarea>
       <button onclick="saveWageRule()">Save New Rule</button>
@@ -590,6 +598,62 @@ async function loadReviewQueue() {
       </td>
     </tr>`).join("") || "<tr><td colspan='6' class='small'>Nothing pending.</td></tr>";
   }
+
+  await loadCoverageIncentives();
+}
+
+// ---------- Shift coverage incentives ----------
+// fn_detect_shift_coverage_instances() is idempotent (unique on shift_id +
+// covering_employee_id) -- safe to re-run every time this tab loads, same
+// pattern as auto_clockout flagging running on a schedule server-side, just
+// triggered client-side here since there's no cron wired to this yet.
+async function loadCoverageIncentives() {
+  await supabase.rpc("fn_detect_shift_coverage_instances");
+
+  const { data: rule } = await supabase.from("wage_rules").select("coverage_incentive_pct")
+    .is("branch_id", null).lte("effective_from", localDateStr())
+    .order("effective_from", { ascending: false }).limit(1);
+  const currentPct = rule && rule.length ? Number(rule[0].coverage_incentive_pct) : 30;
+
+  const { data, error } = await supabase.from("shift_coverage_incentives")
+    .select("id, shift_date, covering_basic_pay, branches(code), shifts:shift_id(shift_label), absent:absent_employee_id(full_name, tm_number), covering:covering_employee_id(full_name, tm_number)")
+    .eq("status", "pending")
+    .order("shift_date", { ascending: false }).limit(50);
+  const tbody = document.querySelector("#coverageTable tbody");
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="9" class="small">Error: ${error.message}</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = (data || []).map(r => {
+    const previewAmount = Number(r.covering_basic_pay) * (currentPct / 100);
+    return `<tr>
+      <td>${r.shift_date}</td>
+      <td>${r.branches?.code || "—"}</td>
+      <td>${r.shifts?.shift_label || "—"}</td>
+      <td>${r.absent?.full_name || ""} (${r.absent?.tm_number || ""})</td>
+      <td>${r.covering?.full_name || ""} (${r.covering?.tm_number || ""})</td>
+      <td>₱${Number(r.covering_basic_pay).toFixed(2)}</td>
+      <td>₱${previewAmount.toFixed(2)} <span style="color:var(--muted); font-size:11px;">(${currentPct}%)</span></td>
+      <td><input type="text" id="cov_by_${r.id}" placeholder="Your name" style="width:110px;"></td>
+      <td><button onclick="approveCoverageIncentive('${r.id}')">Approve</button></td>
+    </tr>`;
+  }).join("") || "<tr><td colspan='9' class='small'>Nothing pending.</td></tr>";
+}
+
+async function approveCoverageIncentive(id) {
+  const byInput = document.getElementById(`cov_by_${id}`);
+  const byVal = byInput.value.trim();
+  const msg = document.getElementById("coverageMsg");
+  if (!byVal) { msg.textContent = "Your name is required to approve."; msg.className = "msg err"; return; }
+  const { error } = await supabase.rpc("fn_approve_shift_coverage_incentive", { p_id: id, p_approved_by: byVal });
+  if (error) {
+    msg.textContent = error.message;
+    msg.className = "msg err";
+    return;
+  }
+  msg.textContent = "Approved — incentive added to that TM's allowances for payroll.";
+  msg.className = "msg ok";
+  loadCoverageIncentives();
 }
 
 async function confirmAutoClockout(entryId) {
@@ -751,7 +815,7 @@ async function loadCurrentRule() {
   const el = document.getElementById("currentRuleDisplay");
   if (!data || !data.length) { el.textContent = "No org-wide rule found."; return; }
   const r = data[0];
-  el.innerHTML = `OT ${r.overtime_multiplier}x · Late deduction ${r.late_deduction_multiplier}x · Holiday +${r.holiday_pct_add}% · Double Pump ₱${r.double_pump_pay} · Emergency ₱${r.emergency_roster_pay} <br><span style="color:var(--muted)">Effective from ${r.effective_from}${r.notes ? " — " + r.notes : ""}</span>`;
+  el.innerHTML = `OT ${r.overtime_multiplier}x · Late deduction ${r.late_deduction_multiplier}x · Holiday +${r.holiday_pct_add}% · Double Pump ₱${r.double_pump_pay} · Emergency ₱${r.emergency_roster_pay} · Coverage Incentive ${r.coverage_incentive_pct}% <br><span style="color:var(--muted)">Effective from ${r.effective_from}${r.notes ? " — " + r.notes : ""}</span>`;
 }
 
 async function saveWageRule() {
@@ -763,6 +827,7 @@ async function saveWageRule() {
     holiday_pct_add: parseFloat(document.getElementById("ruleHoliday").value),
     double_pump_pay: parseFloat(document.getElementById("ruleDoublePump").value),
     emergency_roster_pay: parseFloat(document.getElementById("ruleEmergency").value),
+    coverage_incentive_pct: parseFloat(document.getElementById("ruleCoveragePct").value),
     effective_from: document.getElementById("ruleEffFrom").value || localDateStr(),
     notes: document.getElementById("ruleNotes").value || null
   };
