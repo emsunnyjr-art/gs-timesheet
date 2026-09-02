@@ -54,14 +54,33 @@
   <label for="branchSelect">Branch</label>
   <select id="branchSelect"></select>
 
-  <div id="todayRosterBox" style="margin-top:10px; padding:10px; border-radius:10px; background:#0f172a; border:1px solid #334155; font-size:12px; color:var(--muted);">Loading today's roster…</div>
+  <!-- Step 1: which action -- the very first thing a TM chooses, before any
+       identification method. Stays visible/tappable until an action is
+       chosen; hidden once identification begins so it can't be mistaken for
+       a "still relevant" control mid-flow. -->
+  <div id="actionChoiceRow" style="display:flex; gap:10px; margin:14px 0;">
+    <button type="button" id="timeInBtn" style="flex:1; padding:16px; border-radius:10px; border:none; background:var(--accent); color:#052e16; font-weight:700; font-size:16px;">Time In</button>
+    <button type="button" id="timeOutBtn" style="flex:1; padding:16px; border-radius:10px; border:none; background:var(--accent-out); color:#450a0a; font-weight:700; font-size:16px;">Time Out</button>
+  </div>
 
-  <div style="display:flex; gap:8px; margin:14px 0;">
+  <!-- Step 2: identification -- only shown once an action is chosen.
+       Time In offers Scan ID, the today's-roster tap list, and Manual
+       Select. Time Out offers Scan ID only (manual/roster tap hidden
+       entirely, not just disabled) -- re-confirming an identity already
+       established at Time In doesn't need the manual fallback. -->
+  <div id="identifyHeader" style="display:none; justify-content:space-between; align-items:center; margin-bottom:6px;">
+    <div style="font-weight:700; font-size:15px;">Recording: <span id="chosenActionLabel" style="color:var(--accent);"></span></div>
+    <a href="#" id="changeActionLink" style="color:var(--muted); font-size:12px;">Change</a>
+  </div>
+
+  <div id="todayRosterBox" style="display:none; margin-top:10px; padding:10px; border-radius:10px; background:#0f172a; border:1px solid #334155; font-size:12px; color:var(--muted);">Loading today's roster…</div>
+
+  <div id="idMethodRow" style="display:none; gap:8px; margin:14px 0;">
     <button type="button" id="scanModeBtn" style="flex:1; padding:10px; border-radius:8px; border:none; background:var(--accent); color:#052e16; font-weight:600;">Scan ID</button>
     <button type="button" id="manualModeBtn" style="flex:1; padding:10px; border-radius:8px; border:1px solid #334155; background:#0f172a; color:var(--text);">Manual Select</button>
   </div>
 
-  <div id="scanPanel">
+  <div id="scanPanel" style="display:none;">
     <video id="qrVideo" autoplay playsinline muted style="width:100%; border-radius:10px; display:block;"></video>
     <canvas id="qrCanvas" style="display:none;"></canvas>
     <div id="scanStatus" style="text-align:center; margin-top:8px; color:var(--muted); font-size:13px;">Point camera at employee ID QR code</div>
@@ -110,9 +129,6 @@
     </div>
     <img id="confirmPhoto" style="width:100%; border-radius:8px; display:block;">
     <div style="font-size:11px; color:var(--muted); margin-top:6px;">Attendance photo for this time in/out only — it does not change your profile photo. Profile photos can only be replaced by an admin.</div>
-    <div id="overrideRow" style="display:none; margin-top:8px; font-size:12px; text-align:center;">
-      <a href="#" id="overrideLink" style="color:var(--muted);">Not right? Switch to Time Out instead</a>
-    </div>
     <div style="display:flex; gap:8px; margin-top:10px;">
       <button type="button" id="retakeBtn" style="flex:1; padding:10px; border-radius:8px; border:1px solid #334155; background:#0f172a; color:var(--text);">Retake Photo</button>
       <button type="button" id="cancelBtn" style="flex:1; padding:10px; border-radius:8px; border:1px solid var(--accent-out); background:transparent; color:var(--accent-out);">Cancel</button>
@@ -340,97 +356,59 @@ function findEmployeeByManualInput(text) {
 // Yet" (no open entry -> tap to Time In). Both groups are always visible and
 // tappable at once -- the incoming shift can clock in before the outgoing
 // shift clocks out, on purpose, so there's never a gap at the pumps.
+// Only ever shown for a Time In in progress (hidden entirely for Time Out,
+// per the confirmed step sequence), so this only needs to surface people who
+// still need to time in -- not who's currently on duty, which would be the
+// Time Out audience.
 async function renderTodayRoster() {
   const box = document.getElementById("todayRosterBox");
+  if (clockActionChoice !== "in") return; // not relevant right now; leave whatever's cached rather than fetch for nothing
   const branchId = document.getElementById("branchSelect").value;
   const todays = activeAssignments.filter(a => a.branch_id === branchId);
 
-  // "On duty now" must be driven by who actually has an open entry at this
-  // branch right now -- NOT by whether a roster assignment exists for them
-  // today. Clocking in doesn't require a roster match (manual mode allows
-  // it), so someone genuinely on duty must never disappear just because
-  // Roster has no data for today.
-  let onDutyTimeIn = new Map(); // employee_id -> time_in ISO string
+  // Still driven by who actually has an open entry at this branch right now
+  // -- NOT by whether a roster assignment exists for them today -- so
+  // someone who clocked in via Manual Select (no roster match) is correctly
+  // excluded from "still needs to time in" here.
+  let onDutyIds = new Set();
   try {
     const { data: openHere, error } = await supabase.from("timesheet_entries")
-      .select("employee_id, time_in").eq("branch_id", branchId).is("time_out", null);
+      .select("employee_id").eq("branch_id", branchId).is("time_out", null);
     if (error) throw error;
-    (openHere || []).forEach(r => onDutyTimeIn.set(r.employee_id, r.time_in));
+    onDutyIds = new Set((openHere || []).map(r => r.employee_id));
   } catch (err) {
     console.error("Could not load on-duty list:", err);
-    box.innerHTML = `<div class="small">Couldn't load who's on duty (${err.message || err}). Pull to refresh or check connection.</div>`;
-    return;
-  }
-  const onDutyIds = new Set(onDutyTimeIn.keys());
-
-  const { current, allShifts } = await detectCurrentShiftForBranch(branchId);
-
-  // Classify each on-duty person: are they on the CURRENT shift, or still
-  // clocked in from an earlier one (a carryover, likely forgot to clock out)?
-  function classifyTimeIn(timeInISO) {
-    if (!timeInISO || !allShifts || !allShifts.length) return null;
-    const t = new Date(timeInISO);
-    for (const s of allShifts) {
-      const { start, end } = toAbsRange(s.shift_date, s.scheduled_time_in, s.scheduled_time_out);
-      if (t >= start && t < end) return s;
-    }
-    return null;
-  }
-
-  const sorted = [...todays].sort((a, b) => {
-    const ta = a.shifts ? a.shifts.scheduled_time_in : "";
-    const tb = b.shifts ? b.shifts.scheduled_time_in : "";
-    return (ta || "").localeCompare(tb || "");
-  });
-
-  function personButton(emp, label, isOpen, isCarryover) {
-    if (!emp) return "";
-    const tagColor = isOpen ? "var(--accent-out)" : "var(--accent)";
-    const tagText = isOpen ? "TIME OUT" : "TIME IN";
-    const borderColor = isCarryover ? "#f59e0b" : tagColor;
-    return `<button type="button" class="roster-person-btn" data-id="${emp.id}"
-        style="display:flex; justify-content:space-between; align-items:center; width:100%; text-align:left;
-               padding:10px; margin-top:6px; border-radius:8px; border:1px solid ${borderColor}; background:#0f172a; color:var(--text);">
-      <span>${escapeHtml(emp.full_name)} <span style="color:var(--muted);">(${escapeHtml(emp.tm_number)})</span><br>
-        <span style="font-size:11px; color:${isCarryover ? '#f59e0b' : 'var(--muted)'};">${label}</span></span>
-      <span style="font-weight:700; color:${tagColor}; border:1px solid ${tagColor}; border-radius:6px; padding:3px 8px; font-size:11px; white-space:nowrap;">${tagText}</span>
-    </button>`;
-  }
-
-  const onDuty = [...onDutyIds].map(id => {
-    const emp = allEmployees.find(e => e.id === id);
-    const timeIn = onDutyTimeIn.get(id);
-    const matchedShift = classifyTimeIn(timeIn);
-    const timeStr = timeIn ? new Date(timeIn).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
-    const isCarryover = !!(current && matchedShift && matchedShift.id !== current.id);
-    const label = isCarryover
-      ? `⚠ Not yet clocked out from ${escapeHtml(matchedShift.shift_label)} shift — logged in since ${timeStr}`
-      : `Logged in since ${timeStr}`;
-    return { emp, label, isCarryover, sortKey: isCarryover ? 0 : 1 };
-  }).filter(x => x.emp).sort((a, b) => a.sortKey - b.sortKey); // carryovers surface first
-
-  // Not yet clocked in: rostered today, but no open entry.
-  const notYet = sorted.filter(a => !onDutyIds.has(a.employee_id));
-
-  if (!onDuty.length && !notYet.length) {
-    box.innerHTML = "No one rostered here today yet.";
+    box.innerHTML = `<div class="small">Couldn't load today's roster (${err.message || err}). Pull to refresh or check connection.</div>`;
     return;
   }
 
-  const carryoverCount = onDuty.filter(x => x.isCarryover).length;
-  const headerLabel = current ? `On Duty — ${escapeHtml(current.shift_label)}` : "On Duty Now";
-  const carryoverNote = carryoverCount
-    ? ` <span style="color:#f59e0b;">(${carryoverCount} still open from a previous shift)</span>` : "";
+  const notYet = [...todays]
+    .filter(a => !onDutyIds.has(a.employee_id))
+    .sort((a, b) => {
+      const ta = a.shifts ? a.shifts.scheduled_time_in : "";
+      const tb = b.shifts ? b.shifts.scheduled_time_in : "";
+      return (ta || "").localeCompare(tb || "");
+    });
+
+  if (!notYet.length) {
+    box.innerHTML = "Everyone rostered here today has already clocked in — use Scan ID or Manual Select above.";
+    return;
+  }
 
   box.innerHTML =
-    `<b>${headerLabel} (${onDuty.length})${carryoverNote}</b>` +
-    (onDuty.length ? onDuty.map(x => personButton(x.emp, x.label, true, x.isCarryover)).join("") : `<div class="small" style="margin-top:4px;">Nobody clocked in yet.</div>`) +
-    `<b style="display:block; margin-top:14px;">Not Clocked In Yet (${notYet.length})</b>` +
-    (notYet.length ? notYet.map(a => {
+    `<b>Not Clocked In Yet (${notYet.length})</b>` +
+    notYet.map(a => {
       const emp = allEmployees.find(e => e.id === a.employee_id);
+      if (!emp) return "";
       const shiftLabel = a.shifts ? `${a.shifts.shift_label} ${fmtTimeOnly(a.shifts.scheduled_time_in)}` : "Unscheduled";
-      return personButton(emp, shiftLabel, false, false);
-    }).join("") : `<div class="small" style="margin-top:4px;">Everyone rostered is already on duty.</div>`);
+      return `<button type="button" class="roster-person-btn" data-id="${emp.id}"
+          style="display:flex; justify-content:space-between; align-items:center; width:100%; text-align:left;
+                 padding:10px; margin-top:6px; border-radius:8px; border:1px solid var(--accent); background:#0f172a; color:var(--text);">
+        <span>${escapeHtml(emp.full_name)} <span style="color:var(--muted);">(${escapeHtml(emp.tm_number)})</span><br>
+          <span style="font-size:11px; color:var(--muted);">${shiftLabel}</span></span>
+        <span style="font-weight:700; color:var(--accent); border:1px solid var(--accent); border-radius:6px; padding:3px 8px; font-size:11px; white-space:nowrap;">TIME IN</span>
+      </button>`;
+    }).join("");
 
   box.querySelectorAll(".roster-person-btn").forEach(el => {
     el.addEventListener("click", () => {
@@ -459,21 +437,30 @@ function updateManualPhotoPreview() {
   }
 }
 
-// ---------- Mode toggle ----------
-let mode = null; // null (idle, roster-first) | "scan" | "manual"
+// ---------- Action choice (step 1) + mode toggle (step 2) ----------
+let clockActionChoice = null; // "in" | "out" -- chosen explicitly by the TM as the very first step, before any identification
+let mode = null; // null (idle) | "scan" | "manual" -- which identification method within step 2
 let qrLoopActive = false;
 let sharedStream = null;
 let selectedEmployeeId = null;
 let selectedEmployeeName = null;
 let capturedPhotoBlob = null;
 let pendingClockWarning = false; // true while a headcount/recent-reclock warning is unacknowledged - blocks confirm + auto-save
-let detectedAction = null; // "in" | "out" -- auto-determined, not chosen by the user
+let detectedAction = null; // "in" | "out" -- set directly from clockActionChoice once identification starts
 let lastPushError = null;  // most recent Supabase error message, shown on failure
 let manualShiftId = null;  // for a non-rostered clock-in: which of today's shifts this counts against
 let manualVerifyExpected = null; // when set, QR scan must match this employee (manual-search-then-verify flow)
 let verifiedViaQr = false; // true only when identity came from an actual QR scan -- gates auto-save
-let autoSaveTimer = null;  // pending auto-save timeout, cancellable by Cancel/Retake/Override
+let autoSaveTimer = null;  // pending auto-save timeout, cancellable by Cancel/Retake
 
+const actionChoiceRow = document.getElementById("actionChoiceRow");
+const timeInBtn = document.getElementById("timeInBtn");
+const timeOutBtn = document.getElementById("timeOutBtn");
+const identifyHeader = document.getElementById("identifyHeader");
+const chosenActionLabel = document.getElementById("chosenActionLabel");
+const changeActionLink = document.getElementById("changeActionLink");
+const idMethodRow = document.getElementById("idMethodRow");
+const todayRosterBox = document.getElementById("todayRosterBox");
 const scanModeBtn = document.getElementById("scanModeBtn");
 const manualModeBtn = document.getElementById("manualModeBtn");
 const scanPanel = document.getElementById("scanPanel");
@@ -483,8 +470,52 @@ const qrVideo = document.getElementById("qrVideo");
 const qrCanvas = document.getElementById("qrCanvas");
 const scanStatus = document.getElementById("scanStatus");
 
+timeInBtn.addEventListener("click", () => chooseClockAction("in"));
+timeOutBtn.addEventListener("click", () => chooseClockAction("out"));
+changeActionLink.addEventListener("click", (e) => {
+  e.preventDefault();
+  chooseClockAction(null);
+});
 scanModeBtn.addEventListener("click", () => setMode("scan"));
 manualModeBtn.addEventListener("click", () => setMode("manual"));
+
+// Step 1 -> step 2 transition (and step 2's own re-entry point after a
+// Cancel from later in the flow). Each call fully re-derives what should be
+// visible for the given action -- no leftover controls from a previous
+// step or a previous action linger, per the "one clear next action" rule.
+function chooseClockAction(action) {
+  clockActionChoice = action;
+  stopCamera();
+  resetSelection();
+  confirmPanel.style.display = "none";
+
+  if (action === null) {
+    actionChoiceRow.style.display = "flex";
+    identifyHeader.style.display = "none";
+    idMethodRow.style.display = "none";
+    todayRosterBox.style.display = "none";
+    scanPanel.style.display = "none";
+    manualPanel.style.display = "none";
+    mode = null;
+    return;
+  }
+
+  actionChoiceRow.style.display = "none";
+  identifyHeader.style.display = "flex";
+  chosenActionLabel.textContent = action === "in" ? "Time In" : "Time Out";
+  idMethodRow.style.display = "flex";
+
+  if (action === "out") {
+    // Time Out: Scan ID only -- no Manual Select, no roster tap list.
+    manualModeBtn.style.display = "none";
+    todayRosterBox.style.display = "none";
+  } else {
+    manualModeBtn.style.display = "block";
+    todayRosterBox.style.display = "block";
+    renderTodayRoster();
+  }
+  setMode("scan"); // always default to Scan ID
+}
 
 function setMode(m) {
   mode = m;
@@ -515,7 +546,6 @@ function resetSelection() {
   document.getElementById("selfieReadyPanel").style.display = "none";
   document.getElementById("confirmBtn").disabled = true;
   document.getElementById("confirmBtn").textContent = "Checking…";
-  document.getElementById("overrideRow").style.display = "none";
   document.getElementById("employeeInput").value = "";
   document.getElementById("employeeSuggestions").style.display = "none";
   document.getElementById("manualPhotoPreview").style.display = "none";
@@ -671,39 +701,25 @@ async function hasOpenEntry(employeeId) {
   return !!(data && data.length);
 }
 
-async function detectClockAction(employeeId) {
-  try {
-    return (await hasOpenEntry(employeeId)) ? "out" : "in";
-  } catch (err) {
-    console.error("detectClockAction failed, defaulting to Time In:", err);
-    return "in"; // safest default if the lookup fails
-  }
-}
-
 let currentConfirmBaseLabel = "";
 
 function renderActionBadge() {
   const badge = document.getElementById("actionBadge");
   const btn = document.getElementById("confirmBtn");
-  const overrideRow = document.getElementById("overrideRow");
-  const overrideLink = document.getElementById("overrideLink");
   let baseLabel;
   if (detectedAction === "in") {
     badge.textContent = "Will record: TIME IN";
     badge.style.background = "#052e1680"; badge.style.color = "var(--accent)";
     baseLabel = "Confirm — Time In";
     btn.style.background = "var(--accent)"; btn.style.color = "#052e16";
-    overrideLink.textContent = "Not right? Switch to Time Out instead";
   } else {
     badge.textContent = "Will record: TIME OUT";
     badge.style.background = "#450a0a80"; badge.style.color = "var(--accent-out)";
     baseLabel = "Confirm — Time Out";
     btn.style.background = "var(--accent-out)"; btn.style.color = "#450a0a";
-    overrideLink.textContent = "Not right? Switch to Time In instead";
   }
   currentConfirmBaseLabel = baseLabel;
   btn.textContent = baseLabel;
-  overrideRow.style.display = "block";
   btn.disabled = false;
 
   // Auto-save only applies when identity came from an actual QR scan (Scan
@@ -734,12 +750,6 @@ function cancelAutoSave() {
   if (autoSaveTimer) { clearInterval(autoSaveTimer); autoSaveTimer = null; }
 }
 
-document.getElementById("overrideLink").addEventListener("click", (e) => {
-  e.preventDefault();
-  detectedAction = detectedAction === "in" ? "out" : "in";
-  renderActionBadge();
-});
-
 async function onEmployeeIdentified(id, name) {
   qrLoopActive = false;
   selectedEmployeeId = id;
@@ -749,6 +759,14 @@ async function onEmployeeIdentified(id, name) {
   document.getElementById("selfieEmpName").textContent = name;
   document.getElementById("selfieReadyPanel").style.display = "block";
   scanStatus.textContent = "Identity confirmed.";
+  // Identification is done -- step 3 (Take Selfie) is the only relevant
+  // action now, so the identification controls from step 2 are hidden, not
+  // just left inert. The camera video itself stays visible (it lives inside
+  // scanPanel, reused here in front-facing mode) -- only the now-irrelevant
+  // header/method buttons/roster list go away.
+  identifyHeader.style.display = "none";
+  idMethodRow.style.display = "none";
+  todayRosterBox.style.display = "none";
   // Best-effort early switch so the preview looks right immediately if iOS allows it;
   // the Capture button below retries this inside a real tap if it didn't take.
   try { await switchToSelfieCamera(); } catch (err) { /* will retry on tap */ }
@@ -770,7 +788,7 @@ document.getElementById("selfieCancelBtn").addEventListener("click", () => {
   stopCamera();
   document.getElementById("selfieReadyPanel").style.display = "none";
   logMsg("Cancelled — no entry recorded.", "queued");
-  setMode(mode);
+  chooseClockAction(clockActionChoice); // back to identification, same chosen action
 });
 
 // ---------- Manual mode: pick employee, then capture photo ----------
@@ -898,9 +916,11 @@ async function showConfirm(blob) {
 
   document.getElementById("confirmBtn").disabled = true;
   document.getElementById("confirmBtn").textContent = "Checking…";
-  document.getElementById("overrideRow").style.display = "none";
-  detectedAction = await detectClockAction(selectedEmployeeId);
-  // Guard against a stale response if the person cancelled/switched while the lookup was in flight.
+  // The action was already chosen explicitly as step 1 -- no more guessing
+  // from clock state, and no override link to correct a guess.
+  detectedAction = clockActionChoice;
+  // Guard against a stale flow if the person cancelled/switched while one of
+  // the awaited checks below is still in flight.
   if (selectedEmployeeId === null) return;
 
   // ---- New rules: warn before an over-headcount Time In, or a Time Out
@@ -972,7 +992,7 @@ document.getElementById("clockWarningCancelBtn").addEventListener("click", () =>
   cancelAutoSave();
   stopCamera();
   logMsg("Cancelled — no entry recorded.", "queued");
-  setMode(mode);
+  chooseClockAction(clockActionChoice); // back to identification, same chosen action
 });
 
 document.getElementById("retakeBtn").addEventListener("click", async () => {
@@ -993,7 +1013,7 @@ document.getElementById("confirmBtn").addEventListener("click", () => {
 document.getElementById("cancelBtn").addEventListener("click", () => {
   cancelAutoSave();
   logMsg("Cancelled — no entry recorded.", "queued");
-  setMode(mode); // resets selection and restarts scan/manual for the current mode
+  chooseClockAction(clockActionChoice); // back to identification, same chosen action
 });
 
 async function submitEntry(type) {
@@ -1014,8 +1034,7 @@ async function submitEntry(type) {
   // outright rather than falling through to queueEntry().
   if (!capturedPhotoBlob) {
     logMsg("A photo is required to clock in/out — please retake it before confirming.", "queued");
-    resetSelection();
-    setMode(mode);
+    chooseClockAction(clockActionChoice);
     return;
   }
 
@@ -1035,17 +1054,14 @@ async function submitEntry(type) {
       if (!stillOpen) {
         logMsg(`⚠ ${employee_name} is not currently clocked in — can't Time Out. Please select or scan the correct TM.`, "queued");
         openEntryEmployeeIds.delete(employee_id); // correct any stale local state
-        renderTodayRoster();
-        resetSelection();
-        setMode(mode);
+        chooseClockAction(clockActionChoice);
         return;
       }
     } else if (!openEntryEmployeeIds.has(employee_id)) {
       // Offline: can't do a live check, so fall back to the last-known
       // local state rather than blocking Time Out entirely while offline.
       logMsg(`⚠ ${employee_name} doesn't appear to be clocked in — can't Time Out. Please select or scan the correct TM.`, "queued");
-      resetSelection();
-      setMode(mode);
+      chooseClockAction(clockActionChoice);
       return;
     }
   }
@@ -1072,8 +1088,7 @@ async function submitEntry(type) {
     queueEntry(entry, capturedPhotoBlob);
     logMsg(`${type === "in" ? "Timed in" : "Timed out"} — ${selectedEmployeeName} — queued offline`, "queued");
   }
-  resetSelection();
-  setMode(mode); // restart scan loop / reset manual panel for the next person
+  chooseClockAction(null); // back to step 1 -- the next person picks their own action fresh
 }
 
 async function pushEntry(entry, photoBlob) {
