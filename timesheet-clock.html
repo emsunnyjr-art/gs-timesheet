@@ -54,6 +54,13 @@
   <label for="branchSelect">Branch</label>
   <select id="branchSelect"></select>
 
+  <!-- Landing-screen only: who's currently clocked in at the selected
+       branch, purely informational (no tap actions here -- that's Timesheet
+       Admin's job). Hidden once an action is chosen (step 2 onward) so it
+       doesn't compete with the focused identify/selfie/confirm flow; shown
+       again once back at the landing screen. -->
+  <div id="clockedInNowBox" style="margin-top:10px; padding:10px; border-radius:10px; background:#0f172a; border:1px solid #334155; font-size:12px; color:var(--muted);">Loading who's clocked in…</div>
+
   <!-- Step 1: which action -- the very first thing a TM chooses, before any
        identification method. Stays visible/tappable until an action is
        chosen; hidden once identification begins so it can't be mistaken for
@@ -250,7 +257,8 @@ async function loadDropdowns() {
     localStorage.setItem("gs_dropdown_cache", JSON.stringify({ employees, branches: branchSelect.innerHTML, assignments: activeAssignments }));
     renderEmployeeOptions();
     renderTodayRoster();
-    branchSelect.addEventListener("change", () => { renderEmployeeOptions(); renderTodayRoster(); });
+    renderClockedInNow();
+    branchSelect.addEventListener("change", () => { renderEmployeeOptions(); renderTodayRoster(); renderClockedInNow(); });
     document.getElementById("showAllEmployees").addEventListener("change", renderEmployeeOptions);
   } catch (err) {
     const cached = localStorage.getItem("gs_dropdown_cache");
@@ -262,7 +270,8 @@ async function loadDropdowns() {
       await loadOpenEntries();
       renderEmployeeOptions();
       renderTodayRoster();
-      branchSelect.addEventListener("change", () => { renderEmployeeOptions(); renderTodayRoster(); });
+      renderClockedInNow();
+      branchSelect.addEventListener("change", () => { renderEmployeeOptions(); renderTodayRoster(); renderClockedInNow(); });
       document.getElementById("showAllEmployees").addEventListener("change", renderEmployeeOptions);
     } else {
       logMsg("Could not load employee/branch list: " + (err.message || err), "queued");
@@ -273,6 +282,42 @@ async function loadDropdowns() {
 
 function escapeHtml(str) {
   return String(str ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// Landing-screen "who's clocked in" -- informational only, no tap actions
+// (force-clockout/edit belongs to Timesheet Admin, not this shared kiosk).
+// No Realtime subscription exists anywhere in this app, so this follows the
+// same polling approach already used here for the offline queue
+// (setInterval(syncQueue, 30000)) rather than introducing new
+// infrastructure -- refreshed immediately on load/branch-change, then every
+// 30s while the landing screen is showing.
+async function renderClockedInNow() {
+  const box = clockedInNowBox;
+  const branchId = document.getElementById("branchSelect").value;
+  if (!branchId) { box.innerHTML = ""; return; }
+  try {
+    const { data, error } = await supabase.from("timesheet_entries")
+      .select("employee_id, time_in")
+      .eq("branch_id", branchId).is("time_out", null)
+      .order("time_in", { ascending: true });
+    if (error) throw error;
+    if (!data || !data.length) {
+      box.innerHTML = `<b>Currently Clocked In</b><div class="small" style="margin-top:4px;">No one currently clocked in.</div>`;
+      return;
+    }
+    box.innerHTML = `<b>Currently Clocked In (${data.length})</b>` + data.map(r => {
+      const emp = allEmployees.find(e => e.id === r.employee_id);
+      const name = emp ? `${escapeHtml(emp.full_name)} (${escapeHtml(emp.tm_number)})` : "Unknown TM";
+      const timeStr = new Date(r.time_in).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      return `<div style="display:flex; justify-content:space-between; margin-top:6px; padding:8px 10px; border-radius:8px; background:#1e293b;">
+        <span style="color:var(--text);">${name}</span>
+        <span style="color:var(--muted);">since ${timeStr}</span>
+      </div>`;
+    }).join("");
+  } catch (err) {
+    console.error("Could not load currently-clocked-in list:", err);
+    box.innerHTML = `<div class="small">Couldn't load who's clocked in (${err.message || err}).</div>`;
+  }
 }
 
 let manualEmployeeSource = []; // this branch's pickable list, recomputed on branch/showAll change
@@ -461,6 +506,7 @@ const chosenActionLabel = document.getElementById("chosenActionLabel");
 const changeActionLink = document.getElementById("changeActionLink");
 const idMethodRow = document.getElementById("idMethodRow");
 const todayRosterBox = document.getElementById("todayRosterBox");
+const clockedInNowBox = document.getElementById("clockedInNowBox");
 const scanModeBtn = document.getElementById("scanModeBtn");
 const manualModeBtn = document.getElementById("manualModeBtn");
 const scanPanel = document.getElementById("scanPanel");
@@ -491,6 +537,8 @@ function chooseClockAction(action) {
 
   if (action === null) {
     actionChoiceRow.style.display = "flex";
+    clockedInNowBox.style.display = "block";
+    renderClockedInNow();
     identifyHeader.style.display = "none";
     idMethodRow.style.display = "none";
     todayRosterBox.style.display = "none";
@@ -500,6 +548,7 @@ function chooseClockAction(action) {
     return;
   }
 
+  clockedInNowBox.style.display = "none";
   actionChoiceRow.style.display = "none";
   identifyHeader.style.display = "flex";
   chosenActionLabel.textContent = action === "in" ? "Time In" : "Time Out";
@@ -1270,13 +1319,14 @@ async function ensureTodayShift(branchId) {
 // ---------- Init ----------
 updateNetStatus();
 loadDropdowns().then(() => {
-  setMode(null);
+  chooseClockAction(null); // land on step 1, explicitly (not relying on HTML defaults)
   ensureTodayShift(document.getElementById("branchSelect").value);
 });
 document.getElementById("branchSelect").addEventListener("change", () => {
   ensureTodayShift(document.getElementById("branchSelect").value);
 });
 setInterval(syncQueue, 30000); // retry queue every 30s while app is open
+setInterval(() => { if (clockActionChoice === null) renderClockedInNow(); }, 30000); // keep the landing-screen list current while idle there
 </script>
 </body>
 </html>
