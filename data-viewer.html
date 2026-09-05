@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data Viewer — A's Fuel</title>
+<style>
+  :root { --bg:#0f172a; --card:#1e293b; --accent:#22c55e; --danger:#ef4444; --text:#f1f5f9; --muted:#94a3b8; --border:#334155; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; padding:16px; }
+  .wrap { max-width:100%; margin:0 auto; }
+  h1 { font-size:20px; margin:0 0 16px; }
+  .card { background:var(--card); border-radius:14px; padding:18px; margin-bottom:14px; }
+  .card h2 { font-size:15px; margin:0 0 12px; color:var(--muted); text-transform:uppercase; letter-spacing:0.03em; }
+  label { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; margin-top:12px; }
+  input, select { width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); background:#0f172a; color:var(--text); font-size:14px; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
+  .row > * { flex:1; min-width:140px; }
+  button { margin-top:14px; padding:12px 16px; border-radius:10px; border:none; background:var(--accent); color:#052e16; font-weight:600; font-size:14px; cursor:pointer; }
+  button.secondary { background:#334155; color:var(--text); }
+  button:disabled { opacity:0.4; cursor:not-allowed; }
+  .msg { font-size:13px; margin-top:10px; min-height:16px; }
+  .msg.ok { color:var(--accent); }
+  .msg.err { color:var(--danger); }
+  .nav-links { font-size:12px; margin-bottom:14px; }
+  .nav-links a { color:var(--muted); text-decoration:none; margin-right:14px; }
+  .nav-home { display:inline-flex; align-items:center; gap:5px; padding:10px 14px; margin-right:10px; border-radius:10px; background:#1e293b; font-size:15px; }
+  .nav-home:active { background:#334155; }
+  .small { font-size:12px; color:var(--muted); }
+  .pin-screen { max-width:340px; margin:60px auto; text-align:center; }
+  .table-scroll { overflow-x:auto; max-width:100%; border-radius:10px; border:1px solid var(--border); }
+  table { border-collapse:collapse; font-size:12.5px; white-space:nowrap; }
+  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--border); }
+  th { color:var(--muted); font-weight:600; background:#0f172a; position:sticky; top:0; }
+  td { max-width:320px; overflow:hidden; text-overflow:ellipsis; }
+  .page-controls { display:flex; align-items:center; gap:10px; margin-top:12px; flex-wrap:wrap; }
+  .page-controls button { margin-top:0; flex:none; }
+  .page-controls .info { font-size:12.5px; color:var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div id="pinScreen" class="pin-screen">
+    <img src="logo.png" alt="A's Fuel" style="width:72px; height:72px; border-radius:50%; margin-bottom:8px;">
+    <h1>Data Viewer</h1>
+    <p class="small">Owner sign-in required.</p>
+    <label>Email</label>
+    <input type="email" id="loginEmail">
+    <label>Password</label>
+    <input type="password" id="loginPassword">
+    <button onclick="doLogin()">Sign in</button>
+    <div id="pinError" class="msg err"></div>
+  </div>
+
+  <div id="pinGateScreen" class="pin-screen" style="display:none;">
+    <img src="logo.png" alt="A's Fuel" style="width:72px; height:72px; border-radius:50%; margin-bottom:8px;">
+    <h1>Data Viewer — Passphrase</h1>
+    <p class="small">Signed in as owner. This is a second, separate unlock on top of your login — enter the Data Viewer passphrase to continue.</p>
+    <label>Passphrase</label>
+    <input type="password" id="passphraseInput">
+    <button onclick="checkPassphrase()">Unlock</button>
+    <div id="pinGateError" class="msg err"></div>
+  </div>
+
+  <div id="app" style="display:none;">
+    <div class="nav-links"><a href="index.html" class="nav-home"><span style="font-size:19px;">🏠</span> Home</a></div>
+    <h1>Data Viewer</h1>
+    <p class="small">Read-only. For looking, not editing — any real correction should go through the app's own controlled tools (Correct Stock, Day Close, check attachment, etc.), which carry validation and audit trails a raw editor here would bypass.</p>
+
+    <div class="card">
+      <h2>Table</h2>
+      <label>Pick a table or view</label>
+      <select id="tableSelect" onchange="onTableChange()"></select>
+      <div class="small" id="tableMsg" style="margin-top:8px;"></div>
+    </div>
+
+    <div class="card">
+      <h2>Data</h2>
+      <div class="table-scroll">
+        <table id="dataTable"><thead></thead><tbody></tbody></table>
+      </div>
+      <div class="page-controls">
+        <button class="secondary" id="prevBtn" onclick="changePage(-1)" disabled>&larr; Prev</button>
+        <button class="secondary" id="nextBtn" onclick="changePage(1)" disabled>Next &rarr;</button>
+        <span class="info" id="pageInfo"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Change Passphrase</h2>
+      <label>New Passphrase (at least 6 characters)</label>
+      <input type="password" id="newPassphraseValue">
+      <button class="secondary" onclick="changePassphrase()">Update Passphrase</button>
+      <div class="msg" id="changePassMsg"></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+const SUPABASE_URL = "https://cztkovsjxuaiburaudgk.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_eBOzdnFAdfFavl2QAYY6bA_lfAIJUhh";
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// Curated list, not a dynamic schema query -- matches this app's existing
+// pattern of hardcoded reference lists (e.g. DELIVERY_PRODUCT_ORDER in
+// sales-admin.html) rather than introspecting information_schema from the
+// client. Grouped to mirror CLAUDE.md's own domain structure. Two tables
+// are deliberately excluded, both for the same "more confusing than
+// useful" reason (verified via RLS policy inspection, not guessed):
+// - app_settings has RLS enabled with zero policies (holds the PINs and
+//   this very passphrase's hash) -- would always render as an empty table
+//   via the client regardless of real content.
+// - user_branch_roles' only SELECT policy is "read own roles" (user_id =
+//   auth.uid()) -- browsing it here would show only the owner's own single
+//   row, not the full account list, which looks like a complete result
+//   while actually being silently incomplete (worse than an obviously
+//   empty table). enroll.html's "Existing Accounts" list gets the full
+//   picture through a different, privileged path, not a direct client query.
+const TABLE_GROUPS = [
+  { label: "Timesheets & HR", tables: [
+    "employees", "posts", "shifts", "shift_templates", "roster_assignments", "timesheet_entries",
+    "employee_rate_history", "rates", "wage_rules", "allowances", "payroll", "payroll_day", "salary_total",
+    "discretionary_adjustments", "cb_brackets", "comp_and_ben", "employee_photo_audit", "issued_items",
+    "shift_coverage_incentives"
+  ]},
+  { label: "Fuel — Setup / Catalog", tables: [
+    "fuel_products", "fuel_product_price_history", "fuel_vendors", "fuel_delivery_drivers",
+    "fuel_tanks", "fuel_tank_calibration", "fuel_pumps", "fuel_branch_markup_settings"
+  ]},
+  { label: "Fuel — Inventory / WAC", tables: [
+    "fuel_inventory_state", "fuel_tank_held_stock", "fuel_tank_transfer_events",
+    "fuel_stock_corrections", "fuel_stock_variances", "fuel_branch_transfers"
+  ]},
+  { label: "Fuel — Deliveries / Orders", tables: [
+    "fuel_deliveries", "delivery_visits", "supplier_trips", "fuel_order_distributions",
+    "fuel_order_check_branch_splits", "fuel_trip_check_visit_splits",
+    "fuel_delivery_supplier_check_allocations", "fuel_delivery_receivable_check_allocations",
+    "fuel_supplier_check_payments", "fuel_branch_receivable_payments"
+  ]},
+  { label: "Fuel — Sales / Dispensing", tables: [
+    "fuel_meter_readings", "fuel_meter_periods", "fuel_dispense_allocations",
+    "fuel_credit_customers", "fuel_credit_transactions", "fuel_dipstick_checks",
+    "fuel_shift_expenses", "fuel_management_takeaways", "fuel_shift_cash_reconciliation"
+  ]},
+  { label: "Business Debt", tables: [
+    "business_debts", "business_debt_payments"
+  ]},
+  { label: "Access Control", tables: [
+    "branches"
+  ]},
+  { label: "Reporting Views — Fuel", tables: [
+    "fuel_sales_data_gaps", "fuel_delivery_stock_reconciliation", "fuel_delivery_batch_report",
+    "fuel_credit_customer_balances", "fuel_credit_sales_by_shift", "fuel_cash_sales_by_shift",
+    "fuel_sales_revenue_lines", "fuel_profit_by_shift", "fuel_profit_cumulative_daily",
+    "fuel_trip_supplier_payment_status", "fuel_visit_debt_breakdown", "fuel_visit_receivable_payment_status"
+  ]},
+  { label: "Reporting Views — Debt & Roster", tables: [
+    "business_debt_schedule", "business_debt_status", "business_debt_summary",
+    "roster_attendance_reconciliation"
+  ]}
+];
+
+const PAGE_SIZE = 50;
+let currentTable = null;
+let currentPage = 0;
+let totalRows = 0;
+
+async function doLogin() {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) { document.getElementById("pinError").textContent = "Sign in failed: " + error.message; return; }
+  await afterLogin(data.user);
+}
+async function afterLogin(user) {
+  const { data: roles } = await supabase.from("user_branch_roles").select("*").eq("user_id", user.id);
+  const isOwner = (roles || []).some(r => r.branch_id === null && r.role === "owner");
+  if (!isOwner) {
+    document.getElementById("pinError").textContent = "Only the owner account can access the Data Viewer.";
+    await supabase.auth.signOut();
+    return;
+  }
+  document.getElementById("pinScreen").style.display = "none";
+  document.getElementById("pinGateScreen").style.display = "block";
+}
+async function checkPassphrase() {
+  const passphrase = document.getElementById("passphraseInput").value;
+  const errEl = document.getElementById("pinGateError");
+  errEl.textContent = "";
+  // Verified entirely server-side (verify_data_viewer_passphrase re-checks
+  // auth.uid() is genuinely an owner and compares against a hashed value in
+  // app_settings) -- this call cannot be bypassed via dev tools the way a
+  // client-side string comparison could.
+  const { data, error } = await supabase.rpc("verify_data_viewer_passphrase", { input_passphrase: passphrase });
+  if (error) { errEl.textContent = "Error: " + error.message; return; }
+  if (!data) { errEl.textContent = "Incorrect passphrase."; document.getElementById("passphraseInput").value = ""; return; }
+  document.getElementById("pinGateScreen").style.display = "none";
+  document.getElementById("app").style.display = "block";
+  initApp();
+}
+async function changePassphrase() {
+  const msg = document.getElementById("changePassMsg");
+  const next = document.getElementById("newPassphraseValue").value;
+  if (!next || next.length < 6) { msg.textContent = "New passphrase must be at least 6 characters."; msg.className = "msg err"; return; }
+  const { error } = await supabase.rpc("fn_set_data_viewer_passphrase", { new_passphrase: next });
+  if (error) { msg.textContent = "Error: " + error.message; msg.className = "msg err"; return; }
+  msg.textContent = "Passphrase updated."; msg.className = "msg ok";
+  document.getElementById("newPassphraseValue").value = "";
+}
+(async function checkSession() {
+  const { data } = await supabase.auth.getSession();
+  if (data && data.session) await afterLogin(data.session.user);
+})();
+
+function initApp() {
+  const sel = document.getElementById("tableSelect");
+  sel.innerHTML = TABLE_GROUPS.map(g =>
+    `<optgroup label="${g.label}">` +
+    g.tables.map(t => `<option value="${t}">${t}</option>`).join("") +
+    `</optgroup>`
+  ).join("");
+  onTableChange();
+}
+
+function onTableChange() {
+  currentTable = document.getElementById("tableSelect").value;
+  currentPage = 0;
+  loadPage();
+}
+
+function changePage(delta) {
+  currentPage += delta;
+  loadPage();
+}
+
+async function loadPage() {
+  const msg = document.getElementById("tableMsg");
+  const thead = document.querySelector("#dataTable thead");
+  const tbody = document.querySelector("#dataTable tbody");
+  msg.textContent = "Loading…";
+  const from = currentPage * PAGE_SIZE;
+  const to = from + PAGE_SIZE - 1;
+
+  // Order by id for stable pagination -- every table in this schema uses a
+  // uuid `id` primary key by convention. Falls back to unordered (still
+  // correct, just not guaranteed stable across pages for the rare table
+  // that doesn't follow the convention) if that column doesn't exist.
+  let { data, error, count } = await supabase.from(currentTable)
+    .select("*", { count: "exact" }).order("id", { ascending: true }).range(from, to);
+  if (error) {
+    ({ data, error, count } = await supabase.from(currentTable).select("*", { count: "exact" }).range(from, to));
+  }
+
+  if (error) {
+    msg.textContent = "Error: " + error.message;
+    msg.className = "small";
+    thead.innerHTML = ""; tbody.innerHTML = "";
+    document.getElementById("prevBtn").disabled = true;
+    document.getElementById("nextBtn").disabled = true;
+    document.getElementById("pageInfo").textContent = "";
+    return;
+  }
+  msg.textContent = "";
+  totalRows = count || 0;
+  const rows = data || [];
+
+  if (!rows.length) {
+    thead.innerHTML = "";
+    tbody.innerHTML = `<tr><td class="small">No rows${currentPage > 0 ? " on this page" : ""}.</td></tr>`;
+  } else {
+    const cols = Object.keys(rows[0]);
+    thead.innerHTML = `<tr>${cols.map(c => `<th>${c}</th>`).join("")}</tr>`;
+    tbody.innerHTML = rows.map(r =>
+      `<tr>${cols.map(c => `<td title="${escapeAttr(formatCell(r[c]))}">${escapeHtml(formatCell(r[c]))}</td>`).join("")}</tr>`
+    ).join("");
+  }
+
+  const totalPages = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
+  document.getElementById("pageInfo").textContent = `Page ${currentPage + 1} of ${totalPages} — ${totalRows} row${totalRows === 1 ? "" : "s"} total`;
+  document.getElementById("prevBtn").disabled = currentPage <= 0;
+  document.getElementById("nextBtn").disabled = currentPage + 1 >= totalPages;
+}
+
+function formatCell(v) {
+  if (v === null || v === undefined) return "";
+  if (typeof v === "object") return JSON.stringify(v);
+  return String(v);
+}
+function escapeHtml(str) {
+  return String(str ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function escapeAttr(str) { return escapeHtml(str); }
+</script>
+</body>
+</html>
