@@ -139,6 +139,9 @@
       <div class="card" id="dashVarianceBanner" style="display:none; border:1px solid var(--danger); background:#450a0a;">
         <p style="margin:0;">⚠ <strong><span id="dashVarianceCount"></span> unresolved stock variance<span id="dashVariancePlural"></span></strong> for this branch — review and resolve in Setup → Tanks &amp; Calibration.</p>
       </div>
+      <div class="card" id="dashGapBanner" style="display:none; border:1px solid #f59e0b; background:#452b00;">
+        <p style="margin:0;">⏳ <strong><span id="dashGapCount"></span> shift<span id="dashGapPlural"></span> with no sales data entered</strong> for this branch — figures shown are provisional until entered. Enter dispensing for that shift/product to clear this and correct the balance automatically.</p>
+      </div>
       <div class="card">
         <h2>Stock Reconciliation — current batch per product</h2>
         <p class="small">Starting stock (tank before + delivered), everything dispensed since, expected remaining, and the latest actual dipstick check. Any gap between expected and actual shows here immediately.</p>
@@ -1950,6 +1953,16 @@ async function loadDashboard() {
   document.getElementById("dashVarianceCount").textContent = varianceCount || "";
   document.getElementById("dashVariancePlural").textContent = varianceCount === 1 ? "" : "s";
 
+  // Clears automatically the moment the missing shift's dispensing is
+  // entered (fuel_sales_data_gaps is a live view, not a flag someone
+  // resolves) -- unlike the variance banner above, there's no separate
+  // resolve action for this one.
+  const { count: gapCount } = await supabase.from("fuel_sales_data_gaps")
+    .select("shift_id", { count: "exact", head: true }).eq("branch_id", currentBranch);
+  document.getElementById("dashGapBanner").style.display = gapCount ? "block" : "none";
+  document.getElementById("dashGapCount").textContent = gapCount || "";
+  document.getElementById("dashGapPlural").textContent = gapCount === 1 ? "" : "s";
+
   const { data: stock } = await supabase.from("fuel_delivery_stock_reconciliation").select("*, fuel_products(name)")
     .eq("branch_id", currentBranch).eq("is_current_batch", true);
   const stockDiv = document.getElementById("stockCards");
@@ -2659,6 +2672,7 @@ async function broadcastOrder(tripId) {
 // tabs already read (fuel_inventory_state, fuel_tanks, fuel_tank_held_stock),
 // just aggregated across every branch+product instead of filtered to one.
 let variancesByCapKey = {};
+let gapsByCapKey = {};
 
 async function loadCapacityTab() {
   const { data: inv } = await supabase.from("fuel_inventory_state").select("branch_id, product_id, current_liters, current_wac");
@@ -2673,6 +2687,19 @@ async function loadCapacityTab() {
   (unresolvedVariances || []).forEach(v => {
     const key = `${v.branch_id}_${v.product_id}`;
     (variancesByCapKey[key] ||= []).push(v);
+  });
+
+  // Same cross-branch pattern -- flags every branch+product with at least
+  // one shift whose dispensing was never entered at all. A row here means
+  // current_liters/current_wac for that branch+product is provisional,
+  // not fully reconciled (see fuel_sales_data_gaps' own comment for the
+  // exact gap definition). Clears itself automatically once the missing
+  // shift's data is entered -- no separate resolve action, unlike variances.
+  const { data: gaps } = await supabase.from("fuel_sales_data_gaps").select("*");
+  gapsByCapKey = {};
+  (gaps || []).forEach(g => {
+    const key = `${g.branch_id}_${g.product_id}`;
+    (gapsByCapKey[key] ||= []).push(g);
   });
 
   // Sum capacity across every tank a branch+product has (usually one). If none
@@ -2710,9 +2737,10 @@ async function loadCapacityTab() {
   document.getElementById("capacityTable").querySelector("tbody").innerHTML = rows.map(r => {
     const key = `${r.branchId}_${r.productId}`;
     const hasVariance = !!variancesByCapKey[key]?.length;
+    const hasGap = !!gapsByCapKey[key]?.length;
     return `
     <tr class="cap-row" style="cursor:pointer;" onclick="toggleCapacityDetail('${key}','${r.branchId}','${r.productId}')">
-      <td>${r.branchCode}</td><td>${hasVariance ? `<span style="color:var(--danger);" title="Unresolved stock variance">⚠</span> ` : ""}${r.productCode}</td><td>${liters(r.currentLiters)}</td>
+      <td>${r.branchCode}</td><td>${hasVariance ? `<span style="color:var(--danger);" title="Unresolved stock variance">⚠</span> ` : ""}${hasGap ? `<span style="color:#f59e0b;" title="Sales data missing for at least one shift -- figure is provisional">⏳</span> ` : ""}${r.productCode}</td><td>${liters(r.currentLiters)}</td>
       <td>${r.capacity !== undefined ? liters(r.capacity) : "no limit set"}</td>
       <td>${r.remaining !== null ? liters(r.remaining) : "—"}</td>
       <td>${liters(r.heldLiters)}</td>
@@ -2728,9 +2756,10 @@ const capacityDetailCache = {};
 
 // "Sold since" counts every non-calibration dispense_allocations row (cash_sale,
 // credit_sale, company_use, etc.) -- i.e. everything that actually reduced tank
-// inventory, per fn_fuel_dispense_decrement_inventory's own invariant (calibration
-// liters are poured back into the tank, not sold/removed). This answers "how fast
-// is stock moving" for reorder timing, not a strict cash+credit revenue figure.
+// inventory, per the same calibration exclusion fn_fuel_recompute_wac_chain's
+// sales replay uses (calibration liters are poured back into the tank, not
+// sold/removed). This answers "how fast is stock moving" for reorder timing,
+// not a strict cash+credit revenue figure.
 async function toggleCapacityDetail(key, branchId, productId) {
   const row = document.getElementById(`capDetailRow_${key}`);
   const isOpen = row.style.display !== "none";
@@ -2748,13 +2777,21 @@ async function toggleCapacityDetail(key, branchId, productId) {
       Review and resolve in Setup → Tanks &amp; Calibration.
     </div>` : "";
 
+  const gaps = gapsByCapKey[key] || [];
+  const gapHtml = gaps.length ? `
+    <div style="margin-top:8px; padding-top:8px; border-top:1px solid var(--border); color:#f59e0b;">
+      ⏳ No sales data entered for ${gaps.length} shift${gaps.length > 1 ? "s" : ""} —
+      ${gaps.map(g => `${g.shift_label} on ${g.shift_date}`).join(", ")}.
+      Current stock/WAC above is provisional until entered — enter dispensing for that shift/product to clear this and correct the balance automatically.
+    </div>` : "";
+
   const { data: lastDeliveryRows } = await supabase.from("fuel_deliveries")
     .select("delivery_date, invoiced_liters, cost_per_liter, dipstick_before_liters")
     .eq("branch_id", branchId).eq("product_id", productId)
     .order("delivery_date", { ascending: false }).order("created_at", { ascending: false }).limit(1);
   const last = (lastDeliveryRows || [])[0];
   if (!last) {
-    const html = `No delivery recorded yet for this branch/product.${varianceHtml}`;
+    const html = `No delivery recorded yet for this branch/product.${varianceHtml}${gapHtml}`;
     capacityDetailCache[key] = html; el.innerHTML = html; return;
   }
 
@@ -2768,7 +2805,7 @@ async function toggleCapacityDetail(key, branchId, productId) {
   const html = `
     <div>Last delivery: <strong>${last.delivery_date}</strong> — ${liters(last.invoiced_liters)} @ ${peso(last.cost_per_liter)}/L</div>
     <div>Stock before that delivery: ${liters(last.dipstick_before_liters)}</div>
-    <div>Sold since: ${liters(soldSince)}</div>${varianceHtml}`;
+    <div>Sold since: ${liters(soldSince)}</div>${varianceHtml}${gapHtml}`;
   capacityDetailCache[key] = html;
   el.innerHTML = html;
 }
