@@ -159,6 +159,16 @@
       <table id="otTable"><thead><tr><th>Employee</th><th>Date</th><th>OT Hours</th><th>OT Wage</th><th>Your Name</th><th></th></tr></thead><tbody></tbody></table>
     </div>
     <div class="card">
+      <h2>Undertime Needs Review</h2>
+      <p style="color:var(--muted); font-size:13px;">Auto-detected when a TM clocks out more than 30 minutes before their scheduled shift end (e.g. sent home early due to a stockout). Approving or rejecting is a record only — it does not change pay, which already reflects actual hours worked.</p>
+      <table id="undertimeTable"><thead><tr><th>Employee</th><th>Date</th><th>Minutes Early</th><th>Reason (optional)</th><th>Your Name</th><th></th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="card">
+      <h2>Stockout Clock-In Review</h2>
+      <p style="color:var(--muted); font-size:13px;">"No product to sell — is this TM allowed to be on work?" Flagged automatically when a TM clocks in while a product is actively stocked out at that branch (any product, not matched to a specific TM). Never blocks the clock-in itself.</p>
+      <table id="stockoutClockinTable"><thead><tr><th>Employee</th><th>Branch</th><th>Time In</th><th>Note (optional)</th><th>Your Name</th><th></th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="card">
       <h2>Shift Coverage Incentives</h2>
       <p style="color:var(--muted); font-size:13px;">Detected automatically when a rostered TM no-shows a shift and a different TM covers it IN ADDITION to their own separately-rostered shift that same day (double duty). Nothing reaches payroll until you approve a row — the percentage applied is whatever's set in Wage Rules at the moment you approve, and stays frozen on that row even if the setting changes later.</p>
       <table id="coverageTable"><thead><tr><th>Date</th><th>Branch</th><th>Shift</th><th>Absent</th><th>Covered By</th><th>Basic Pay</th><th>Incentive (at current %)</th><th>Your Name</th><th></th></tr></thead><tbody></tbody></table>
@@ -634,6 +644,55 @@ async function loadReviewQueue() {
     </tr>`).join("") || "<tr><td colspan='6' class='small'>Nothing pending.</td></tr>";
   }
 
+  // Auto-detected (fn_flag_undertime), not a manual checkbox like OT --
+  // shown here purely for accountability/pattern-tracking. Approving does
+  // NOT touch total_wages (confirmed with Mario: pay already reflects
+  // actual hours worked, same as OT approval never changing wages either).
+  const { data: underRows, error: underErr } = await supabase.from("timesheet_entries")
+    .select("id, time_in, undertime_minutes, undertime_reason, employees(full_name, tm_number)")
+    .eq("is_undertime", true).eq("undertime_confirmed", false).eq("undertime_rejected", false)
+    .order("time_in", { ascending: false }).limit(100);
+  const underBody = document.querySelector("#undertimeTable tbody");
+  if (underErr) {
+    underBody.innerHTML = `<tr><td colspan="6" class="small">Error: ${underErr.message}</td></tr>`;
+  } else {
+    underBody.innerHTML = (underRows || []).map(e => `<tr>
+      <td>${e.employees?.full_name || ""} (${e.employees?.tm_number || ""})</td>
+      <td>${new Date(e.time_in).toLocaleDateString()}</td>
+      <td>${Math.round(e.undertime_minutes)} min</td>
+      <td><input type="text" id="under_reason_${e.id}" value="${e.undertime_reason || ""}" placeholder="e.g. stockout, sent home early" style="width:180px;"></td>
+      <td><input type="text" id="under_by_${e.id}" placeholder="Your name" style="width:110px;"></td>
+      <td>
+        <button onclick="reviewUndertime('${e.id}', true)">Approve</button>
+        <button onclick="reviewUndertime('${e.id}', false)" class="secondary">Reject</button>
+      </td>
+    </tr>`).join("") || "<tr><td colspan='6' class='small'>Nothing pending.</td></tr>";
+  }
+
+  // Never blocks the clock-in (fn_flag_stockout_clockin only sets a flag) --
+  // any active stockout at the branch, not matched to a specific product
+  // per TM (no reliable employee-to-product mapping exists in this app).
+  const { data: soRows, error: soErr } = await supabase.from("timesheet_entries")
+    .select("id, time_in, branches(code), employees(full_name, tm_number)")
+    .eq("stockout_clockin_flagged", true).eq("stockout_clockin_reviewed", false)
+    .order("time_in", { ascending: false }).limit(100);
+  const soBody = document.querySelector("#stockoutClockinTable tbody");
+  if (soErr) {
+    soBody.innerHTML = `<tr><td colspan="6" class="small">Error: ${soErr.message}</td></tr>`;
+  } else {
+    soBody.innerHTML = (soRows || []).map(e => `<tr>
+      <td>${e.employees?.full_name || ""} (${e.employees?.tm_number || ""})</td>
+      <td>${e.branches?.code || ""}</td>
+      <td>${new Date(e.time_in).toLocaleString()}</td>
+      <td><input type="text" id="so_note_${e.id}" placeholder="Optional note" style="width:180px;"></td>
+      <td><input type="text" id="so_by_${e.id}" placeholder="Your name" style="width:110px;"></td>
+      <td>
+        <button onclick="reviewStockoutClockin('${e.id}', 'legitimate')">Confirm Legitimate</button>
+        <button onclick="reviewStockoutClockin('${e.id}', 'should_have_left_early')" class="secondary">Should Have Left Early</button>
+      </td>
+    </tr>`).join("") || "<tr><td colspan='6' class='small'>Nothing pending.</td></tr>";
+  }
+
   await loadCoverageIncentives();
 }
 
@@ -729,6 +788,43 @@ async function reviewOt(entryId, approve) {
     ? { ot_confirmed: true, ot_confirmed_by: byVal, ot_confirmed_at: new Date().toISOString() }
     : { ot_rejected: true, ot_confirmed_by: byVal, ot_confirmed_at: new Date().toISOString() };
   const { error } = await supabase.from("timesheet_entries").update(payload).eq("id", entryId);
+  if (error) { alert("Error: " + error.message); return; }
+  loadReviewQueue();
+}
+
+// Deliberately does NOT touch total_wages -- confirmed with Mario this is
+// pure record-keeping, same as reviewOt() above never changing wages
+// either. Pay already reflects actual hours worked (LEAST(total_hours, 8)
+// in calculate_timesheet_wage) -- there is no penalty here to waive.
+async function reviewUndertime(entryId, approve) {
+  const byInput = document.getElementById(`under_by_${entryId}`);
+  const byVal = byInput.value.trim();
+  if (!byVal) { alert("Your name is required."); return; }
+  const reason = document.getElementById(`under_reason_${entryId}`).value.trim();
+  const payload = approve
+    ? { undertime_confirmed: true, undertime_confirmed_by: byVal, undertime_confirmed_at: new Date().toISOString(), undertime_reason: reason || null }
+    : { undertime_rejected: true, undertime_confirmed_by: byVal, undertime_confirmed_at: new Date().toISOString(), undertime_reason: reason || null };
+  const { error } = await supabase.from("timesheet_entries").update(payload).eq("id", entryId);
+  if (error) { alert("Error: " + error.message); return; }
+  loadReviewQueue();
+}
+
+// Never blocks the clock-in itself (already happened) -- this only records
+// Mario's after-the-fact judgment call for accountability/scheduling
+// purposes, per his exact question: "No product to sell -- is this TM
+// allowed to be on work?"
+async function reviewStockoutClockin(entryId, resolution) {
+  const byInput = document.getElementById(`so_by_${entryId}`);
+  const byVal = byInput.value.trim();
+  if (!byVal) { alert("Your name is required."); return; }
+  const note = document.getElementById(`so_note_${entryId}`).value.trim();
+  const { error } = await supabase.from("timesheet_entries").update({
+    stockout_clockin_reviewed: true,
+    stockout_clockin_resolution: resolution,
+    stockout_clockin_note: note || null,
+    stockout_clockin_reviewed_by: byVal,
+    stockout_clockin_reviewed_at: new Date().toISOString()
+  }).eq("id", entryId);
   if (error) { alert("Error: " + error.message); return; }
   loadReviewQueue();
 }
