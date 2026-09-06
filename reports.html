@@ -67,11 +67,12 @@
         <option value="cash_recon">Cash Reconciliation History</option>
         <option value="attendance">Timesheet / Attendance</option>
         <option value="wholesale_checks">Wholesale Supply & Checks (GS4/GS5)</option>
+        <option value="financial_position">Financial Position (all branches, live)</option>
       </select>
       <p class="small" id="templateHint"></p>
     </div>
 
-    <div class="card">
+    <div class="card" id="filtersCard">
       <h2>2. Filters</h2>
       <div class="row">
         <div><label>Branch</label><select id="fBranch" onchange="onBranchFilterChange()"></select></div>
@@ -86,14 +87,51 @@
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" id="columnsCard">
       <h2>3. Columns</h2>
       <div class="col-grid" id="columnChecks"></div>
     </div>
 
-    <button onclick="runReport()">Run Report</button>
+    <button onclick="runReport()" id="runReportBtn">Run Report</button>
     <button class="secondary" onclick="exportExcel()" id="exportBtn" disabled>⬇ Export to Excel</button>
     <div class="msg" id="reportMsg"></div>
+
+    <div class="card" id="finPosCard" style="display:none;">
+      <h2>Financial Position — All Branches</h2>
+      <p class="small">Live snapshot, not a saved report — each figure below is the same underlying data shown in its detailed view in Sales Admin. Tap a card to drill down.</p>
+      <div class="col-grid" style="grid-template-columns:repeat(auto-fit,minmax(210px,1fr));">
+        <a href="sales-admin.html#capacity" class="badge" style="display:block; padding:14px; text-decoration:none; color:var(--text);">
+          <div class="small">Total Inventory Value</div>
+          <div style="font-size:21px; font-weight:700; margin:4px 0;" id="fpInventoryValue">—</div>
+          <div class="small" style="color:var(--accent);">→ Capacity Overview</div>
+        </a>
+        <a href="sales-admin.html#cashrecon" class="badge" style="display:block; padding:14px; text-decoration:none; color:var(--text);">
+          <div class="small">Cash on Hand</div>
+          <div style="font-size:21px; font-weight:700; margin:4px 0;" id="fpCashOnHand">—</div>
+          <div class="small" style="color:var(--accent);">→ Cash Reconciliation</div>
+        </a>
+        <a href="sales-admin.html#debt" class="badge" style="display:block; padding:14px; text-decoration:none; color:var(--text);">
+          <div class="small">Total Liabilities</div>
+          <div style="font-size:21px; font-weight:700; margin:4px 0; color:var(--danger);" id="fpLiabilities">—</div>
+          <div class="small" style="color:var(--accent);">→ Debt Tracker</div>
+        </a>
+        <div class="badge" style="display:block; padding:14px; border-color:var(--accent);">
+          <div class="small">Net Position</div>
+          <div style="font-size:21px; font-weight:700; margin:4px 0;" id="fpNetPosition">—</div>
+          <div class="small">Inventory + Cash − Liabilities</div>
+        </div>
+      </div>
+      <p class="small" id="fpAsOf" style="margin-top:12px;"></p>
+
+      <h2 style="margin-top:22px;">Expense Breakdown</h2>
+      <div class="row">
+        <div><label>From Date</label><input type="date" id="fpExpFrom" onchange="loadFinPosExpenses()"></div>
+        <div><label>To Date</label><input type="date" id="fpExpTo" onchange="loadFinPosExpenses()"></div>
+        <div><label>Branch</label><select id="fpExpBranch" onchange="loadFinPosExpenses()"><option value="">All branches</option></select></div>
+      </div>
+      <div class="col-grid" id="fpExpenseBadges" style="margin-top:10px;"></div>
+      <p class="small"><a href="sales-admin.html#expenses" style="color:var(--accent);">→ View itemized expenses</a></p>
+    </div>
 
     <div class="card" id="resultsCard" style="display:none;">
       <h2>Results (<span id="resultCount">0</span> rows)</h2>
@@ -254,9 +292,28 @@ async function initApp() {
   onTemplateChange();
 }
 function isoDate(d) { const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,"0"),day=String(d.getDate()).padStart(2,"0"); return `${y}-${m}-${day}`; }
+function peso(n) { return "₱" + Number(n||0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
 function onTemplateChange() {
-  const t = TEMPLATES[document.getElementById("templateSelect").value];
+  const templateKey = document.getElementById("templateSelect").value;
+  const isFinPos = templateKey === "financial_position";
+  document.getElementById("filtersCard").style.display = isFinPos ? "none" : "block";
+  document.getElementById("columnsCard").style.display = isFinPos ? "none" : "block";
+  document.getElementById("runReportBtn").style.display = isFinPos ? "none" : "inline-block";
+  document.getElementById("exportBtn").style.display = isFinPos ? "none" : "inline-block";
+  document.getElementById("finPosCard").style.display = isFinPos ? "block" : "none";
+  document.getElementById("resultsCard").style.display = "none";
+  document.getElementById("reportMsg").textContent = "";
+  if (isFinPos) {
+    document.getElementById("templateHint").textContent = "Live snapshot across every branch you have access to — not a saved report, just a different lens on the same underlying data used elsewhere in Sales Admin.";
+    if (!document.getElementById("fpExpFrom").value) document.getElementById("fpExpFrom").value = isoDate(new Date(Date.now() - 30 * 86400000));
+    if (!document.getElementById("fpExpTo").value) document.getElementById("fpExpTo").value = isoDate(new Date());
+    const branchSel = document.getElementById("fpExpBranch");
+    if (branchSel.options.length <= 1) branchSel.innerHTML += branches.map(b => `<option value="${b.id}">${b.code} — ${b.name}</option>`).join("");
+    loadFinancialPosition();
+    return;
+  }
+  const t = TEMPLATES[templateKey];
   document.getElementById("templateHint").textContent = t.hint;
   document.getElementById("productFilterWrap").style.display = t.hasProductFilter ? "flex" : "none";
   document.getElementById("deliveryPickWrap").style.display = t.hasDeliveryPick ? "flex" : "none";
@@ -278,6 +335,62 @@ async function loadDeliveryPicker() {
     .eq("branch_id", branchId).order("delivery_date", { ascending: false }).limit(50);
   document.getElementById("fDelivery").innerHTML = "<option value=''>— use date range above —</option>" +
     (data || []).map(d => `<option value="${d.id}">${d.delivery_date} — ${d.fuel_products?.name || ""}</option>`).join("");
+}
+
+// Financial Position -- a live lens over data that already exists elsewhere
+// (fuel_inventory_state, business_debt_summary, fuel_shift_cash_reconciliation),
+// never a second source of truth for any of the three figures. Cash on Hand
+// has no prior definition anywhere in this app; per Mario, it's defined here
+// as the sum of each branch's most recently reconciled shift's actual counted
+// cash -- a snapshot of the last physical count, not a live running balance,
+// so it can read stale if a branch hasn't reconciled recently.
+async function loadFinancialPosition() {
+  ["fpInventoryValue", "fpCashOnHand", "fpLiabilities", "fpNetPosition"].forEach(id => document.getElementById(id).textContent = "…");
+
+  const { data: inv } = await supabase.from("fuel_inventory_state").select("current_liters, current_wac");
+  const inventoryValue = (inv || []).reduce((sum, r) => sum + Number(r.current_liters || 0) * Number(r.current_wac || 0), 0);
+
+  const cashPerBranch = await Promise.all(branches.map(async b => {
+    const { data } = await supabase.from("fuel_shift_cash_reconciliation")
+      .select("actual_cash_counted")
+      .eq("branch_id", b.id)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    return data && data[0] ? Number(data[0].actual_cash_counted || 0) : 0;
+  }));
+  const cashOnHand = cashPerBranch.reduce((a, v) => a + v, 0);
+
+  const { data: debt } = await supabase.from("business_debt_summary").select("grand_total_balance").single();
+  const liabilities = Number(debt?.grand_total_balance || 0);
+
+  document.getElementById("fpInventoryValue").textContent = peso(inventoryValue);
+  document.getElementById("fpCashOnHand").textContent = peso(cashOnHand);
+  document.getElementById("fpLiabilities").textContent = peso(liabilities);
+  document.getElementById("fpNetPosition").textContent = peso(inventoryValue + cashOnHand - liabilities);
+  document.getElementById("fpAsOf").textContent = `As of ${new Date().toLocaleString()}. Cash on Hand = sum of each branch's most recently reconciled shift's counted cash.`;
+
+  loadFinPosExpenses();
+}
+
+async function loadFinPosExpenses() {
+  const from = document.getElementById("fpExpFrom").value;
+  const to = document.getElementById("fpExpTo").value;
+  const branchId = document.getElementById("fpExpBranch").value;
+  const badges = document.getElementById("fpExpenseBadges");
+  if (!from || !to) return;
+
+  let q = supabase.from("fuel_shift_expenses").select("category, amount")
+    .gte("recorded_at", from).lte("recorded_at", to + "T23:59:59");
+  if (branchId) q = q.eq("branch_id", branchId);
+  const { data, error } = await q;
+  if (error) { badges.innerHTML = `<span class="small">Error: ${error.message}</span>`; return; }
+
+  const labels = { cash_advance: "Cash Advance / Loan", utility_bill: "Utility Bill", other: "Other" };
+  const totals = { cash_advance: 0, utility_bill: 0, other: 0 };
+  (data || []).forEach(r => { if (totals[r.category] !== undefined) totals[r.category] += Number(r.amount); });
+  const grandTotal = totals.cash_advance + totals.utility_bill + totals.other;
+  badges.innerHTML = Object.keys(labels).map(k => `<span class="badge">${labels[k]}: ${peso(totals[k])}</span>`).join("") +
+    `<span class="badge" style="border-color:var(--accent); color:var(--accent);">Total: ${peso(grandTotal)}</span>`;
 }
 
 async function runReport() {

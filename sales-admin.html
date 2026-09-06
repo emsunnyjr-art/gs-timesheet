@@ -944,6 +944,18 @@ async function initApp() {
   startNewVisit(); // blank starting state (renders visit 0's slots); does not touch a stored draft
   checkForVisitDraft(); // offers to restore it if one exists, on top of the blank state above
   onTabShown("dashboard");
+  activateTabFromHash(); // e.g. sales-admin.html#debt, used by Reports' Financial Position drill-down links
+}
+
+function activateTabFromHash() {
+  const tabName = location.hash.replace("#", "");
+  const tabEl = document.querySelector(`.tab[data-tab="${tabName}"]`);
+  if (!tabName || !tabEl) return;
+  document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+  document.querySelectorAll(".panel").forEach(x => x.classList.remove("active"));
+  tabEl.classList.add("active");
+  document.getElementById("panel-" + tabName).classList.add("active");
+  onTabShown(tabName);
 }
 
 function onBranchChange() {
