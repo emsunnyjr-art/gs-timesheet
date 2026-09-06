@@ -142,6 +142,9 @@
       <div class="card" id="dashGapBanner" style="display:none; border:1px solid #f59e0b; background:#452b00;">
         <p style="margin:0;">⏳ <strong><span id="dashGapCount"></span> shift<span id="dashGapPlural"></span> with no sales data entered</strong> for this branch — figures shown are provisional until entered. Enter dispensing for that shift/product to clear this and correct the balance automatically.</p>
       </div>
+      <div class="card" id="dashStockoutBanner" style="display:none; border:1px solid #3b82f6; background:#1e3a5f;">
+        <p style="margin:0;">⏸ <strong><span id="dashStockoutCount"></span> product<span id="dashStockoutPlural"></span> currently stocked out</strong> for this branch — normal, not an error. Sales resume automatically once restocked.</p>
+      </div>
       <div class="card">
         <h2>Stock Reconciliation — current batch per product</h2>
         <p class="small">Starting stock (tank before + delivered), everything dispensed since, expected remaining, and the latest actual dipstick check. Any gap between expected and actual shows here immediately.</p>
@@ -651,7 +654,7 @@
           </div>
           <button id="tkSaveBtn" onclick="saveTank()">Save Tank</button>
           <div class="msg" id="tkMsg"></div>
-          <table id="tanksTable" style="margin-top:14px;"><thead><tr><th>Product</th><th>Label</th><th>Dipstick Mode</th><th>Capacity (L)</th><th>Current Stock</th><th></th></tr></thead><tbody></tbody></table>
+          <table id="tanksTable" style="margin-top:14px;"><thead><tr><th>Product</th><th>Label</th><th>Dipstick Mode</th><th>Capacity (L)</th><th>Dead Stock (L)</th><th>Current Stock</th><th></th></tr></thead><tbody></tbody></table>
         </div>
         <div class="card" id="stockVariancesCard" style="display:none; border:1px solid var(--danger);">
           <h2>Unresolved Stock Variances — This Branch</h2>
@@ -1963,6 +1966,16 @@ async function loadDashboard() {
   document.getElementById("dashGapCount").textContent = gapCount || "";
   document.getElementById("dashGapPlural").textContent = gapCount === 1 ? "" : "s";
 
+  // Informational only, distinct calm styling from the variance/gap banners
+  // above -- a stockout is normal operational reality (tank hit its
+  // physical dead-stock level), not something wrong. Auto-clears the
+  // moment a delivery brings stock back above threshold (fn_fuel_check_stockout).
+  const { count: stockoutCount } = await supabase.from("fuel_stockout_events")
+    .select("id", { count: "exact", head: true }).eq("branch_id", currentBranch).is("resumed_at", null);
+  document.getElementById("dashStockoutBanner").style.display = stockoutCount ? "block" : "none";
+  document.getElementById("dashStockoutCount").textContent = stockoutCount || "";
+  document.getElementById("dashStockoutPlural").textContent = stockoutCount === 1 ? "" : "s";
+
   const { data: stock } = await supabase.from("fuel_delivery_stock_reconciliation").select("*, fuel_products(name)")
     .eq("branch_id", currentBranch).eq("is_current_batch", true);
   const stockDiv = document.getElementById("stockCards");
@@ -2673,6 +2686,7 @@ async function broadcastOrder(tripId) {
 // just aggregated across every branch+product instead of filtered to one.
 let variancesByCapKey = {};
 let gapsByCapKey = {};
+let stockoutsByCapKey = {};
 
 async function loadCapacityTab() {
   const { data: inv } = await supabase.from("fuel_inventory_state").select("branch_id, product_id, current_liters, current_wac");
@@ -2700,6 +2714,18 @@ async function loadCapacityTab() {
   (gaps || []).forEach(g => {
     const key = `${g.branch_id}_${g.product_id}`;
     (gapsByCapKey[key] ||= []).push(g);
+  });
+
+  // Distinct from both above: informational, never blocking, auto-clearing
+  // status (see fuel_stockout_events' own comment). Most recent event per
+  // branch+product (open or already-resumed) is kept for the badge/detail
+  // note-editing UI -- ordering by started_at desc means [0] is always the
+  // one to show.
+  const { data: stockouts } = await supabase.from("fuel_stockout_events").select("*").order("started_at", { ascending: false });
+  stockoutsByCapKey = {};
+  (stockouts || []).forEach(s => {
+    const key = `${s.branch_id}_${s.product_id}`;
+    (stockoutsByCapKey[key] ||= []).push(s);
   });
 
   // Sum capacity across every tank a branch+product has (usually one). If none
@@ -2738,9 +2764,10 @@ async function loadCapacityTab() {
     const key = `${r.branchId}_${r.productId}`;
     const hasVariance = !!variancesByCapKey[key]?.length;
     const hasGap = !!gapsByCapKey[key]?.length;
+    const isStockedOut = stockoutsByCapKey[key]?.[0] && !stockoutsByCapKey[key][0].resumed_at;
     return `
     <tr class="cap-row" style="cursor:pointer;" onclick="toggleCapacityDetail('${key}','${r.branchId}','${r.productId}')">
-      <td>${r.branchCode}</td><td>${hasVariance ? `<span style="color:var(--danger);" title="Unresolved stock variance">⚠</span> ` : ""}${hasGap ? `<span style="color:#f59e0b;" title="Sales data missing for at least one shift -- figure is provisional">⏳</span> ` : ""}${r.productCode}</td><td>${liters(r.currentLiters)}</td>
+      <td>${r.branchCode}</td><td>${hasVariance ? `<span style="color:var(--danger);" title="Unresolved stock variance">⚠</span> ` : ""}${hasGap ? `<span style="color:#f59e0b;" title="Sales data missing for at least one shift -- figure is provisional">⏳</span> ` : ""}${isStockedOut ? `<span style="color:#3b82f6;" title="Currently stocked out -- normal, not an error">⏸</span> ` : ""}${r.productCode}</td><td>${liters(r.currentLiters)}</td>
       <td>${r.capacity !== undefined ? liters(r.capacity) : "no limit set"}</td>
       <td>${r.remaining !== null ? liters(r.remaining) : "—"}</td>
       <td>${liters(r.heldLiters)}</td>
@@ -2785,13 +2812,31 @@ async function toggleCapacityDetail(key, branchId, productId) {
       Current stock/WAC above is provisional until entered — enter dispensing for that shift/product to clear this and correct the balance automatically.
     </div>` : "";
 
+  // Most recent stockout event (open or already-resumed) for this
+  // branch+product, if any -- shown with an editable note (optional,
+  // never required) rather than just a static line, per Mario's explicit
+  // "log when it ran out and resumed" request. Distinct calm color, never
+  // suggests something needs investigating the way the variance block does.
+  const stockout = (stockoutsByCapKey[key] || [])[0];
+  const stockoutHtml = stockout ? `
+    <div style="margin-top:8px; padding-top:8px; border-top:1px solid var(--border); color:#3b82f6;">
+      ⏸ ${stockout.resumed_at
+        ? `Stocked out ${new Date(stockout.started_at).toLocaleString()} → ${new Date(stockout.resumed_at).toLocaleString()} (resumed).`
+        : `Currently stocked out since ${new Date(stockout.started_at).toLocaleString()}. Resumes automatically once restocked.`}
+      <div style="margin-top:6px;">
+        <input type="text" id="stockoutNote_${stockout.id}" value="${escapeHtml(stockout.note || "")}" placeholder="Optional note (e.g. ran out ~3pm, resumed 6:15pm after delivery)" style="width:100%;">
+        <button class="small secondary" style="margin-top:4px;" onclick="saveStockoutNote('${stockout.id}')">Save Note</button>
+        <span class="small" id="stockoutNoteMsg_${stockout.id}" style="margin-left:8px;"></span>
+      </div>
+    </div>` : "";
+
   const { data: lastDeliveryRows } = await supabase.from("fuel_deliveries")
     .select("delivery_date, invoiced_liters, cost_per_liter, dipstick_before_liters")
     .eq("branch_id", branchId).eq("product_id", productId)
     .order("delivery_date", { ascending: false }).order("created_at", { ascending: false }).limit(1);
   const last = (lastDeliveryRows || [])[0];
   if (!last) {
-    const html = `No delivery recorded yet for this branch/product.${varianceHtml}${gapHtml}`;
+    const html = `No delivery recorded yet for this branch/product.${varianceHtml}${gapHtml}${stockoutHtml}`;
     capacityDetailCache[key] = html; el.innerHTML = html; return;
   }
 
@@ -2805,9 +2850,23 @@ async function toggleCapacityDetail(key, branchId, productId) {
   const html = `
     <div>Last delivery: <strong>${last.delivery_date}</strong> — ${liters(last.invoiced_liters)} @ ${peso(last.cost_per_liter)}/L</div>
     <div>Stock before that delivery: ${liters(last.dipstick_before_liters)}</div>
-    <div>Sold since: ${liters(soldSince)}</div>${varianceHtml}${gapHtml}`;
+    <div>Sold since: ${liters(soldSince)}</div>${varianceHtml}${gapHtml}${stockoutHtml}`;
   capacityDetailCache[key] = html;
   el.innerHTML = html;
+}
+
+// Optional, never required -- purely for operational record-keeping (per
+// Mario's explicit request), not a required field and not part of the
+// auto-detect/auto-clear mechanism at all (that's entirely the trigger's
+// job). Either the owner or a branch manager can save this (RLS: any
+// authenticated user with a role, same as fn_fuel_check_stockout's own
+// writes) -- not owner-only.
+async function saveStockoutNote(eventId) {
+  const msg = document.getElementById(`stockoutNoteMsg_${eventId}`);
+  const note = document.getElementById(`stockoutNote_${eventId}`).value;
+  const { error } = await supabase.from("fuel_stockout_events").update({ note }).eq("id", eventId);
+  if (error) { msg.textContent = "Error: " + error.message; msg.style.color = "var(--danger)"; return; }
+  msg.textContent = "✓ Saved"; msg.style.color = "var(--accent)";
 }
 
 async function loadChecksTab() {
@@ -3907,6 +3966,7 @@ async function loadSetupTab() {
         <option value="direct_liter" ${t.dipstick_mode === "direct_liter" ? "selected" : ""}>Direct Liters</option>
       </select></td>
       <td><input type="number" step="0.01" id="tankCapacity_${t.id}" value="${t.capacity_liters ?? ""}" placeholder="no limit" style="max-width:110px;" oninput="markTankRowDirty('${t.id}')"></td>
+      <td><input type="number" step="0.01" id="tankDeadStock_${t.id}" value="${t.dead_stock_liters ?? ""}" placeholder="not tracked" style="max-width:110px;" oninput="markTankRowDirty('${t.id}')"></td>
       <td>${liters(state.liters)}</td>
       <td style="white-space:nowrap;">
         <button class="small" id="tankSaveBtn_${t.id}" style="margin:0 6px 6px 0; padding:6px 10px;" onclick="saveTankRow('${t.id}')" disabled>Save</button>
@@ -3915,7 +3975,7 @@ async function loadSetupTab() {
       </td>
     </tr>
     <tr id="stockCorrRow_${t.id}" style="display:none;">
-      <td colspan="6">
+      <td colspan="7">
         <p class="small" style="margin:0 0 10px;">Enter what you physically measured in the tank right now — this becomes the new Current Stock once you tap Save Correction below.</p>
         <div class="row" style="align-items:flex-end;">
           ${t.dipstick_mode === "calibration_curve" ? `<div><label>Dipstick Reading (cm)</label><input type="number" step="0.01" id="stockCorrCm_${t.id}"></div>` : ""}
@@ -4118,15 +4178,19 @@ function markTankRowDirty(tankId) {
 // forward -- historical rows keep whatever height_cm/liters they were saved
 // with, since nothing here re-derives them from the tank's current mode.
 // Blank capacity clears the limit (no overflow tracking for this tank).
+// Blank Dead Stock means "not tracked" (fn_fuel_check_stockout never flags
+// this tank), same null-means-opt-out convention as capacity.
 async function saveTankRow(tankId) {
   const saveBtn = document.getElementById(`tankSaveBtn_${tankId}`);
   const msg = document.getElementById(`tankRowMsg_${tankId}`);
   const dipstickMode = document.getElementById(`tankDipstickMode_${tankId}`).value;
   const capacityRaw = document.getElementById(`tankCapacity_${tankId}`).value;
   const capacity = capacityRaw === "" ? null : parseFloat(capacityRaw);
+  const deadStockRaw = document.getElementById(`tankDeadStock_${tankId}`).value;
+  const deadStock = deadStockRaw === "" ? null : parseFloat(deadStockRaw);
 
   saveBtn.disabled = true;
-  const { error } = await supabase.from("fuel_tanks").update({ dipstick_mode: dipstickMode, capacity_liters: capacity }).eq("id", tankId);
+  const { error } = await supabase.from("fuel_tanks").update({ dipstick_mode: dipstickMode, capacity_liters: capacity, dead_stock_liters: deadStock }).eq("id", tankId);
   if (error) {
     msg.textContent = "Error: " + error.message; msg.style.color = "var(--danger)";
     saveBtn.disabled = false; // let them retry without re-entering anything
