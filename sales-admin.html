@@ -403,7 +403,6 @@
               <option value="cash_sale">Cash Sale</option>
               <option value="credit_sale">Credit / PO Sale</option>
               <option value="calibration">Calibration</option>
-              <option value="company_use">Company Use</option>
               <option value="machine_error">Machine Error</option>
               <option value="given_away">Given Away</option>
               <option value="other">Other</option>
@@ -412,6 +411,7 @@
           <div><label>Liters</label><input type="number" step="0.01" id="allocLiters"></div>
           <div id="allocCustomerWrap" style="display:none;"><label>Credit Customer</label><select id="allocCustomer"></select></div>
         </div>
+        <p class="small">Company Use (internal dispensing) is logged from the kiosk (Sales On Shift) only, where the responsible TM's ID is scanned to authorize it — not available here.</p>
         <label>Notes (optional)</label>
         <input id="allocNotes">
         <button onclick="addAllocation()">Add Allocation</button>
@@ -3791,11 +3791,19 @@ async function showAllocationPanel() {
 
   document.getElementById("allocCustomer").innerHTML = creditCustomers.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
 
-  const { data: allocs } = await supabase.from("fuel_dispense_allocations").select("*").eq("meter_period_id", period.id);
+  const { data: allocs } = await supabase.from("fuel_dispense_allocations")
+    .select("*, employees:company_use_employee_id(full_name, tm_number)").eq("meter_period_id", period.id);
   const sum = (allocs || []).reduce((a,r) => a + Number(r.liters), 0);
-  document.getElementById("allocTable").querySelector("tbody").innerHTML = (allocs || []).map(a =>
-    `<tr><td>${a.category.replace("_"," ")}</td><td>${liters(a.liters)}</td><td>${a.notes || ""}</td></tr>`
-  ).join("");
+  const COMPANY_USE_REASON_LABELS = { company_vehicle: "Company Vehicle", generator: "Generator", other: "Other Internal Use" };
+  document.getElementById("allocTable").querySelector("tbody").innerHTML = (allocs || []).map(a => {
+    // Not a sale -- visibly distinct from cash_sale/credit_sale rows, and
+    // shows exactly who authorized it (QR-scanned on the kiosk, never
+    // enterable from this admin screen -- see the note above this table).
+    const notesCell = a.category === "company_use"
+      ? `${COMPANY_USE_REASON_LABELS[a.company_use_reason] || a.company_use_reason || ""}${a.company_use_vehicle ? " — " + a.company_use_vehicle : ""} — authorized by ${a.employees ? `${a.employees.full_name} (${a.employees.tm_number})` : "—"}`
+      : (a.notes || "");
+    return `<tr><td>${a.category.replace("_"," ")}</td><td>${liters(a.liters)}</td><td>${notesCell}</td></tr>`;
+  }).join("");
   document.getElementById("allocSum").textContent = sum.toFixed(2) + " L";
   const remaining = Number(period.total_liters_dispensed) - sum;
   document.getElementById("allocRemaining").textContent = remaining.toFixed(2) + " L";

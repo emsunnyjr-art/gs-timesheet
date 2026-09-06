@@ -249,6 +249,12 @@
         <p class="small" style="color:var(--orange);">Scan the TM's ID to authorize this company fuel take-out.</p>
         <button class="btn-secondary" type="button" onclick="startQrFor('company')">📷 Scan TM ID</button>
         <div class="verified-box" id="companyVerifiedBox"><img id="companyVerifiedPhoto"><div><strong id="companyVerifiedName"></strong><br><span class="small">Verified ✓</span></div></div>
+        <label>Reason</label>
+        <select id="allocCompanyReason">
+          <option value="company_vehicle">Company Vehicle</option>
+          <option value="generator">Generator</option>
+          <option value="other">Other Internal Use</option>
+        </select>
         <label>Vehicle</label><input type="text" id="allocVehicle" placeholder="e.g. plate / vehicle name">
       </div>
       <button class="btn-primary" onclick="addAllocation()">Add</button>
@@ -907,6 +913,7 @@ async function addAllocation() {
   const { error } = await supabase.from("fuel_dispense_allocations").insert({
     meter_period_id: activePeriod.id, category, liters: litersVal, credit_transaction_id: creditTxnId,
     company_use_employee_id: category === "company_use" ? verifiedCompanyEmployee.id : null,
+    company_use_reason: category === "company_use" ? document.getElementById("allocCompanyReason").value : null,
     company_use_vehicle: category === "company_use" ? document.getElementById("allocVehicle").value : null,
     verified_at: category === "company_use" ? new Date().toISOString() : null
   });
