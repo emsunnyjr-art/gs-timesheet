@@ -104,6 +104,7 @@
       <div class="tab" data-tab="dispensing">Dispensing</div>
       <div class="tab" data-tab="credit">Credit / PO</div>
       <div class="tab" data-tab="cashrecon">Cash Reconciliation</div>
+      <div class="tab" data-tab="expenses">Expenses</div>
       <div class="tab" data-tab="debt">Debt</div>
       <div class="tab" data-tab="transfers">Transfers</div>
       <div class="tab" data-tab="capacity">Capacity</div>
@@ -468,7 +469,10 @@
         <div class="stat-grid">
           <div class="stat"><div class="k">Cash Sales (fuel)</div><div class="v" id="crPreviewCash">—</div></div>
           <div class="stat"><div class="k">Credit Sales (PO)</div><div class="v" id="crPreviewCredit">—</div></div>
+          <div class="stat"><div class="k">Recorded Expenses</div><div class="v" id="crPreviewExpenses">—</div></div>
+          <div class="stat"><div class="k">Management Takeaways</div><div class="v" id="crPreviewTakeaway">—</div></div>
         </div>
+        <p class="small">Expenses and takeaways are totaled automatically from what's actually been recorded for this shift (Log Expense / Management Takeaway on the kiosk) — not typed here, so this can never silently drift from the itemized records.</p>
         <hr class="divider">
         <div class="row">
           <div><label>Beginning Cash Float</label><input type="number" step="0.01" id="crBegin" value="0"></div>
@@ -476,13 +480,11 @@
           <div><label>Injected By</label><input id="crInjectedBy"></div>
         </div>
         <div class="row">
-          <div><label>Cash Expenses Paid</label><input type="number" step="0.01" id="crExpenses" value="0"></div>
-          <div><label>Management Takeaway</label><input type="number" step="0.01" id="crTakeaway" value="0"></div>
           <div><label>Bank Deposit</label><input type="number" step="0.01" id="crDeposit" value="0"></div>
-        </div>
-        <div class="row">
           <div><label>Deposited By</label><input id="crDepositedBy"></div>
           <div><label>Checker</label><input id="crChecker"></div>
+        </div>
+        <div class="row">
           <div><label>Actual Cash Counted</label><input type="number" step="0.01" id="crActual"></div>
         </div>
         <label>Notes</label>
@@ -493,6 +495,30 @@
       <div class="card">
         <h2>Recent Reconciliations</h2>
         <table id="crTable"><thead><tr><th>Date/Shift</th><th>Expected</th><th>Actual</th><th>Variance</th><th>Flag</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <!-- ============ EXPENSES ============ -->
+    <div class="panel" id="panel-expenses">
+      <div class="card">
+        <h2>Where Money Actually Goes</h2>
+        <p class="small">Every recorded expense (Log Expense on the kiosk) for this branch, categorized and totaled. Read-only — expenses are recorded on the kiosk, not here.</p>
+        <div class="row">
+          <div><label>From Date</label><input type="date" id="expFrom" onchange="loadExpensesTab()"></div>
+          <div><label>To Date</label><input type="date" id="expTo" onchange="loadExpensesTab()"></div>
+        </div>
+        <div class="stat-grid">
+          <div class="stat"><div class="k">Cash Advance / Loan</div><div class="v" id="expTotalCashAdvance">—</div></div>
+          <div class="stat"><div class="k">Utility Bills</div><div class="v" id="expTotalUtility">—</div></div>
+          <div class="stat"><div class="k">Other</div><div class="v" id="expTotalOther">—</div></div>
+          <div class="stat"><div class="k">Total</div><div class="v" id="expTotalAll">—</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Itemized</h2>
+        <div class="table-scroll">
+          <table id="expensesTable"><thead><tr><th>Date</th><th>Shift</th><th>Category</th><th>Amount</th><th>Details</th><th>Responsible TM</th></tr></thead><tbody></tbody></table>
+        </div>
       </div>
     </div>
 
@@ -887,6 +913,7 @@ function onTabShown(tab) {
   if (tab === "dispensing") loadShiftsForDispensing();
   if (tab === "credit") loadCreditTab();
   if (tab === "cashrecon") loadCashReconTab();
+  if (tab === "expenses") loadExpensesTab();
   if (tab === "setup") loadSetupTab();
 }
 
@@ -3871,17 +3898,77 @@ async function loadCashReconTab() {
   ).join("") || "<tr><td colspan='5' class='small'>No reconciliations yet.</td></tr>";
 }
 
+const EXPENSE_CATEGORY_LABELS = { cash_advance: "Cash Advance / Loan", utility_bill: "Utility Bill", other: "Other" };
+
+// Read-only breakdown -- expenses are recorded on the kiosk (sales-clock.html
+// Log Expense, QR-identified to the responsible TM), never entered or
+// edited here, matching the "no approval gate, recording itself is enough"
+// rule confirmed with Mario -- this tab is purely for seeing where money
+// went, not a data-entry or review screen.
+async function loadExpensesTab() {
+  const fromEl = document.getElementById("expFrom");
+  const toEl = document.getElementById("expTo");
+  if (!fromEl.value) fromEl.value = addDaysIso(todayIso(), -30);
+  if (!toEl.value) toEl.value = todayIso();
+
+  const { data, error } = await supabase.from("fuel_shift_expenses")
+    .select("category, amount, details, recorded_at, shifts(shift_date, shift_label), employees:recorded_by_employee_id(full_name, tm_number)")
+    .eq("branch_id", currentBranch)
+    .gte("recorded_at", fromEl.value)
+    .lte("recorded_at", toEl.value + "T23:59:59")
+    .order("recorded_at", { ascending: false });
+
+  const tbody = document.querySelector("#expensesTable tbody");
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="6" class="small">Error: ${error.message}</td></tr>`;
+    return;
+  }
+  const rows = data || [];
+
+  const totals = { cash_advance: 0, utility_bill: 0, other: 0 };
+  rows.forEach(r => { if (totals[r.category] !== undefined) totals[r.category] += Number(r.amount); });
+  const grandTotal = totals.cash_advance + totals.utility_bill + totals.other;
+  document.getElementById("expTotalCashAdvance").textContent = peso(totals.cash_advance);
+  document.getElementById("expTotalUtility").textContent = peso(totals.utility_bill);
+  document.getElementById("expTotalOther").textContent = peso(totals.other);
+  document.getElementById("expTotalAll").textContent = peso(grandTotal);
+
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>${new Date(r.recorded_at).toLocaleDateString()}</td>
+      <td>${r.shifts?.shift_label || "—"}</td>
+      <td>${EXPENSE_CATEGORY_LABELS[r.category] || r.category || "—"}</td>
+      <td>${peso(r.amount)}</td>
+      <td>${r.details || "—"}</td>
+      <td>${r.employees ? `${r.employees.full_name} (${r.employees.tm_number})` : "—"}</td>
+    </tr>`).join("") || "<tr><td colspan='6' class='small'>No expenses recorded for this range.</td></tr>";
+}
+
 async function previewCashRecon() {
   const shiftId = document.getElementById("crShift").value;
   if (!shiftId) { return; }
   const { data: cashRows } = await supabase.from("fuel_cash_sales_by_shift").select("total_cash_amount").eq("shift_id", shiftId);
   const { data: creditRows } = await supabase.from("fuel_credit_sales_by_shift").select("total_credit_amount").eq("shift_id", shiftId);
+  const { data: expRows } = await supabase.from("fuel_shift_expenses").select("amount").eq("shift_id", shiftId);
+  const { data: twRows } = await supabase.from("fuel_management_takeaways").select("amount").eq("shift_id", shiftId);
   const cashTotal = (cashRows || []).reduce((a,r) => a + Number(r.total_cash_amount), 0);
   const creditTotal = (creditRows || []).reduce((a,r) => a + Number(r.total_credit_amount), 0);
+  const expTotal = (expRows || []).reduce((a,r) => a + Number(r.amount), 0);
+  const twTotal = (twRows || []).reduce((a,r) => a + Number(r.amount), 0);
   document.getElementById("crPreviewCash").textContent = peso(cashTotal);
   document.getElementById("crPreviewCredit").textContent = peso(creditTotal);
+  document.getElementById("crPreviewExpenses").textContent = peso(expTotal);
+  document.getElementById("crPreviewTakeaway").textContent = peso(twTotal);
 }
 
+// cash_expenses_paid/management_takeaway are deliberately left OUT of this
+// payload -- fn_fuel_shift_reconciliation_snapshot (BEFORE INSERT trigger)
+// auto-fills them from fuel_shift_expenses/fuel_management_takeaways,
+// exactly like sales-clock.html's own saveCashRecon() already did. This
+// form used to send manually-typed numbers for both, which could silently
+// diverge from the itemized ledger tables -- found and fixed while
+// building categorized expense tracking; now there's one consistent way
+// this gets computed regardless of which screen saves the reconciliation.
 async function saveCashRecon() {
   const msg = document.getElementById("crMsg");
   const shiftId = document.getElementById("crShift").value;
@@ -3892,8 +3979,6 @@ async function saveCashRecon() {
     beginning_cash_float: parseFloat(document.getElementById("crBegin").value) || 0,
     cash_injected: parseFloat(document.getElementById("crInjected").value) || 0,
     injected_by: document.getElementById("crInjectedBy").value || null,
-    cash_expenses_paid: parseFloat(document.getElementById("crExpenses").value) || 0,
-    management_takeaway: parseFloat(document.getElementById("crTakeaway").value) || 0,
     bank_deposit_amount: parseFloat(document.getElementById("crDeposit").value) || 0,
     deposited_by: document.getElementById("crDepositedBy").value || null,
     checker: document.getElementById("crChecker").value || null,

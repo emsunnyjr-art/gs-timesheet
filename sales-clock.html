@@ -262,16 +262,17 @@
     <h1>Log Expense</h1>
     <label>Category</label>
     <select id="exCategory">
-      <option value="fuel_allowance">Fuel Allowance</option>
-      <option value="office_supplies">Office Supplies</option>
-      <option value="salary">Salary / Wage</option>
-      <option value="advance">Advance / Utang</option>
-      <option value="other">Other</option>
+      <option value="cash_advance">Cash Advance / Loan to Employee</option>
+      <option value="utility_bill">Utility Bill</option>
+      <option value="other">Other Business Expense</option>
     </select>
     <label>Amount</label>
     <input type="number" step="0.01" id="exAmount">
     <label>Details</label>
     <input type="text" id="exDetails" placeholder="e.g. K. Edwin — Unleaded">
+    <p class="small">Scan the ID of the TM actually <strong>responsible</strong> for this money leaving — not necessarily whoever's typing this entry.</p>
+    <button class="btn-secondary" type="button" onclick="startQrFor('expense')">📷 Scan Responsible TM's ID</button>
+    <div class="verified-box" id="expenseVerifiedBox" style="display:none;"><img id="expenseVerifiedPhoto"><div><strong id="expenseVerifiedName"></strong><br><span class="small">Verified ✓</span></div></div>
     <button class="btn-secondary" onclick="openStillCamera('exPhoto')">📷 Receipt Photo (optional)</button>
     <video id="exPhoto_video" autoplay playsinline muted></video>
     <canvas id="exPhoto_canvas" style="display:none;"></canvas>
@@ -350,8 +351,8 @@ const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 let branches = [], tanks = [], pumps = [], creditCustomers = [], employees = [];
 let currentBranch = null, currentShift = null;
 let activePeriod = null;
-let sharedStream = null, qrLoopActive = false, qrTarget = null; // qrTarget: 'company' | 'takeaway'
-let verifiedCompanyEmployee = null, verifiedTakeawayEmployee = null;
+let sharedStream = null, qrLoopActive = false, qrTarget = null; // qrTarget: 'company' | 'takeaway' | 'expense'
+let verifiedCompanyEmployee = null, verifiedTakeawayEmployee = null, verifiedExpenseEmployee = null;
 
 function isoDate(d) { const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,"0"),day=String(d.getDate()).padStart(2,"0"); return `${y}-${m}-${day}`; }
 function todayIso() { return isoDate(new Date()); }
@@ -922,17 +923,24 @@ async function addAllocation() {
 // ============================================================
 async function saveExpense() {
   const status = document.getElementById("exStatus");
+  // Required, not optional -- the entire point of this field is tying
+  // accountability to whoever actually took the money, same discipline as
+  // Management Takeaway's existing QR-scan requirement above.
+  if (!verifiedExpenseEmployee) { status.textContent = "Scan the responsible TM's ID first."; status.className = "status err"; return; }
   const photoUrl = await uploadPhoto(stillBlobs["exPhoto"], "fuel-expenses");
   const { error } = await supabase.from("fuel_shift_expenses").insert({
     shift_id: currentShift, branch_id: currentBranch,
     category: document.getElementById("exCategory").value,
     amount: parseFloat(document.getElementById("exAmount").value),
     details: document.getElementById("exDetails").value || null,
-    photo_url: photoUrl
+    photo_url: photoUrl,
+    recorded_by_employee_id: verifiedExpenseEmployee.id
   });
   if (error) { status.textContent = "Error: " + error.message; status.className = "status err"; return; }
   status.textContent = "Saved ✓"; status.className = "status ok";
   document.getElementById("exAmount").value = ""; document.getElementById("exDetails").value = "";
+  verifiedExpenseEmployee = null;
+  document.getElementById("expenseVerifiedBox").style.display = "none";
 }
 
 // ============================================================
@@ -951,7 +959,7 @@ async function startQrFor(target) {
 }
 function cancelQr() {
   stopCamera();
-  openPanel(qrTarget === "takeaway" ? "takeaway" : "meter");
+  openPanel(qrTarget === "takeaway" ? "takeaway" : qrTarget === "expense" ? "expense" : "meter");
 }
 function qrTick() {
   if (!qrLoopActive) return;
@@ -995,6 +1003,12 @@ function onQrVerified(emp) {
     document.getElementById("takeawayVerifiedPhoto").src = emp.photo_url || "logo.png";
     document.getElementById("takeawayVerifiedBox").style.display = "block";
     openPanel("takeaway");
+  } else if (qrTarget === "expense") {
+    verifiedExpenseEmployee = emp;
+    document.getElementById("expenseVerifiedName").textContent = emp.full_name;
+    document.getElementById("expenseVerifiedPhoto").src = emp.photo_url || "logo.png";
+    document.getElementById("expenseVerifiedBox").style.display = "block";
+    openPanel("expense");
   }
 }
 
