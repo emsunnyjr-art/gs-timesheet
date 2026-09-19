@@ -3165,9 +3165,11 @@ async function showDeliveryDetail(deliveryId) {
     <div class="stat"><div class="k">Vendor</div><div class="v">${d.fuel_vendors?.name || "—"}</div></div>
     <div class="stat"><div class="k">Driver / Plate</div><div class="v">${d.fuel_delivery_drivers?.name || "—"} ${d.plate_number || ""}</div></div>
     <div class="stat"><div class="k">Invoice #</div><div class="v">${d.invoice_number || "—"}</div></div>
-    <div class="stat"><div class="k">Liters Delivered</div><div class="v">${liters(d.invoiced_liters)}</div></div>
+    <div class="stat"><div class="k">Invoiced Liters</div><div class="v">${liters(d.invoiced_liters)}</div></div>
+    <div class="stat good"><div class="k">Delivered (Dipstick) — drives stock/WAC</div><div class="v">${liters(d.computed_delivered_liters)}</div></div>
+    <div class="stat ${d.variance_liters != 0 ? 'warn' : ''}"><div class="k">Delivered vs Invoiced</div><div class="v">${d.variance_liters > 0 ? "+" : ""}${liters(d.variance_liters)} ${d.variance_liters < 0 ? "(shortage)" : d.variance_liters > 0 ? "(surplus)" : ""}</div></div>
     <div class="stat"><div class="k">Cost / Liter</div><div class="v">${peso(d.cost_per_liter)}</div></div>
-    <div class="stat"><div class="k">Total Cost</div><div class="v">${peso(d.total_cost)}</div></div>
+    <div class="stat"><div class="k">Total Cost (invoiced basis)</div><div class="v">${peso(d.total_cost)}</div></div>
     <div class="stat"><div class="k">WAC Before → After</div><div class="v">${peso(d.wac_before)} → ${peso(d.wac_after)}</div></div>
     <div class="stat"><div class="k">Dipstick Before → After</div><div class="v">${liters(d.dipstick_before_liters)} → ${liters(d.dipstick_after_liters)}</div></div>
   `;
