@@ -36,6 +36,11 @@
   .page-controls { display:flex; align-items:center; gap:10px; margin-top:12px; flex-wrap:wrap; }
   .page-controls button { margin-top:0; flex:none; }
   .page-controls .info { font-size:12.5px; color:var(--muted); }
+  .pw-toggle-wrap { position:relative; display:block; }
+  .pw-toggle-wrap input { padding-right:42px; }
+  .pw-toggle-btn { position:absolute; top:50%; right:2px; transform:translateY(-50%); width:34px; height:34px; min-width:34px; min-height:34px; display:flex; align-items:center; justify-content:center; background:none; border:none; padding:0; cursor:pointer; color:var(--muted); }
+  .pw-toggle-btn:hover, .pw-toggle-btn:focus { color:var(--text); }
+  .pw-toggle-btn svg { width:18px; height:18px; pointer-events:none; }
 </style>
 </head>
 <body>
@@ -167,6 +172,32 @@ const PAGE_SIZE = 50;
 let currentTable = null;
 let currentPage = 0;
 let totalRows = 0;
+
+// ---------- Password/PIN show-hide toggle (shared helper, dependency-free) ----------
+function initPasswordToggle(id) {
+  const input = document.getElementById(id);
+  if (!input || input.dataset.pwToggleInit) return;
+  input.dataset.pwToggleInit = "1";
+  const wrap = document.createElement("span");
+  wrap.className = "pw-toggle-wrap";
+  input.parentNode.insertBefore(wrap, input);
+  wrap.appendChild(input);
+  const EYE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const EYE_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-11-7-11-7a21.6 21.6 0 0 1 5.06-5.94M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 7 11 7a21.6 21.6 0 0 1-2.16 3.19M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "pw-toggle-btn";
+  btn.setAttribute("aria-label", "Show password");
+  btn.innerHTML = EYE;
+  btn.addEventListener("click", () => {
+    const showing = input.type === "text";
+    input.type = showing ? "password" : "text";
+    btn.innerHTML = showing ? EYE : EYE_OFF;
+    btn.setAttribute("aria-label", showing ? "Show password" : "Hide password");
+  });
+  wrap.appendChild(btn);
+}
+["loginPassword", "passphraseInput", "newPassphraseValue"].forEach(initPasswordToggle);
 
 async function doLogin() {
   const email = document.getElementById("loginEmail").value.trim();
