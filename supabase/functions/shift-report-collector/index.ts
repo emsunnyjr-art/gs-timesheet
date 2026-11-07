@@ -1,17 +1,23 @@
-// shift-report-collector — Telegram group -> handwritten shift report -> Google Sheet
+// shift-report-collector — Telegram group -> handwritten shift report -> Supabase table
 //
 // TEMPORARY RECONCILIATION TOOL. Not a system of record, and deliberately not wired
-// into any gs-timesheet table. Its only job is:
+// into any gs-timesheet domain table (employees/payroll/timesheet_entries/sales-admin).
+// Its only job is:
 //   photo posted in the shift-report Telegram group
 //     -> Claude vision extraction (same domain rules as the Shift Encoder)
-//     -> one row per product appended to a Google Sheet, with a variance flag
+//     -> one row per product inserted into telegram_shift_reconciliation
 //     -> a one-line confirmation replied into the Telegram thread
+//
+// Sink: the `telegram_shift_reconciliation` Postgres table in this same Supabase
+// project. RLS is enabled on it with ZERO policies, and anon/authenticated have no
+// grants at all — only the service_role key (used below) can read or write it. Mario
+// reviews it via the Supabase dashboard/MCP, not through any app page.
 //
 // The two liters figures this whole pipeline exists to compare, per product:
 //   (1) meter_sold_liters — SUM over that product's hoses of (end_liter - beg_liter).
 //       The liter meters are the only direct measurement of liters sold on the report.
 //   (2) dip_sold_liters   — (dip_beg - dip_end) + liters delivered during the shift.
-//       Blank, never 0, when the report has no dipstick reading for that product.
+//       NULL (never 0) when the report has no dipstick reading for that product.
 //   variance = (1) - (2)
 //
 // NOTE on the cashier's written "TOTAL SALES" column: on these report forms that column
@@ -24,6 +30,7 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { encodeBase64 } from "jsr:@std/encoding@1/base64";
+import { createClient } from "jsr:@supabase/supabase-js@2";
 import Anthropic from "npm:@anthropic-ai/sdk@1.6.0";
 
 declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void } | undefined;
@@ -46,9 +53,9 @@ const VARIANCE_MODE: "or" | "and" = "or";
 
 /**
  * A single hose's written peso sales above this in one shift is a likely digit misread.
- * Mario's own stated rule (confirmed, not the Shift Encoder's looser P50,000 cell-tint
+ * Mario's own stated rule (confirmed, not the Shift Encoder's looser ₱50,000 cell-tint
  * threshold — that one is calibrated for busier stations and doesn't fit here): his
- * busiest station sells only ~1,000L/day *total*, so P20,000 on a single hose in one
+ * busiest station sells only ~1,000L/day *total*, so ₱20,000 on a single hose in one
  * shift is already far outside normal volume and should flag, not slide by unnoticed.
  */
 const HOSE_SALES_MISREAD_PESOS = 20000;
@@ -72,8 +79,13 @@ const ALLOWED_CHAT_IDS = (Deno.env.get("TELEGRAM_ALLOWED_CHAT_ID") ?? "")
   .filter(Boolean);
 const WEBHOOK_SECRET = Deno.env.get("TELEGRAM_WEBHOOK_SECRET") ?? "";
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY") ?? "";
-const SHEETS_WEBHOOK_URL = Deno.env.get("SHEETS_WEBHOOK_URL") ?? "";
-const SHEETS_WEBHOOK_SECRET = Deno.env.get("SHEETS_WEBHOOK_SECRET") ?? "";
+
+// SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are provisioned automatically for every Edge
+// Function in this project — same pair enroll-employee already relies on. Never shipped
+// to client-side JS; this function is the only other place in the repo allowed to hold it.
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 const TG_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
@@ -381,10 +393,38 @@ function normProduct(raw: unknown): Product | null {
   return null;
 }
 
-type Row = Record<string, string | number | boolean>;
+/** Shape of one row of telegram_shift_reconciliation — see the migration for columns. */
+type Row = {
+  report_date: string | null;
+  station: string | null;
+  shift: string | null;
+  attendant: string | null;
+  product: Product;
+  hose_count: number;
+  beg_meter_liters: number | null;
+  end_meter_liters: number | null;
+  meter_sold_liters: number | null;
+  written_sales_pesos: number | null;
+  unit_price: number | null;
+  written_sales_liters: number | null;
+  dip_beg_liters: number | null;
+  dip_end_liters: number | null;
+  delivered_liters: number | null;
+  dip_sold_liters: number | null;
+  variance_liters: number | null;
+  variance_pct: number | null;
+  flagged: boolean;
+  flags: string | null;
+  extraction_confidence: string | null;
+  extraction_notes: string | null;
+  hose_detail: unknown;
+  reported_by: string | null;
+  telegram_message_id: number;
+  telegram_file_id: string;
+  telegram_photo_link: string | null;
+};
 
 function buildRows(x: Extraction, ctx: {
-  loggedAt: string;
   fileId: string;
   link: string;
   messageId: number;
@@ -484,91 +524,44 @@ function buildRows(x: Extraction, ctx: {
     if (String(x.confidence) === "low") flags.push("low_extraction_confidence");
 
     rows.push({
-      logged_at: ctx.loggedAt,
-      report_date: x.report_date ?? "",
-      station: x.station ?? "",
-      shift: x.shift ?? "",
-      attendant: x.attendant ?? "",
+      report_date: x.report_date ?? null,
+      station: x.station ?? null,
+      shift: x.shift ?? null,
+      attendant: x.attendant ?? null,
       product,
       hose_count: hoses.length,
       // Sums across this product's hoses: the absolute totals are composite, but their
       // difference is the correct liters-sold figure. Per-hose detail is in hose_detail.
-      beg_meter_liters: meterSold === null ? "" : round2(begMeter),
-      end_meter_liters: meterSold === null ? "" : round2(endMeter),
-      meter_sold_liters: meterSold === null ? "" : round2(meterSold),
-      written_sales_pesos: writtenPesos === null ? "" : round2(writtenPesos),
-      unit_price: unitPrice === null ? "" : unitPrice,
-      written_sales_liters: writtenLiters === null ? "" : round2(writtenLiters),
-      dip_beg_liters: dipBeg === null ? "" : dipBeg,
-      dip_end_liters: dipEnd === null ? "" : dipEnd,
-      delivered_liters: hasDelivery ? round2(delivered) : "",
-      dip_sold_liters: dipSold === null ? "" : round2(dipSold),
-      variance_liters: variance === null ? "" : round2(variance),
-      variance_pct: variancePct === null ? "" : round2(variancePct),
+      beg_meter_liters: meterSold === null ? null : round2(begMeter),
+      end_meter_liters: meterSold === null ? null : round2(endMeter),
+      meter_sold_liters: meterSold === null ? null : round2(meterSold),
+      written_sales_pesos: writtenPesos === null ? null : round2(writtenPesos),
+      unit_price: unitPrice,
+      written_sales_liters: writtenLiters === null ? null : round2(writtenLiters),
+      dip_beg_liters: dipBeg,
+      dip_end_liters: dipEnd,
+      delivered_liters: hasDelivery ? round2(delivered) : null,
+      dip_sold_liters: dipSold === null ? null : round2(dipSold),
+      variance_liters: variance === null ? null : round2(variance),
+      variance_pct: variancePct === null ? null : round2(variancePct),
       flagged: flags.length > 0,
-      flags: flags.join("; "),
-      extraction_confidence: x.confidence ?? "",
-      extraction_notes: x.notes ?? "",
-      hose_detail: JSON.stringify(hoses),
-      reported_by: ctx.reportedBy,
+      flags: flags.length > 0 ? flags.join("; ") : null,
+      extraction_confidence: x.confidence ?? null,
+      extraction_notes: x.notes ?? null,
+      hose_detail: hoses,
+      reported_by: ctx.reportedBy || null,
       telegram_message_id: ctx.messageId,
       telegram_file_id: ctx.fileId,
-      telegram_photo_link: ctx.link,
+      telegram_photo_link: ctx.link || null,
     });
   }
 
   return rows;
 }
 
-const SHEET_COLUMNS = [
-  "logged_at",
-  "report_date",
-  "station",
-  "shift",
-  "attendant",
-  "product",
-  "hose_count",
-  "beg_meter_liters",
-  "end_meter_liters",
-  "meter_sold_liters",
-  "written_sales_pesos",
-  "unit_price",
-  "written_sales_liters",
-  "dip_beg_liters",
-  "dip_end_liters",
-  "delivered_liters",
-  "dip_sold_liters",
-  "variance_liters",
-  "variance_pct",
-  "flagged",
-  "flags",
-  "extraction_confidence",
-  "extraction_notes",
-  "hose_detail",
-  "reported_by",
-  "telegram_message_id",
-  "telegram_file_id",
-  "telegram_photo_link",
-];
-
-async function appendToSheet(rows: Row[]) {
-  if (!SHEETS_WEBHOOK_URL) throw new Error("SHEETS_WEBHOOK_URL is not set.");
-  const res = await fetch(SHEETS_WEBHOOK_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      secret: SHEETS_WEBHOOK_SECRET,
-      sheet: "Telegram Reconciliation",
-      columns: SHEET_COLUMNS,
-      rows,
-    }),
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`Sheets append failed: HTTP ${res.status} ${text.slice(0, 200)}`);
-  // Apps Script answers 200 even for its own refusals, so check the body too.
-  if (/"ok"\s*:\s*false/.test(text)) {
-    throw new Error(`Sheets append rejected: ${text.slice(0, 200)}`);
-  }
+async function insertRows(rows: Row[]) {
+  const { error } = await adminClient.from("telegram_shift_reconciliation").insert(rows);
+  if (error) throw new Error(`DB insert failed: ${error.message}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -581,12 +574,12 @@ function buildReplyText(x: Extraction, rows: Row[]): string {
   const lines: string[] = [`✅ Logged — ${head}`];
 
   for (const r of rows) {
-    const meter = r.meter_sold_liters === "" ? "—" : `${r.meter_sold_liters}L`;
-    const dip = r.dip_sold_liters === "" ? "no dipstick" : `${r.dip_sold_liters}L`;
+    const meter = r.meter_sold_liters === null ? "—" : `${r.meter_sold_liters}L`;
+    const dip = r.dip_sold_liters === null ? "no dipstick" : `${r.dip_sold_liters}L`;
     const varPart =
-      r.variance_liters === ""
+      r.variance_liters === null
         ? ""
-        : ` · var ${Number(r.variance_liters) > 0 ? "+" : ""}${r.variance_liters}L`;
+        : ` · var ${r.variance_liters > 0 ? "+" : ""}${r.variance_liters}L`;
     lines.push(`${r.flagged ? "⚠️" : "•"} ${r.product}: meter ${meter} vs dip ${dip}${varPart}`);
   }
 
@@ -619,7 +612,6 @@ async function processPhoto(message: any) {
     const { base64, mediaType, fileId } = await downloadPhoto(message.photo);
     const extraction = await extractReport(base64, mediaType);
     const rows = buildRows(extraction, {
-      loggedAt: new Date().toISOString(),
       fileId,
       link: messageLink(chat, messageId),
       messageId,
@@ -635,7 +627,7 @@ async function processPhoto(message: any) {
       return;
     }
 
-    await appendToSheet(rows);
+    await insertRows(rows);
     await reply(chat.id, messageId, buildReplyText(extraction, rows));
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -643,7 +635,7 @@ async function processPhoto(message: any) {
     await reply(
       chat.id,
       messageId,
-      `⚠️ Could not log this report — nothing was written to the sheet. Please re-post it.\n\n(${msg.slice(0, 300)})`,
+      `⚠️ Could not log this report — nothing was saved. Please re-post it.\n\n(${msg.slice(0, 300)})`,
     );
   }
 }
@@ -699,9 +691,9 @@ Deno.serve(async (req: Request) => {
     if (seenUpdates.size > 500) seenUpdates.clear();
   }
 
-  // Ack Telegram immediately and do the slow work (download + vision + sheet) after.
+  // Ack Telegram immediately and do the slow work (download + vision + DB insert) after.
   // Telegram retries any webhook call it doesn't get a prompt 200 for, and a retry here
-  // would mean duplicate rows in the sheet.
+  // would mean duplicate rows in the table.
   const work = processPhoto(message);
   if (typeof EdgeRuntime !== "undefined" && EdgeRuntime?.waitUntil) {
     EdgeRuntime.waitUntil(work);
