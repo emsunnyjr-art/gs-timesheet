@@ -66,6 +66,15 @@ const WRITTEN_VS_METER_PCT = 2;
 const PRODUCTS = ["Diesel", "Premium", "Unleaded"] as const;
 type Product = (typeof PRODUCTS)[number];
 
+/**
+ * Display order for the compact Telegram reply only — Mario's own specified example
+ * format lists Unleaded, Premium, Diesel. Deliberately separate from PRODUCTS (which
+ * stays Diesel/Premium/Unleaded for the table, per the gs-timesheet apps' own
+ * DELIVERY_PRODUCT_ORDER convention) — this only reorders what the bot prints, not the
+ * row order written to telegram_shift_reconciliation.
+ */
+const REPLY_PRODUCT_ORDER: readonly Product[] = ["Unleaded", "Premium", "Diesel"];
+
 const MODEL = "claude-opus-5";
 
 // ---------------------------------------------------------------------------
@@ -649,35 +658,100 @@ async function insertRows(rows: Row[]) {
 }
 
 // ---------------------------------------------------------------------------
-// Confirmation message
+// Confirmation message — compact, no explanations. Full detail (every number, every
+// flag, hose_detail, extraction_notes) is unchanged in the table; this is only what
+// gets typed back into the Telegram thread.
 // ---------------------------------------------------------------------------
 
+/**
+ * "sold" liters for the compact reply: meter liters (the primary, direct measurement),
+ * falling back to the written-sales-pesos-converted-to-liters figure only when the
+ * meters themselves were unreadable (meter_sold_liters null — zero readable hose pairs
+ * for that product). Mirrors buildRows' own preference order; written sales never
+ * overrides a real meter reading, it only fills the gap when there isn't one.
+ */
+function soldLitersFor(r: Row): number | null {
+  return r.meter_sold_liters ?? r.written_sales_liters;
+}
+
+/**
+ * One line per pump that had an unreadable hose, e.g. "Pump 1 hose 2" or
+ * "Pump 1 hoses 2,3" — scans every hose on the report (not just one product's), since
+ * an unreadable hose reading is a report-wide fact, independent of which product it
+ * happened to be dispensing.
+ */
+function unreadableHoseGroups(x: Extraction): string[] {
+  const byPump = new Map<number, number[]>();
+  for (const h of x.hoses ?? []) {
+    if (h.beg_liter !== null && h.end_liter !== null) continue;
+    const list = byPump.get(h.pump) ?? [];
+    list.push(h.hose_no);
+    byPump.set(h.pump, list);
+  }
+  return [...byPump.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([pump, hoseNos]) => {
+      hoseNos.sort((a, b) => a - b);
+      const label = hoseNos.length === 1 ? "hose" : "hoses";
+      return `Pump ${pump} ${label} ${hoseNos.join(",")}`;
+    });
+}
+
 function buildReplyText(x: Extraction, rows: Row[]): string {
-  const head = [x.station || "station?", x.report_date || "date?", x.shift || "shift?"]
-    .join(" · ");
-  const lines: string[] = [`✅ Logged — ${head}`];
+  const lines: string[] = [
+    `${x.station || "?"} ${x.shift || "?"} ${x.report_date || "?"} (${x.attendant || "?"})`,
+  ];
 
-  for (const r of rows) {
-    const meter = r.meter_sold_liters === null ? "—" : `${r.meter_sold_liters}L`;
-    const dip = r.dip_sold_liters === null ? "no dipstick" : `${r.dip_sold_liters}L`;
-    const varPart =
-      r.variance_liters === null
-        ? ""
-        : ` · var ${r.variance_liters > 0 ? "+" : ""}${r.variance_liters}L`;
-    lines.push(`${r.flagged ? "⚠️" : "•"} ${r.product}: meter ${meter} vs dip ${dip}${varPart}`);
+  for (const product of REPLY_PRODUCT_ORDER) {
+    const row = rows.find((r) => r.product === product);
+    if (!row) {
+      lines.push(`${product}: no data ❓`);
+      continue;
+    }
+
+    const sold = soldLitersFor(row);
+    const tank = row.dip_sold_liters;
+
+    if (sold === null && tank === null) {
+      lines.push(`${product}: no data ❓`);
+    } else if (sold === null) {
+      lines.push(`${product}: sold — / tank ${Math.round(tank!)} ❓`);
+    } else if (tank === null) {
+      lines.push(`${product}: sold ${Math.round(sold)} / tank — ❓`);
+    } else if ((row.flags ?? "").includes("variance_over_threshold")) {
+      const v = Math.round(row.variance_liters ?? 0);
+      const pct = Math.round(row.variance_pct ?? 0);
+      lines.push(
+        `${product}: sold ${Math.round(sold)} / tank ${Math.round(tank)} ⚠️ ${v > 0 ? "+" : ""}${v} (${pct}%)`,
+      );
+    } else {
+      lines.push(`${product}: sold ${Math.round(sold)} / tank ${Math.round(tank)} ✅`);
+    }
   }
 
-  const flagged = rows.filter((r) => r.flagged);
-  if (flagged.length) {
-    lines.push("");
-    lines.push("⚠️ check this one:");
-    for (const r of flagged) lines.push(`• ${r.product} — ${r.flags}`);
+  const unreadable = unreadableHoseGroups(x);
+  if (unreadable.length) {
+    lines.push(`Unreadable: ${unreadable.join("; ")}`);
   }
-  if (x.notes) {
-    lines.push("");
-    lines.push(`Reader notes: ${x.notes}`);
-  }
+
   return lines.join("\n");
+}
+
+/**
+ * A human-typed photo caption is more reliable than the vision model's own guess at
+ * station/shift, so it wins when present. Matches the three real station codes and the
+ * three real shift codes as whole words/tokens, case-insensitively (captions are
+ * typically short and purpose-written, e.g. "GS2 PM"), and mutates `x` in place so both
+ * the stored row and the reply reflect the same, single corrected value — never a
+ * mismatch between what's saved and what's typed back into the thread.
+ */
+function applyCaptionOverrides(x: Extraction, caption: unknown) {
+  const cap = typeof caption === "string" ? caption : "";
+  if (!cap) return;
+  const station = cap.match(/\bGS[125]\b/i);
+  if (station) x.station = station[0].toUpperCase();
+  const shift = cap.match(/\b(AM|PM|GY)\b/i);
+  if (shift) x.shift = shift[0].toUpperCase();
 }
 
 // ---------------------------------------------------------------------------
@@ -695,6 +769,7 @@ async function processPhoto(message: any) {
   try {
     const { base64, mediaType, fileId } = await downloadPhoto(message.photo);
     const extraction = await extractReport(base64, mediaType);
+    applyCaptionOverrides(extraction, message.caption);
     const rows = buildRows(extraction, {
       fileId,
       link: messageLink(chat, messageId),
