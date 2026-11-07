@@ -159,6 +159,17 @@ function messageLink(chat: any, messageId: number): string {
 // Extraction
 // ---------------------------------------------------------------------------
 
+// Every field below is a PLAIN type (string/number), never a union/nullable type and
+// never anyOf — structured-output schemas cap "parameters with type arrays or anyOf" at
+// 16, and the original nullable-everywhere version of this schema had exactly 19 of
+// them (report_date/station/shift/attendant/notes, prices.*, dipstick.*, and 5 per-hose
+// number fields), which the API rejected outright with a 400 on every single report.
+// "Not written / unreadable" is instead marked with a sentinel: -1 for a missing number
+// (every real number here — liters, pesos, prices — is always >= 0, so -1 can never
+// collide with a genuine reading) and "" for a missing string. normalizeExtraction()
+// converts every sentinel back to a real null immediately after parsing, below, so
+// buildRows/buildReplyText/processPhoto still work with real nulls throughout and never
+// know the sentinel scheme exists.
 const EXTRACTION_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -175,19 +186,26 @@ const EXTRACTION_SCHEMA = {
     "notes",
   ],
   properties: {
-    report_date: { type: ["string", "null"], description: "YYYY-MM-DD as written on the report" },
-    station: { type: ["string", "null"], description: "GS1, GS2 or GS5" },
-    shift: { type: ["string", "null"], description: "AM, PM or GY" },
-    attendant: { type: ["string", "null"], description: "the P/A (pump attendant) name" },
+    report_date: {
+      type: "string",
+      description: "YYYY-MM-DD as written on the report, or \"\" if not written/unreadable",
+    },
+    station: { type: "string", description: "GS1, GS2 or GS5, or \"\" if not written/unreadable" },
+    shift: { type: "string", description: "AM, PM or GY, or \"\" if not written/unreadable" },
+    attendant: {
+      type: "string",
+      description: "the P/A (pump attendant) name, or \"\" if not written/unreadable",
+    },
     prices: {
       type: "object",
       additionalProperties: false,
       required: ["unleaded", "premium", "diesel"],
-      description: "posted price per liter, from the right side of the form",
+      description:
+        "posted price per liter, from the right side of the form; -1 if not written/unreadable",
       properties: {
-        unleaded: { type: ["number", "null"] },
-        premium: { type: ["number", "null"] },
-        diesel: { type: ["number", "null"] },
+        unleaded: { type: "number" },
+        premium: { type: "number" },
+        diesel: { type: "number" },
       },
     },
     dipstick: {
@@ -202,14 +220,14 @@ const EXTRACTION_SCHEMA = {
         "diesel_end",
       ],
       description:
-        "tank dipstick LITERS at start and end of shift; null (never 0) when not written",
+        "tank dipstick LITERS at start and end of shift; -1 (never 0) when not written",
       properties: {
-        unleaded_beg: { type: ["number", "null"] },
-        unleaded_end: { type: ["number", "null"] },
-        premium_beg: { type: ["number", "null"] },
-        premium_end: { type: ["number", "null"] },
-        diesel_beg: { type: ["number", "null"] },
-        diesel_end: { type: ["number", "null"] },
+        unleaded_beg: { type: "number" },
+        unleaded_end: { type: "number" },
+        premium_beg: { type: "number" },
+        premium_end: { type: "number" },
+        diesel_beg: { type: "number" },
+        diesel_end: { type: "number" },
       },
     },
     deliveries: {
@@ -246,22 +264,22 @@ const EXTRACTION_SCHEMA = {
           pump: { type: "integer" },
           hose_no: { type: "integer" },
           product: { type: "string", enum: ["Unleaded", "Premium", "Diesel"] },
-          beg_liter: { type: ["number", "null"] },
-          end_liter: { type: ["number", "null"] },
-          beg_sales: { type: ["number", "null"] },
-          end_sales: { type: ["number", "null"] },
+          beg_liter: { type: "number", description: "-1 if not written/unreadable" },
+          end_liter: { type: "number", description: "-1 if not written/unreadable" },
+          beg_sales: { type: "number", description: "-1 if not written/unreadable" },
+          end_sales: { type: "number", description: "-1 if not written/unreadable" },
           written_total_sales: {
-            type: ["number", "null"],
+            type: "number",
             description:
-              "the cashier's own far-right TOTAL SALES figure for this hose, in PESOS, exactly as written; null if blank",
+              "the cashier's own far-right TOTAL SALES figure for this hose, in PESOS, exactly as written; -1 if blank/unreadable",
           },
         },
       },
     },
     confidence: { type: "string", enum: ["high", "medium", "low"] },
     notes: {
-      type: ["string", "null"],
-      description: "anything unreadable, ambiguous, or self-inconsistent on the report",
+      type: "string",
+      description: "anything unreadable, ambiguous, or self-inconsistent on the report, or \"\"",
     },
   },
 } as const;
@@ -283,9 +301,10 @@ const EXTRACTION_PROMPT = [
   "10. If a delivery/unloading of fuel during this shift is written anywhere on the form, record it under deliveries.",
   "",
   "ABSENT vs ZERO — this matters more than anything else here:",
-  "- Use null for any value that is not written, is blank, or is genuinely unreadable.",
+  "- For a number field: write -1 if that value is not written, is blank, or is genuinely unreadable. Every real number here (liters, pesos, prices) is always zero or positive, so -1 is never a real reading.",
+  "- For a text field (report_date, station, shift, attendant, notes): write \"\" (empty string) if it is not written, is blank, or is genuinely unreadable.",
   "- Use 0 ONLY when the report actually shows a zero (e.g. an unused hose whose beg and end readings are identical).",
-  "- Never substitute 0 for a missing dipstick reading or a missing price. A missing dipstick must come back as null so it is reported as 'not captured' rather than as 'nothing was sold'.",
+  "- Never substitute 0 for a missing dipstick reading or a missing price. A missing dipstick must come back as -1 so it is reported as 'not captured' rather than as 'nothing was sold'.",
   "- If no delivery is mentioned, return an empty deliveries array — not a zero-liter entry.",
   "",
   "BEFORE YOU ANSWER, verify your own extraction and fix what fails:",
@@ -298,6 +317,35 @@ const EXTRACTION_PROMPT = [
   "Report anything still unreadable, ambiguous, or self-inconsistent after that check in notes, and set confidence accordingly. Do not invent values to fill gaps.",
 ].join("\n");
 
+/** The shape Claude actually returns — sentinel-encoded, matching EXTRACTION_SCHEMA exactly. */
+type RawExtraction = {
+  report_date: string;
+  station: string;
+  shift: string;
+  attendant: string;
+  prices: { unleaded: number; premium: number; diesel: number };
+  dipstick: Record<string, number>;
+  deliveries: Array<{ product: string; liters: number }>;
+  hoses: Array<{
+    pump: number;
+    hose_no: number;
+    product: string;
+    beg_liter: number;
+    end_liter: number;
+    beg_sales: number;
+    end_sales: number;
+    written_total_sales: number;
+  }>;
+  confidence: string;
+  notes: string;
+};
+
+/**
+ * The shape every other function in this file already works with — real nulls, not
+ * sentinels. Unchanged from before the schema fix; only extractReport()'s return path
+ * changed (it now normalizes), so buildRows/buildReplyText/processPhoto below needed no
+ * edits at all.
+ */
 type Extraction = {
   report_date: string | null;
   station: string | null;
@@ -319,6 +367,41 @@ type Extraction = {
   confidence: string;
   notes: string | null;
 };
+
+const SENTINEL_NUM = -1;
+const numSentinelToNull = (v: number): number | null => (v === SENTINEL_NUM ? null : v);
+const strSentinelToNull = (v: string): string | null => (v === "" ? null : v);
+
+/** Converts the sentinel-encoded RawExtraction Claude returns into real-null Extraction. */
+function normalizeExtraction(raw: RawExtraction): Extraction {
+  return {
+    report_date: strSentinelToNull(raw.report_date),
+    station: strSentinelToNull(raw.station),
+    shift: strSentinelToNull(raw.shift),
+    attendant: strSentinelToNull(raw.attendant),
+    prices: {
+      unleaded: numSentinelToNull(raw.prices.unleaded),
+      premium: numSentinelToNull(raw.prices.premium),
+      diesel: numSentinelToNull(raw.prices.diesel),
+    },
+    dipstick: Object.fromEntries(
+      Object.entries(raw.dipstick ?? {}).map(([k, v]) => [k, numSentinelToNull(v)]),
+    ),
+    deliveries: raw.deliveries ?? [],
+    hoses: (raw.hoses ?? []).map((h) => ({
+      pump: h.pump,
+      hose_no: h.hose_no,
+      product: h.product,
+      beg_liter: numSentinelToNull(h.beg_liter),
+      end_liter: numSentinelToNull(h.end_liter),
+      beg_sales: numSentinelToNull(h.beg_sales),
+      end_sales: numSentinelToNull(h.end_sales),
+      written_total_sales: numSentinelToNull(h.written_total_sales),
+    })),
+    confidence: raw.confidence,
+    notes: strSentinelToNull(raw.notes),
+  };
+}
 
 async function extractReport(base64: string, mediaType: string): Promise<Extraction> {
   const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
@@ -374,7 +457,8 @@ async function extractReport(base64: string, mediaType: string): Promise<Extract
     .map((b: any) => b.text)
     .join("");
   if (!text.trim()) throw new Error("Claude returned no extraction text.");
-  return JSON.parse(text) as Extraction;
+  const raw = JSON.parse(text) as RawExtraction;
+  return normalizeExtraction(raw);
 }
 
 // ---------------------------------------------------------------------------
