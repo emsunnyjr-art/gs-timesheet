@@ -67,6 +67,19 @@
   .pw-toggle-btn { position:absolute; top:50%; right:2px; transform:translateY(-50%); width:34px; height:34px; min-width:34px; min-height:34px; display:flex; align-items:center; justify-content:center; background:none; border:none; padding:0; cursor:pointer; color:var(--muted); }
   .pw-toggle-btn:hover, .pw-toggle-btn:focus { color:var(--text); }
   .pw-toggle-btn svg { width:18px; height:18px; pointer-events:none; }
+
+  /* ---- Telegram Inbox (pre-fill only, see telegram-reports-inbox Edge Function) ---- */
+  .tg-banner { background:#f59e0b22; border:1px solid var(--orange); border-radius:10px; padding:10px 14px; margin-bottom:14px; font-size:13px; color:var(--orange); font-weight:600; }
+  .tg-missing { border-color:var(--danger) !important; background:#450a0a33 !important; }
+  .tg-missing-note { color:var(--danger); font-size:11px; margin-top:2px; }
+  .tg-report-card { border:1px solid var(--border); border-radius:12px; padding:14px; margin-bottom:10px; cursor:pointer; }
+  .tg-report-card:hover { border-color:var(--accent); }
+  .tg-report-card.imported { opacity:0.6; cursor:default; }
+  .tg-detail { display:flex; gap:16px; flex-wrap:wrap; align-items:flex-start; }
+  .tg-detail > * { flex:1; min-width:260px; }
+  .tg-photo-wrap { background:#0f172a; border:1px solid var(--border); border-radius:10px; padding:8px; text-align:center; }
+  .tg-photo-wrap img { max-width:100%; border-radius:6px; }
+  .tg-fill-fab { display:none; position:fixed; bottom:16px; right:16px; z-index:50; box-shadow:0 4px 14px #000a; }
 </style>
 </head>
 <body>
@@ -113,8 +126,15 @@
       <div class="tab" data-tab="debt">Debt</div>
       <div class="tab" data-tab="transfers">Transfers</div>
       <div class="tab" data-tab="capacity">Capacity</div>
+      <div class="tab" data-tab="telegraminbox">Telegram Inbox</div>
       <div class="tab" data-tab="setup">Setup</div>
     </div>
+
+    <!-- Stays visible across tab switches (lives outside any .panel) while a Telegram
+         pre-fill is waiting for its Close-period values to be applied -- see
+         tgApplyClosePrefill(). Never auto-fills anything on its own; purely a reminder
+         the admin must click themselves once they see the Close section appear. -->
+    <button class="tg-fill-fab" id="tgFillClosingBtn" onclick="tgApplyClosePrefill()">📋 Fill Telegram Closing Values</button>
 
     <!-- ============ DASHBOARD ============ -->
     <div class="panel active" id="panel-dashboard">
@@ -622,6 +642,30 @@
       </div>
     </div>
 
+    <!-- ============ TELEGRAM INBOX ============ -->
+    <div class="panel" id="panel-telegraminbox">
+      <div class="card" id="tgPinCard">
+        <h2>Enter Admin PIN</h2>
+        <p class="small">This inbox reads a different, PIN-gated table (telegram_shift_reconciliation) that your normal sign-in cannot access on its own -- a second gate, same PIN as HR Admin / Timesheet Admin. Not persisted across reloads.</p>
+        <div class="pw-toggle-wrap"><input type="password" id="tgPinInput" placeholder="PIN" onkeydown="if(event.key==='Enter')tgUnlock()"></div>
+        <button onclick="tgUnlock()">Unlock</button>
+        <div class="msg err" id="tgPinMsg"></div>
+      </div>
+
+      <div id="tgContent" style="display:none;">
+        <div class="card">
+          <h2>Telegram Reports — Not Yet Entered</h2>
+          <p class="small">Extracted from a photo posted in the shift-report Telegram group. Figures here are a starting point only -- nothing is saved anywhere until you open the normal Dispensing form and press its own Save/Open/Close buttons.</p>
+          <div id="tgPendingList"><p class="small">Loading…</p></div>
+        </div>
+        <div class="card">
+          <h2 style="cursor:pointer;" onclick="tgToggleImported()">Already Entered <span id="tgImportedToggleLabel">(show)</span></h2>
+          <div id="tgImportedList" style="display:none;"></div>
+        </div>
+        <div id="tgDetailCard"></div>
+      </div>
+    </div>
+
     <div class="panel" id="panel-setup">
       <div class="subtabs">
         <div class="subtab active" data-sub="products">Products & Price</div>
@@ -945,6 +989,7 @@ function onTabShown(tab) {
   if (tab === "credit") loadCreditTab();
   if (tab === "cashrecon") loadCashReconTab();
   if (tab === "expenses") loadExpensesTab();
+  if (tab === "telegraminbox") loadTelegramInboxTab();
   if (tab === "setup") loadSetupTab();
 }
 
@@ -4487,6 +4532,371 @@ async function togglePumpActive(pumpId, newState) {
   const { error } = await supabase.from("fuel_pumps").update({ active: newState }).eq("id", pumpId);
   if (error) { alert("Error: " + error.message); return; }
   loadSetupTab();
+}
+
+// ============================================================
+// TELEGRAM INBOX — pre-fill only, never auto-saves.
+//
+// Reads telegram_shift_reconciliation (RLS zero-policy, zero anon grant) through the
+// telegram-reports-inbox Edge Function, which re-verifies the admin PIN server-side on
+// every call via verify_admin_pin() before using its own service-role key. The browser
+// never holds anything that can read that table on its own, and never holds the
+// Telegram bot token (photos are proxied through the same function).
+//
+// "Enter this report" walks Station -> Shift (warn-only if none exists for the date,
+// never auto-created -- shifts drive attendance/payroll) -> Pump -> duplicate check,
+// then switches to the existing Dispensing tab and fills its existing Open/Close liter
+// and sales-meter inputs. It never calls openPeriod()/closePeriod() itself -- those
+// still only run when the admin presses the app's own buttons, through every existing
+// trigger/validation/Day-Close-gate a hand-typed entry already goes through. Dipstick
+// and category allocation are never pre-filled (dipstick stays kiosk-only, per Mario;
+// allocation has no source data in the report).
+// ============================================================
+
+const TG_INBOX_FN = "https://cztkovsjxuaiburaudgk.supabase.co/functions/v1/telegram-reports-inbox";
+let tgPin = null;
+let tgPendingReports = [];
+let tgImportedReports = [];
+let tgImportedLoaded = false;
+let tgSelectedReport = null;
+let tgWizardHose = null;
+let tgSessionPumpShifts = []; // {pumpId, shiftId} touched this session -- for linked_entry_ids traceability only
+let tgPendingClosePrefill = null; // {pumpId, shiftId, meter, salesMeter}
+
+function tgEsc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+async function tgCallJson(action, extra) {
+  const res = await fetch(TG_INBOX_FN, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pin: tgPin, action, ...extra })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+  return data;
+}
+
+async function tgUnlock() {
+  const pinVal = document.getElementById("tgPinInput").value.trim();
+  const msgEl = document.getElementById("tgPinMsg");
+  msgEl.textContent = "";
+  try {
+    const res = await fetch(TG_INBOX_FN, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pin: pinVal, action: "list" }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Incorrect PIN.");
+    tgPin = pinVal;
+    tgPendingReports = data.reports || [];
+    document.getElementById("tgPinCard").style.display = "none";
+    document.getElementById("tgContent").style.display = "block";
+    tgRenderPendingList();
+  } catch (e) {
+    msgEl.textContent = e.message;
+  }
+}
+
+function loadTelegramInboxTab() {
+  if (tgPin) tgRefreshPending();
+}
+
+async function tgRefreshPending() {
+  const el = document.getElementById("tgPendingList");
+  try {
+    const data = await tgCallJson("list", { scope: "pending" });
+    tgPendingReports = data.reports || [];
+    tgRenderPendingList();
+  } catch (e) {
+    el.innerHTML = `<p class="small" style="color:var(--danger)">${tgEsc(e.message)}</p>`;
+  }
+}
+
+function tgRenderPendingList() {
+  const el = document.getElementById("tgPendingList");
+  if (!tgPendingReports.length) { el.innerHTML = `<p class="small">Nothing waiting — every report has been entered.</p>`; return; }
+  el.innerHTML = tgPendingReports.map((r) => {
+    const flagCount = r.products.filter((p) => p.flagged).length;
+    return `<div class="tg-report-card" onclick="tgSelectReport(${r.telegram_message_id}, false)">
+      <strong>${tgEsc(r.report_date || "date?")} · ${tgEsc(r.shift || "shift?")}</strong>
+      ${r.station ? ` · ${tgEsc(r.station)}` : ` · <span style="color:var(--orange)">station blank</span>`}
+      ${r.attendant ? ` · ${tgEsc(r.attendant)}` : ""}
+      <div class="small">${r.products.length} product(s)${flagCount ? ` · ⚠️ ${flagCount} flagged` : ""} · reported by ${tgEsc(r.reported_by || "—")}</div>
+    </div>`;
+  }).join("");
+}
+
+async function tgToggleImported() {
+  const list = document.getElementById("tgImportedList");
+  const label = document.getElementById("tgImportedToggleLabel");
+  const showing = list.style.display !== "none";
+  if (showing) { list.style.display = "none"; label.textContent = "(show)"; return; }
+  list.style.display = "block";
+  label.textContent = "(hide)";
+  if (!tgImportedLoaded) {
+    list.innerHTML = `<p class="small">Loading…</p>`;
+    try {
+      const data = await tgCallJson("list", { scope: "imported" });
+      tgImportedReports = data.reports || [];
+      tgImportedLoaded = true;
+    } catch (e) { list.innerHTML = `<p class="small" style="color:var(--danger)">${tgEsc(e.message)}</p>`; return; }
+  }
+  list.innerHTML = tgImportedReports.length ? tgImportedReports.map((r) => `
+    <div class="tg-report-card imported" onclick="tgSelectReport(${r.telegram_message_id}, true)">
+      <strong>${tgEsc(r.report_date || "date?")} · ${tgEsc(r.shift || "shift?")}</strong>${r.station ? " · " + tgEsc(r.station) : ""}
+      <div class="small">Entered ${new Date(r.imported_at).toLocaleString()}${r.imported_by ? " by " + tgEsc(r.imported_by) : ""}</div>
+    </div>`).join("") : `<p class="small">None yet.</p>`;
+}
+
+function tgSelectReport(msgId, imported) {
+  const source = imported ? tgImportedReports : tgPendingReports;
+  tgSelectedReport = source.find((r) => r.telegram_message_id === msgId);
+  if (!tgSelectedReport) return;
+  tgSessionPumpShifts = [];
+  tgRenderDetail(imported);
+}
+
+function tgAllHoses(report) {
+  const rows = [];
+  for (const p of report.products) for (const h of (p.hose_detail || [])) rows.push({ ...h, productCode: p.product });
+  return rows;
+}
+
+// Same ✅/⚠️/❓ meaning as the Telegram bot's own reply (buildReplyText in
+// shift-report-collector) -- reuses the already-computed flags/variance columns rather
+// than recomputing the threshold here, so the two can never drift apart.
+function tgProductLine(p) {
+  const sold = p.meter_sold_liters ?? p.written_sales_liters;
+  const tank = p.dip_sold_liters;
+  if (sold == null && tank == null) return `${tgEsc(p.product)}: no data ❓`;
+  if (sold == null) return `${tgEsc(p.product)}: sold — / tank ${Math.round(tank)} ❓`;
+  if (tank == null) return `${tgEsc(p.product)}: sold ${Math.round(sold)} / tank — ❓`;
+  if ((p.flags || "").includes("variance_over_threshold")) {
+    const v = Math.round(p.variance_liters || 0), pct = Math.round(p.variance_pct || 0);
+    return `${tgEsc(p.product)}: sold ${Math.round(sold)} / tank ${Math.round(tank)} ⚠️ ${v > 0 ? "+" : ""}${v} (${pct}%)`;
+  }
+  return `${tgEsc(p.product)}: sold ${Math.round(sold)} / tank ${Math.round(tank)} ✅`;
+}
+
+// Reference only -- never wired into any input anywhere. Dipstick stays 100% manual
+// through the kiosk; this is purely so the cashier can eyeball it against the photo.
+function tgDipstickRef(p) {
+  if (p.dip_beg_liters == null && p.dip_end_liters == null) return "";
+  return `<div class="stat"><div class="k">${tgEsc(p.product)} Dipstick (reference only, not editable here)</div><div class="v">${p.dip_beg_liters ?? "—"} → ${p.dip_end_liters ?? "—"} L</div></div>`;
+}
+
+function tgHoseRowHtml(h, idx, imported) {
+  const cell = (v) => (v == null ? `<span class="tg-missing-note">blank</span>` : v);
+  const misread = h.written_total_sales != null && h.written_total_sales > 20000;
+  return `<tr>
+    <td>Pump ${h.pump}, Hose ${h.hose_no} (${tgEsc(h.product)})</td>
+    <td>${cell(h.beg_liter)} → ${cell(h.end_liter)}</td>
+    <td>${cell(h.beg_sales)} → ${cell(h.end_sales)}</td>
+    <td>${h.written_total_sales != null ? peso(h.written_total_sales) : "—"}${misread ? ` <span style="color:var(--danger)">⚠ check (&gt;₱20,000)</span>` : ""}</td>
+    <td>${imported ? "" : `<button class="small" onclick="tgOpenWizard(${idx})">Pre-fill into Dispensing</button>`}</td>
+  </tr>`;
+}
+
+function tgRenderDetail(imported) {
+  const r = tgSelectedReport;
+  const hoses = tgAllHoses(r);
+  const card = document.getElementById("tgDetailCard");
+  card.innerHTML = `
+    <div class="card">
+      <h2>${tgEsc(r.report_date || "date?")} — ${tgEsc(r.shift || "shift?")}${r.station ? " · " + tgEsc(r.station) : ""}</h2>
+      <div class="tg-detail">
+        <div class="tg-photo-wrap" id="tgPhotoWrap"><p class="small">Loading photo…</p></div>
+        <div>
+          <div class="stat-grid">
+            ${r.products.map((p) => `<div class="stat ${(p.flags || "").includes("variance_over_threshold") ? "warn" : ""}"><div class="k">${tgEsc(p.product)}</div><div class="v" style="font-size:13px;">${tgProductLine(p)}</div></div>`).join("")}
+          </div>
+          <div class="stat-grid" style="margin-top:10px;">${r.products.map(tgDipstickRef).join("")}</div>
+          ${r.extraction_notes ? `<p class="small" style="margin-top:10px;"><strong>Reader notes:</strong> ${tgEsc(r.extraction_notes)}</p>` : ""}
+          <p class="small">Reported by ${tgEsc(r.reported_by || "—")} · extraction confidence: ${tgEsc(r.extraction_confidence || "—")}</p>
+        </div>
+      </div>
+      <hr class="divider">
+      <div class="table-scroll">
+        <table><thead><tr><th>Hose</th><th>Liters (beg → end)</th><th>Sales meter (beg → end)</th><th>Written total</th><th></th></tr></thead>
+          <tbody>${hoses.map((h, i) => tgHoseRowHtml(h, i, imported)).join("")}</tbody>
+        </table>
+      </div>
+      <div id="tgWizard"></div>
+      ${!imported ? `
+        <hr class="divider">
+        <label>Your name (optional, for the record)</label>
+        <input id="tgImportedByInput" placeholder="e.g. Cathy">
+        <button onclick="tgMarkImported()">Mark This Report As Entered</button>
+        <div class="msg" id="tgMarkMsg"></div>
+      ` : ""}
+    </div>`;
+  tgLoadPhoto(r.telegram_file_id);
+}
+
+async function tgLoadPhoto(fileId) {
+  const wrap = document.getElementById("tgPhotoWrap");
+  try {
+    const res = await fetch(TG_INBOX_FN, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pin: tgPin, action: "photo", telegram_file_id: fileId }) });
+    if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || "Could not load photo."); }
+    const blob = await res.blob();
+    wrap.innerHTML = `<img src="${URL.createObjectURL(blob)}" alt="Shift report photo">`;
+  } catch (e) {
+    wrap.innerHTML = `<p class="small" style="color:var(--danger)">${tgEsc(e.message)}</p>`;
+  }
+}
+
+// ---- Pre-fill wizard: Station -> Shift (warn-only) -> Pump -> duplicate check -> go ----
+
+function tgOpenWizard(hoseIdx) {
+  tgWizardHose = tgAllHoses(tgSelectedReport)[hoseIdx];
+  const r = tgSelectedReport;
+  const defaultBranch = branches.find((b) => b.code === r.station);
+  const stationOpts = branches.map((b) => `<option value="${b.id}" ${defaultBranch && defaultBranch.id === b.id ? "selected" : ""}>${tgEsc(b.code)}</option>`).join("");
+  document.getElementById("tgWizard").innerHTML = `
+    <div class="card" style="border:1px solid var(--accent);">
+      <h2>Pre-fill: Pump ${tgWizardHose.pump} Hose ${tgWizardHose.hose_no} (${tgEsc(tgWizardHose.product)})</h2>
+      <label>Station${defaultBranch ? "" : " — not on the report, choose one"}</label>
+      <select id="tgWizStation">${defaultBranch ? stationOpts : '<option value="">— choose —</option>' + stationOpts}</select>
+      <button onclick="tgWizardPickStation()">Next: find shift</button>
+      <div id="tgWizStep2"></div>
+    </div>`;
+}
+
+async function tgWizardPickStation() {
+  const branchId = document.getElementById("tgWizStation").value;
+  if (!branchId) { alert("Choose a station first."); return; }
+  const r = tgSelectedReport;
+  const step2 = document.getElementById("tgWizStep2");
+  step2.innerHTML = `<p class="small">Looking up shifts for ${tgEsc(r.report_date)}…</p>`;
+  const { data: shiftRows, error } = await supabase.from("shifts").select("*").eq("branch_id", branchId).eq("shift_date", r.report_date).order("scheduled_time_in");
+  if (error) { step2.innerHTML = `<p class="small" style="color:var(--danger)">${tgEsc(error.message)}</p>`; return; }
+  if (!shiftRows || !shiftRows.length) {
+    step2.innerHTML = `<p class="msg err">No shift exists for this date. Create it in Roster first.</p>`;
+    return;
+  }
+  const opts = shiftRows.map((s) => `<option value="${s.id}">${s.shift_date} — ${tgEsc(s.shift_label)}${s.scheduled_time_in ? ` (${s.scheduled_time_in}–${s.scheduled_time_out || "?"})` : ""}</option>`).join("");
+  step2.innerHTML = `
+    <label>Shift</label>
+    <select id="tgWizShift"><option value="">— choose —</option>${opts}</select>
+    <button onclick="tgWizardPickShift('${branchId}')">Next: find pump</button>
+    <div id="tgWizStep3"></div>`;
+}
+
+async function tgWizardPickShift(branchId) {
+  const shiftId = document.getElementById("tgWizShift").value;
+  if (!shiftId) { alert("Choose a shift first."); return; }
+  const step3 = document.getElementById("tgWizStep3");
+  const product = products.find((p) => p.code === String(tgWizardHose.product).toUpperCase());
+  if (!product) { step3.innerHTML = `<p class="msg err">Unknown product code.</p>`; return; }
+  const branchPumps = pumps.filter((p) => p.branch_id === branchId && p.product_id === product.id && p.active);
+  if (!branchPumps.length) { step3.innerHTML = `<p class="msg err">No active pump for ${tgEsc(product.name)} at this station.</p>`; return; }
+  const opts = branchPumps.map((p) => `<option value="${p.id}">${tgEsc(p.pump_label)}</option>`).join("");
+  step3.innerHTML = `
+    <label>Which physical pump/hose is this?</label>
+    <select id="tgWizPump"><option value="">— choose —</option>${opts}</select>
+    <button onclick="tgWizardPickPump('${branchId}','${shiftId}')">Check & Continue</button>
+    <div id="tgWizStep4"></div>`;
+}
+
+async function tgWizardPickPump(branchId, shiftId) {
+  const pumpId = document.getElementById("tgWizPump").value;
+  if (!pumpId) { alert("Choose a pump first."); return; }
+  const step4 = document.getElementById("tgWizStep4");
+  const { data: existing, error } = await supabase.from("fuel_meter_periods").select("id,closing_reading_id").eq("pump_id", pumpId).eq("shift_id", shiftId).limit(1);
+  if (error) { step4.innerHTML = `<p class="msg err">${tgEsc(error.message)}</p>`; return; }
+  if (existing && existing.length) {
+    step4.innerHTML = `
+      <p class="msg err">⚠️ An entry already exists for this pump + shift.</p>
+      <button class="secondary" onclick="tgWizardGo('${branchId}','${shiftId}','${pumpId}')">Proceed anyway</button>`;
+    return;
+  }
+  tgWizardGo(branchId, shiftId, pumpId);
+}
+
+function tgWizardGo(branchId, shiftId, pumpId) {
+  tgSessionPumpShifts.push({ pumpId, shiftId });
+  document.getElementById("globalBranch").value = branchId;
+  currentBranch = branchId;
+  document.querySelectorAll(".tab").forEach((x) => x.classList.remove("active"));
+  document.querySelectorAll(".panel").forEach((x) => x.classList.remove("active"));
+  document.querySelector('.tab[data-tab="dispensing"]').classList.add("active");
+  document.getElementById("panel-dispensing").classList.add("active");
+  tgFillDispensingForm(shiftId, pumpId);
+}
+
+async function tgFillDispensingForm(shiftId, pumpId) {
+  await loadShiftOptions("dspShift", false);
+  document.getElementById("dspShift").value = shiftId;
+  await loadPumpsForShift();
+  document.getElementById("dspPump").value = pumpId;
+  await loadOpenPeriod();
+
+  const h = tgWizardHose;
+  tgShowBanner();
+
+  if (document.getElementById("dspOpenCard").style.display !== "none") {
+    tgSetPrefillValue("dspOpenMeter", h.beg_liter);
+    tgSetPrefillValue("dspOpenSalesMeter", h.beg_sales);
+    tgPendingClosePrefill = { pumpId, shiftId, meter: h.end_liter, salesMeter: h.end_sales };
+    document.getElementById("tgFillClosingBtn").style.display = "block";
+  } else if (document.getElementById("dspActiveCard").style.display !== "none") {
+    tgSetPrefillValue("dspCloseMeter", h.end_liter);
+    tgSetPrefillValue("dspCloseSalesMeter", h.end_sales);
+  }
+}
+
+function tgSetPrefillValue(id, val) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (val === null || val === undefined) { el.value = ""; el.classList.add("tg-missing"); }
+  else { el.value = val; el.classList.remove("tg-missing"); }
+}
+
+function tgShowBanner() {
+  if (document.getElementById("tgBannerEl")) return;
+  const anchorCard = document.getElementById("dspStatus")?.closest(".card");
+  if (!anchorCard) return;
+  const banner = document.createElement("div");
+  banner.className = "tg-banner";
+  banner.id = "tgBannerEl";
+  banner.innerHTML = `Pre-filled from Telegram photo. Check every number against the photo before saving. <a href="#" onclick="document.getElementById('tgBannerEl').remove(); return false;" style="color:inherit; text-decoration:underline;">Dismiss</a>`;
+  anchorCard.parentNode.insertBefore(banner, anchorCard);
+}
+
+// Purely additive: never touches openPeriod()/closePeriod()/loadOpenPeriod() -- the
+// admin must notice the Close section themselves and click this floating button
+// (visible across tab switches, since a period opened just now won't show its Close
+// fields until the admin is looking at the Dispensing tab again).
+function tgApplyClosePrefill() {
+  if (!tgPendingClosePrefill) return;
+  if (document.getElementById("dspActiveCard").style.display === "none") {
+    alert("Open the period first (click 'Open Period'), then click this again.");
+    return;
+  }
+  tgSetPrefillValue("dspCloseMeter", tgPendingClosePrefill.meter);
+  tgSetPrefillValue("dspCloseSalesMeter", tgPendingClosePrefill.salesMeter);
+  document.getElementById("tgFillClosingBtn").style.display = "none";
+  tgPendingClosePrefill = null;
+}
+
+async function tgMarkImported() {
+  const msg = document.getElementById("tgMarkMsg");
+  const importedBy = document.getElementById("tgImportedByInput").value.trim() || null;
+  let linkedIds = [];
+  if (tgSessionPumpShifts.length) {
+    const orFilter = tgSessionPumpShifts.map((x) => `and(pump_id.eq.${x.pumpId},shift_id.eq.${x.shiftId})`).join(",");
+    const { data } = await supabase.from("fuel_meter_periods").select("id").or(orFilter);
+    linkedIds = (data || []).map((d) => d.id);
+  }
+  try {
+    await tgCallJson("mark_imported", { telegram_message_id: tgSelectedReport.telegram_message_id, imported_by: importedBy, linked_entry_ids: linkedIds });
+    msg.textContent = "Marked as entered."; msg.className = "msg ok";
+    tgPendingReports = tgPendingReports.filter((r) => r.telegram_message_id !== tgSelectedReport.telegram_message_id);
+    tgImportedLoaded = false;
+    tgRenderPendingList();
+    document.getElementById("tgDetailCard").innerHTML = "";
+    tgSelectedReport = null;
+  } catch (e) {
+    msg.textContent = e.message; msg.className = "msg err";
+  }
 }
 </script>
 </body>
