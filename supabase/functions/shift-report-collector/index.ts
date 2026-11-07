@@ -46,11 +46,12 @@ const VARIANCE_MODE: "or" | "and" = "or";
 
 /**
  * A single hose's written peso sales above this in one shift is a likely digit misread.
- * This is the Shift Encoder's own live threshold (recalcHose(): `ss > 50000` tints the
- * cell red), reused deliberately. At ~P78-90/L a P20,000 bar would mean ~230 L on one
- * hose in one shift, which a busy hose clears routinely — it would flag normal days.
+ * Mario's own stated rule (confirmed, not the Shift Encoder's looser P50,000 cell-tint
+ * threshold — that one is calibrated for busier stations and doesn't fit here): his
+ * busiest station sells only ~1,000L/day *total*, so P20,000 on a single hose in one
+ * shift is already far outside normal volume and should flag, not slide by unnoticed.
  */
-const HOSE_SALES_MISREAD_PESOS = 50000;
+const HOSE_SALES_MISREAD_PESOS = 20000;
 /** Tolerance before meter liters and price-converted written pesos are called inconsistent. */
 const WRITTEN_VS_METER_PCT = 2;
 
